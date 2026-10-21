@@ -2,8 +2,8 @@
 
 ## Stand
 - Live op `deploy.gocontroll.tools` sinds 2026-10-21 (eerste versie `211d969d-5468-45eb-b102-57746d737af5`). Access-app
-  met `/pub`-bypass bestaat; de AUD staat in `POLICY_AUD`. `DEPLOY_GROUPS` is nog leeg (wacht op het object-ID van
-  `CF_Deploy`), dus nog niemand komt erin; de hubtegel staat op de naam `CF_Deploy` en is daardoor verborgen.
+  met `/pub`-bypass bestaat; de AUD staat in `POLICY_AUD`. `DEPLOY_GROUPS` en de hubtegel staan op het object-ID van
+  `CF_Deploy` (`b5877d29-e509-40b2-9784-17e649996f1f`). Downloadtellingen wachten op `DEPLOY_CF_API_TOKEN`.
 
 ## Architectuur
 - **Worker met static assets** (geen Pages), zelfde opzet als GOcontroll-Logistic: `run_worker_first = true`,
@@ -13,8 +13,8 @@
 - **Server**: TypeScript + Hono + zod (`src/`). **Browser**: plain ES-modules in `public/js/` met `// @ts-check` + JSDoc,
   geen framework, geen bundler. CSP verbiedt inline scripts én inline `style`-attributen.
 - **Toegang**: Access-policy op Entra-groep `CF_Deploy` én in de Worker `DEPLOY_GROUPS`, **alleen op object-ID**
-  (`extractGroupIds`), nooit op groepsnaam. `CF_Deploy` heeft nog geen object-ID: `DEPLOY_GROUPS = ""` = niemand
-  (fail closed); zodra het ID er is, komt het daar met de naam in commentaar. `src/access.ts` is identiek aan de kopie
+  (`extractGroupIds`), nooit op groepsnaam: `DEPLOY_GROUPS = "b5877d29-e509-40b2-9784-17e649996f1f"` (CF_Deploy).
+  Lege config of mislukte groepsopvraging = niemand (fail closed). `src/access.ts` is identiek aan de kopie
   in Logistic — houd ze in de pas.
 - **Kleine uploads, weinig Worker-CPU**: de browser leest `.srec`/`.bin` en comprimeert (`CompressionStream('deflate')`
   = zlib). De Worker inflate nooit, doet geen JS-lussen over de payload: SHA-256 en ECDSA via `crypto.subtle`, CRC alleen

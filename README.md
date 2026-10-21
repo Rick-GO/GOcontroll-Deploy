@@ -9,11 +9,10 @@ deployment: customers → their folders (App IDs) → releases, file and header 
 controllers on that App ID and the download counts. For the members of the Entra group
 **`CF_Deploy`** only.
 
-> **Status: live on `deploy.gocontroll.tools` since 2026-10-21, nobody in yet.** The Worker, the
-> API and the pages are deployed; the Access application (with its `/pub` bypass) exists and its
-> AUD is in `POLICY_AUD`. Still open in the [one-time setup](#one-time-setup): the Entra group
-> `CF_Deploy` (no object ID yet, so `DEPLOY_GROUPS` is empty and nobody gets in, and the hub tile
-> stays hidden). Download counts wait for the Cloudflare API token
+> **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
+> The Worker, the API and the pages are deployed; the Access application (with its `/pub`
+> bypass) exists and its AUD is in `POLICY_AUD`; `DEPLOY_GROUPS` and the hub tile hold the object
+> ID of `CF_Deploy`. Download counts wait for the Cloudflare API token
 > ([Download counts](#download-counts)).
 
 ## Pages
@@ -276,10 +275,10 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
 
 ### One-time setup
 
-1. **Entra ID**: the security group **`CF_Deploy`** (decided 2026-10-21, no object ID yet). Put
-   its object ID in `DEPLOY_GROUPS` (`wrangler.toml`) with the name in a comment; a name never
-   matches. Until then `DEPLOY_GROUPS` is empty and **nobody** gets in (fail closed). Add the
-   colleagues who publish S1 firmware.
+1. **Entra ID**: the security group **`CF_Deploy`**, object ID
+   `b5877d29-e509-40b2-9784-17e649996f1f` (made 2026-10-21), in `DEPLOY_GROUPS` (`wrangler.toml`)
+   with the name in a comment; a name never matches. An empty `DEPLOY_GROUPS` lets **nobody** in
+   (fail closed). Add the colleagues who publish S1 firmware to the group.
 2. **Cloudflare Access** (before the first deploy, so the custom domain is never reachable
    without it): Zero Trust → Access → Applications → Add → Self-hosted, domain
    `deploy.gocontroll.tools`, identity provider Entra ID, policy **Allow**, include the group
@@ -289,9 +288,8 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
    hub's `https://gocontroll.tools/pub/signed-out`. Done 2026-10-21: AUD `d26a80ee…cab10`,
    bypass on `/pub` in place.
 3. **Tile on the hub** (`GOcontroll-Team/src/cards.js`), link `https://deploy.gocontroll.tools`,
-   shown to the object ID of `CF_Deploy`. Since 2026-10-21 the tile is there with the display
-   name `CF_Deploy` standing in, which matches no one; replace it with the object ID. Hiding a
-   tile is not access control: the Access application and `DEPLOY_GROUPS` are.
+   shown to the object ID of `CF_Deploy` (since 2026-10-21). Hiding a tile is not access
+   control: the Access application and `DEPLOY_GROUPS` are.
 4. Optionally the API token for [download counts](#download-counts).
 
 ### Worker

@@ -100,10 +100,8 @@ TEAM_DOMAIN = "https://gocontroll.cloudflareaccess.com"
 POLICY_AUD = "d26a80ee243ca5eaba619953d0c51f870d5f23fa2c579ce5c1b8c1cab69cab10"
 # Object IDs of the Entra groups (comma-separated) whose members may use Deploy, on top of
 # the Access policy: a token without one of them gets 403. Empty means nobody (fail closed).
-# Becomes the object ID of the new Entra group CF_Deploy once it exists, with the name in a
-# comment. A display name never matches (any employee can create a Microsoft 365 group with
-# any name).
-DEPLOY_GROUPS = ""
+# A display name never matches (any employee can create a Microsoft 365 group with any name).
+DEPLOY_GROUPS = "b5877d29-e509-40b2-9784-17e649996f1f" # Entra group "CF_Deploy"
 # The distribution URLs of the bucket (comma-separated): the only bases a manifest URL may
 # have. The first is the one a NEW folder gets; an existing folder keeps the host its
 # manifest names (never two hosts in one manifest, cloud-r2-distribution.md §2.1).
