@@ -1,0 +1,28 @@
+{
+  "name": "gocontroll-deploy-intranet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "GOcontroll Deploy at deploy.gocontroll.tools: sign and publish S1 firmware to the gocontroll-deploy bucket",
+  "scripts": {
+    "dev": "wrangler dev",
+    "predeploy": "npm run typecheck && npm test",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p public/js",
+    "db:setup:local": "node scripts/setup-local-db.mjs",
+    "fixtures:goco": "node scripts/goco-fixtures.mjs"
+  },
+  "dependencies": {
+    "hono": "^4.13.13",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.0",
+    "@cloudflare/workers-types": "^5.20261009.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7",
+    "vitest": "~4.1.11",
+    "wrangler": "^4.149.0"
+  }
+}

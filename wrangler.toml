@@ -1,0 +1,117 @@
+name = "gocontroll-deploy-intranet"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Not "gocontroll-deploy": that is the public device Worker on deploy.gocontroll.tech
+# (GOcontroll-Deployment-Tool/worker), which serves the same bucket to controllers.
+#
+# Only reachable via the custom domain, which sits behind Cloudflare Access.
+# workers.dev and preview URLs would bypass Access; the Worker rejects them anyway
+# (no valid token), but there is no reason to expose them.
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "deploy.gocontroll.tools", custom_domain = true }]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+# Every request, including /styles.css and /js/*, goes through the JWT check.
+# Only /pub/* is served without it (Access bypass app on that path).
+run_worker_first = true
+
+[observability]
+enabled = true
+
+# Daily at 02:17 UTC: store the download counts of the finished days still missing (at most 7
+# per run, src/downloads.ts). Without CF_API_TOKEN it does nothing. A day is also stored when
+# someone looks, so a missed run costs nothing.
+[triggers]
+crons = ["17 2 * * *"]
+
+# The S1 distribution bucket: <APP_ID>/manifest.json and <APP_ID>/<APP_ID>-<version>.bin,
+# public on https://deploy.gocontroll.com (R2 custom domain) and https://deploy.gocontroll.tech
+# (Worker gocontroll-deploy). Linux folders (go-deploy tarballs) live in it too; Deploy only
+# reads those. Publishing writes the binary first, then the manifest; nothing is ever deleted.
+[[r2_buckets]]
+binding = "DEPLOY_BUCKET"
+bucket_name = "gocontroll-deploy"
+
+# Private state of this app (no public access, no custom domain): sealed signing keys,
+# folder settings, the audit log and the download counts of finished days (src/state.ts).
+# A bucket instead of a D1 of our own: when Deploy was made (2026-10-21) the account was at
+# the Free-plan D1 limit, and JSON objects in R2 are enough for this data, so it stays here.
+[[r2_buckets]]
+binding = "STATE"
+bucket_name = "gocontroll-deploy-state"
+
+# Shared business database (schema of customers & projects owned by GOcontroll-Hours).
+# Deploy only READS customers and projects, to name the customer of a folder; it owns nothing
+# there and never writes (test/readonly-db.test.ts). migrations_dir points at a folder that
+# does not exist, so a `wrangler d1 migrations apply gocontroll-business` from this repo can
+# never apply anything.
+[[d1_databases]]
+binding = "BUSINESS_DB"
+database_name = "gocontroll-business"
+database_id = "983b2b87-47a2-4e11-91e8-3586dfe71037"
+migrations_dir = "no-migrations-here"
+migrations_table = "deploy_migrations"
+
+# Controller database (schema owned by GOcontroll-Database). Deploy only READS which
+# controllers run which App ID and version (controllers) and the App ID of a project
+# (project_provisioning); never a secret column, never a write (test/readonly-db.test.ts).
+# Same guard against migrations as above.
+[[d1_databases]]
+binding = "MODULINE_DB"
+database_name = "gocontroll-db"
+database_id = "3d2a9eb2-723f-4af9-8a02-dfd9eb0dd3c6"
+migrations_dir = "no-migrations-here"
+migrations_table = "deploy_migrations"
+
+# Secrets live in the account's Secrets Store default_secrets_store (GOcontroll-Team/CLAUDE.md),
+# never as Worker secret, in [vars] or in git; the code reads them through src/lib/secret.ts.
+#
+# The key-encryption key of the signing keys: 32 random bytes (base64), made in the store,
+# never seen by anyone. Every private signing key in STATE (keys/<APP_ID>.json) is sealed
+# under it with AES-256-GCM. Lost = every signing key lost; rotating it needs a re-seal path
+# (README, "Signing keys").
+[[secrets_store_secrets]]
+binding = "SIGNING_KEYS_KEY"
+store_id = "33801ac6937549ae8f6f92169586a707"
+secret_name = "DEPLOY_SIGNING_KEYS_KEY"
+
+# Download counts need a Cloudflare API token (Zone Analytics: Read + Zone: Read on
+# gocontroll.com and gocontroll.tech) in the store as DEPLOY_CF_API_TOKEN. It does not exist
+# yet, and a binding to a missing secret fails the deploy; once it is created, add
+# (README, "Download counts"):
+#
+# [[secrets_store_secrets]]
+# binding = "CF_API_TOKEN"
+# store_id = "33801ac6937549ae8f6f92169586a707"
+# secret_name = "DEPLOY_CF_API_TOKEN"
+
+[vars]
+# Cloudflare Access team domain: token issuer, source of /cdn-cgi/access/certs
+# and /cdn-cgi/access/get-identity.
+TEAM_DOMAIN = "https://gocontroll.cloudflareaccess.com"
+# Application Audience (AUD) tag of the Access application for deploy.gocontroll.tools
+# (Zero Trust → Access → Applications → <app> → Overview). Not a secret.
+# Empty means every request is rejected with 403. A /pub bypass app covers the brand assets.
+POLICY_AUD = "d26a80ee243ca5eaba619953d0c51f870d5f23fa2c579ce5c1b8c1cab69cab10"
+# Object IDs of the Entra groups (comma-separated) whose members may use Deploy, on top of
+# the Access policy: a token without one of them gets 403. Empty means nobody (fail closed).
+# Becomes the object ID of the new Entra group CF_Deploy once it exists, with the name in a
+# comment. A display name never matches (any employee can create a Microsoft 365 group with
+# any name).
+DEPLOY_GROUPS = ""
+# The distribution URLs of the bucket (comma-separated): the only bases a manifest URL may
+# have. The first is the one a NEW folder gets; an existing folder keeps the host its
+# manifest names (never two hosts in one manifest, cloud-r2-distribution.md §2.1).
+DISTRIBUTION_URLS = "https://deploy.gocontroll.tech,https://deploy.gocontroll.com"
+# The hostnames whose requests count as downloads (Cloudflare GraphQL Analytics).
+DOWNLOAD_HOSTS = "deploy.gocontroll.com,deploy.gocontroll.tech"
+
+[dev]
+# Keep request.url on localhost during `wrangler dev` (it would otherwise take the
+# route's host), so the DEV_USER_* bypass in src/auth.ts can recognise local runs.
+host = "localhost"

@@ -1,0 +1,13 @@
+# Copy to .dev.vars for `npm run dev`. Only honoured when the request URL is
+# localhost / 127.0.0.1; never set these as production vars.
+DEV_USER_EMAIL=jane.doe@gocontroll.com
+DEV_USER_NAME=Jane Doe
+# Locally these stand in for the user's group object IDs; one must be in DEPLOY_GROUPS
+# (empty in wrangler.toml, so set both here), or every request gets 403.
+DEV_USER_GROUPS=CF_Deploy
+DEPLOY_GROUPS=CF_Deploy
+# The Secrets Store binding SIGNING_KEYS_KEY reads wrangler's LOCAL store under `wrangler dev`
+# (empty: keys cannot be made). Give it a throwaway value there, never the production one:
+#   node -e "process.stdout.write(require('crypto').randomBytes(32).toString('base64'))" | npx wrangler secrets-store secret create 33801ac6937549ae8f6f92169586a707 --name DEPLOY_SIGNING_KEYS_KEY --scopes workers
+# (without --remote). `wrangler dev` uses local R2 buckets and D1s: nothing reaches the real
+# distribution bucket. Download counts stay off locally (no CF_API_TOKEN binding).

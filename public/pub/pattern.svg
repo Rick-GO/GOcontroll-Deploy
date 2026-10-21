@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- PCB traces, used at low opacity on the anthracite hero. Tiles seamlessly:
+       edge exits pair up (top/bottom at x=110 and x=180, left/right at y=40 and y=170). -->
+  <path d="M0 40h50l20 20h60"/>
+  <path d="M130 60h40l20-20h50"/>
+  <path d="M110 0v20l-20 20v40l-20 20v30"/>
+  <path d="M180 0v50l20 20v40"/>
+  <path d="M180 240v-30l-20-20v-50"/>
+  <path d="M0 170h30l20-20h40"/>
+  <path d="M90 150h30l20 20h100"/>
+  <path d="M110 240v-20l-20-20H40"/>
+  <circle cx="130" cy="60" r="4"/>
+  <circle cx="70" cy="130" r="4"/>
+  <circle cx="90" cy="150" r="4"/>
+  <circle cx="160" cy="140" r="4"/>
+  <circle cx="200" cy="110" r="4"/>
+  <circle cx="40" cy="200" r="4"/>
+  <rect x="20" y="92" width="36" height="24" rx="2"/>
+  <path d="M26 92v-6M34 92v-6M42 92v-6M50 92v-6M26 116v6M34 116v6M42 116v6M50 116v6"/>
+</svg>
