@@ -1,10 +1,12 @@
-// Publishing a release into the bucket, and signing a binary without publishing it.
+// Publishing a release into the bucket (S1 firmware, or a Linux go-deploy package), and
+// signing an S1 binary without publishing it.
 // Both take multipart/form-data (the browser sends the compressed payload or a container);
 // the rules are in src/release.ts.
 
 import { Hono } from 'hono';
 import type { AppEnv } from '../env';
 import { HttpError } from '../lib/http';
+import { publishLinux } from '../linux';
 import { publish, signOnly } from '../release';
 
 export const releases = new Hono<AppEnv>();
@@ -31,3 +33,6 @@ releases.post('/sign', async (c) => {
 });
 
 releases.post('/releases', async (c) => c.json(await publish(c.env, c.get('user'), await form(c.req.raw))));
+
+// A Linux (go-deploy) release: tarball + version manifest, then the root manifest (src/linux.ts).
+releases.post('/linux-releases', async (c) => c.json(await publishLinux(c.env, c.get('user'), await form(c.req.raw))));

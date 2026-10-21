@@ -1,9 +1,13 @@
 // @ts-check
 // One application folder (#/folders/<APP_ID>): its customer and controller type (both can be
-// set by hand), the New release flow (S1 only: release.js), the releases in its manifest with
-// what their headers say, its signing key, the controllers per version, the downloads per
-// day, files the manifest does not name, and the danger zone (danger.js). A Linux folder
-// (go-deploy tarballs) is shown read-only. An App ID that does not exist gets a way to create it.
+// set by hand), then by what goes into it:
+//   S1             New release (release.js: signed GOCO binaries), the releases with what their
+//                  headers say, the signing key;
+//   M1, L4, HMI1   the Package card (pkgcard.js), New release (linux-release.js: go-deploy
+//                  packages), the versions;
+// and for every folder the controllers per version, the downloads per day, files the manifest
+// does not name, and the danger zone (danger.js). Another controller type is read-only. An App
+// ID that does not exist gets a way to create it.
 
 import { ApiError, api, folderPath } from './api.js';
 import { fmtBytes, fmtCount, fmtDateTime, fmtDay, fmtDayShort, hostOf, plural, shortHash, versionText } from './format.js';
@@ -11,11 +15,14 @@ import { esc, field, hydrateIcons, toast } from './lib.js';
 import { keyPanel, wireKeyPanel } from './key.js';
 import { dangerPanel, deleteFolder } from './danger.js';
 import { newApplication } from './newapp.js';
+import { mountLinuxRelease } from './linux-release.js';
+import { compareLinuxVersions } from './package.js';
+import { mountPackageCard } from './pkgcard.js';
 import { mountRelease } from './release.js';
 import { compareVersions } from './source.js';
 import {
-  CONTROLLERS, badge, barList, controllerBadge, controllerOf, controllerSourceText, customerSource, drawBars, formDialog, formValues,
-  releasable, setHero, stale,
+  CONTROLLERS, badge, barList, controllerBadge, controllerOf, controllerSourceText, customerSource, drawBars, flavour, formDialog, formValues,
+  setHero, stale,
 } from './ui.js';
 
 /**
@@ -24,13 +31,15 @@ import {
  * @typedef {import('./api.js').FolderSettings} FolderSettings
  * @typedef {import('./api.js').KeyInfo} KeyInfo
  * @typedef {import('./api.js').PublishResult} PublishResult
+ * @typedef {import('./api.js').LinuxPublishResult} LinuxPublishResult
  * @typedef {import('./api.js').Release} Release
  * @typedef {import('./api.js').FolderCustomer} FolderCustomer
  */
 
 /**
  * @param {Ctx} ctx @param {string} appId
- * @param {{ published?: PublishResult }} [after]  the release just published, shown on top of New release
+ * @param {{ published?: PublishResult, linuxPublished?: LinuxPublishResult }} [after]
+ *   the release just published, shown on top of New release
  */
 export async function renderFolder(ctx, appId, after = {}) {
   const nav = ctx.nav;
@@ -43,14 +52,17 @@ export async function renderFolder(ctx, appId, after = {}) {
     throw err;
   }
   if (stale(ctx, nav)) return;
-  const canRelease = releasable(d);
+  const kind = flavour(d);
   const releases = [...(d.releases ?? [])].sort((a, b) => compareVersions(b.version, a.version));
   drawHero(d);
+  const middle = kind === 's1'
+    ? `<section class="panel" id="release-panel"></section>${releasesPanel(d, releases)}${keyPanel(d.key)}`
+    : kind === 'linux'
+      ? `<section class="panel" id="package-panel"></section><section class="panel" id="release-panel"></section>${linuxPanel(d)}`
+      : `${readOnlyNote(d)}${d.kind === 'linux' ? linuxPanel(d) : releases.length ? releasesPanel(d, releases) : ''}`;
   ctx.view.innerHTML = `
     <section class="panel" id="folder-summary"></section>
-    ${canRelease ? '<section class="panel" id="release-panel"></section>' : readOnlyNote(d)}
-    ${canRelease ? releasesPanel(d, releases) : linuxPanel(d)}
-    ${canRelease ? keyPanel(d.key) : ''}
+    ${middle}
     <div class="two-up">
       ${controllersPanel(d)}
       ${downloadsPanel(d)}
@@ -66,11 +78,11 @@ export async function renderFolder(ctx, appId, after = {}) {
     summary.querySelector('[data-act="customer"]')?.addEventListener('click', () => changeCustomer(d, applySettings));
     summary.querySelector('[data-act="controller"]')?.addEventListener('click', () => changeController(d, applySettings));
   };
-  /** New settings from the Worker: redraw in place, or the whole page when New release comes or goes. @param {FolderSettings} s */
+  /** New settings from the Worker: redraw in place, or the whole page when what goes into the folder changes. @param {FolderSettings} s */
   const applySettings = async (s) => {
-    const before = releasable(d);
+    const before = flavour(d);
     d = { ...d, customer: s.customer, controller: s.controller, controllerSource: s.controllerSource };
-    if (releasable(d) !== before) { await renderFolder(ctx, appId); return; }
+    if (flavour(d) !== before) { await renderFolder(ctx, appId); return; }
     drawHero(d);
     drawSummary();
   };
@@ -90,7 +102,22 @@ export async function renderFolder(ctx, appId, after = {}) {
     }
   };
   const releaseEl = /** @type {HTMLElement | null} */ (ctx.view.querySelector('#release-panel'));
-  if (releaseEl) {
+  if (releaseEl && kind === 'linux') {
+    const mountLinux = () => mountLinuxRelease(releaseEl, {
+      detail: d,
+      published: after.linuxPublished ?? null,
+      onPublished: async (res) => {
+        await renderFolder(ctx, appId, { linuxPublished: res });
+        ctx.view.querySelector('#release-panel')?.scrollIntoView({ block: 'start' });
+      },
+    });
+    let linux = mountLinux();
+    mountPackageCard(/** @type {HTMLElement} */ (ctx.view.querySelector('#package-panel')), {
+      detail: d,
+      onSaved: (def) => { d = { ...d, package: def }; linux = mountLinux(); },
+      onDirty: (dirty) => linux.setPackageDirty(dirty),
+    });
+  } else if (releaseEl) {
     release = mountRelease(releaseEl, {
       detail: d,
       published: after.published ?? null,
@@ -138,17 +165,18 @@ function summaryHtml(d, releases) {
         ? `${fmtCount(d.linuxVersions?.length ?? 0)} (go-deploy)`
         : `${fmtCount(releases.length)}${bytes ? ` · ${esc(fmtBytes(bytes))}` : ''}`}</dd></div>
       <div><dt>Last upload</dt><dd>${esc(fmtDateTime(uploads[uploads.length - 1]))}</dd></div>
-      <div><dt>Distribution host</dt><dd>${d.distributionUrl ? `<span class="mono">${esc(hostOf(d.distributionUrl))}</span>` : '—'}</dd></div>
+      <div><dt>${flavour(d) === 'linux' ? 'Downloads by controllers' : 'Distribution host'}</dt><dd>${d.distributionUrl
+        ? `<span class="mono">${esc(hostOf(d.distributionUrl))}</span>`
+        : flavour(d) === 'linux' ? 'Through the Moduline dashboard (signed route)' : '—'}</dd></div>
       <div><dt>Controllers</dt><dd>${c?.total ? `${fmtCount(c.total)} · ${fmtCount(c.online)} online · ${fmtCount(c.upToDate)} up to date` : 'None report this App ID'}</dd></div>
     </dl>`;
 }
 
-/** Instead of New release, for a folder whose releases are made elsewhere. @param {FolderDetail} d */
+/** Instead of New release, for a controller type Deploy does not publish for. @param {FolderDetail} d */
 function readOnlyNote(d) {
   const { controller } = controllerOf(d);
-  return `<section class="panel"><p class="text">${d.kind === 'linux'
-    ? 'This folder holds go-deploy tarballs for Linux controllers. Those are published by their own pipeline, not here: in Deploy the folder is read-only.'
-    : `Releases for ${esc(controller ?? 'these')} controllers are not published here: upload and signing in Deploy are for S1 applications only.`}</p></section>`;
+  return `<section class="panel"><p class="text">Releases for ${esc(controller ?? 'these')} controllers are not published here: Deploy publishes
+    for S1 (signed binaries) and for M1, L4 and HMI1 (go-deploy packages). Set the controller above if it is one of those.</p></section>`;
 }
 
 /** An App ID that does not exist (no folder, key or settings). @param {Ctx} ctx @param {string} appId */
@@ -268,18 +296,19 @@ function checks(d, r) {
 
 /** @param {FolderDetail} d */
 function linuxPanel(d) {
-  const versions = [...(d.linuxVersions ?? [])].sort((a, b) => compareVersions(b.version, a.version));
+  const versions = [...(d.linuxVersions ?? [])].sort((a, b) => compareLinuxVersions(b.version, a.version));
   return `<section class="panel">
-    <div class="panel-head"><h2>Versions</h2><span class="sub">go-deploy tarballs for Linux controllers: published by their own pipeline, read-only here</span></div>
+    <div class="panel-head"><h2>Versions</h2><span class="sub">go-deploy packages in <span class="mono">${esc(d.appId)}/manifest.json</span>, from Deploy or a CI pipeline</span></div>
     ${versions.length ? `<div class="table-wrap"><table class="data cards">
       <thead><tr><th>Version</th><th>Released</th><th>What changed</th><th class="num">Size</th><th>SHA-256</th></tr></thead>
       <tbody>${versions.map((v) => `<tr>
-        <td data-label="Version"><span class="cell-main mono">${esc(v.version)}</span>${v.version === d.latest ? ` ${badge('Latest', 'brand')}` : ''}</td>
+        <td data-label="Version"><span class="cell-main mono">${esc(v.version)}</span>${v.version === d.latest ? ` ${badge('Latest', 'brand')}` : ''}
+          <div class="cell-sub"><a href="/api${esc(folderPath(d.appId))}/versions/${encodeURIComponent(v.version)}/tarball" download="${esc(`${d.appId}-${v.version}-update.tar.gz`)}">Tarball</a></div></td>
         <td data-label="Released">${esc(fmtDay(v.released))}</td>
         <td data-label="What changed" class="desc">${esc(v.description || '—')}</td>
         <td data-label="Size" class="num">${esc(fmtBytes(v.sizeBytes))}</td>
         <td data-label="SHA-256" class="mono"${v.sha256 ? ` title="${esc(v.sha256)}"` : ''}>${esc(shortHash(v.sha256))}</td></tr>`).join('')}</tbody>
-    </table></div>` : '<p class="muted">The manifest names no versions.</p>'}
+    </table></div>` : '<p class="muted">No versions yet.</p>'}
   </section>`;
 }
 

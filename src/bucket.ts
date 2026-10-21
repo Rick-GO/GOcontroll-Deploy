@@ -6,9 +6,10 @@
 //   <APP_ID>/manifest.json            { application_id, latest, binaries: { <version>: { url, release_date, description } } }
 //   <APP_ID>/<APP_ID>-<version>.bin   the GOCO container
 //
-// A folder can hold a manifest for Linux controllers instead (go-deploy tarballs:
-// app_id / latest_version / versions[]); Deploy shows it and never writes into it.
+// A folder can hold a manifest for Linux controllers instead (go-deploy packages:
+// app_id / latest_version / versions[]); this file reads it, src/linux.ts publishes into it.
 
+import { compareSemver } from './godeploy';
 import { GocoError, MAX_HEADER_SIZE, readHeader, toHex, type GocoHeader } from './goco';
 import { listAll } from './state';
 
@@ -82,7 +83,7 @@ export function s1Entries(doc: Record<string, unknown> | null | undefined): S1En
 
 export interface LinuxVersion { version: string; released: string | null; description: string | null; sizeBytes: number | null; sha256: string | null; tarball: string | null; manifest: string | null }
 
-/** The releases of a Linux (go-deploy) manifest, newest first. */
+/** The releases of a Linux (go-deploy) manifest, newest first by upload-r2.py's semver_key. */
 export function linuxEntries(doc: Record<string, unknown> | null | undefined): LinuxVersion[] {
   const versions = doc?.versions;
   if (!Array.isArray(versions)) return [];
@@ -97,7 +98,7 @@ export function linuxEntries(doc: Record<string, unknown> | null | undefined): L
       tarball: strOrNull(v.tarball),
       manifest: strOrNull(v.manifest),
     }))
-    .sort((a, b) => compareVersions(b.version, a.version));
+    .sort((a, b) => compareSemver(b.version, a.version));
 }
 
 export function latestOf(doc: Record<string, unknown> | null | undefined, kind: FolderKind): string | null {

@@ -169,7 +169,9 @@ export async function publish(env: Env, user: User, form: FormData): Promise<Pub
     readManifest(env.DEPLOY_BUCKET, appId), loadFolderSettings(env, appId), deleteUnderWay(env, appId),
   ]);
   if (deleting) throw new HttpError(409, `The folder ${appId} is being deleted. Finish or wait for that first.`);
-  if (settings?.controller && settings.controller !== 'S1') throw fail(422, 'Releases for Linux controllers are not published here.');
+  if (settings?.controller && settings.controller !== 'S1') {
+    throw fail(422, `The folder ${appId} is for ${settings.controller} controllers: publish a Linux release (go-deploy package) there, not S1 firmware.`);
+  }
 
   // The manifest as it stands: a folder in another format is never written into.
   if (manifest?.error) throw fail(422, `The folder ${appId} holds a manifest.json that cannot be read (${manifest.error}); fix it before publishing.`);

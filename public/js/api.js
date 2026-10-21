@@ -34,8 +34,13 @@
  *   controller?: string | null, controllerSource?: ControllerSource | null,
  *   controllers: ControllerCounts & { versions: { version: string | null, count: number }[] },
  *   releases: Release[], linuxVersions: LinuxVersion[], otherObjects: { key: string, size: number, uploaded: string | null }[],
- *   downloads: Downloads, manifestError?: string, distributionUrls?: string[] }} FolderDetail
+ *   downloads: Downloads, manifestError?: string, distributionUrls?: string[],
+ *   package?: import('./package.js').PackageDefinition | null, packageSource?: 'manual' | null,
+ *   latestVersionManifest?: any, latestVersionManifestError?: string | null }} FolderDetail
  *   distributionUrl: the host of the manifest's binary URLs, or the one chosen at New application
+ *   package: a Linux application's package definition; latestVersionManifest: the parsed v<latest>/manifest.json
+ * @typedef {{ tarballKey: string, manifestKey: string, rootManifestKey: string, version: string, released: string,
+ *   sha256: string, sizeBytes: number, previousLatest: string | null, latestVersion: string, replaced: boolean }} LinuxPublishResult
  * @typedef {{ customer: FolderCustomer | null, controller: string | null, controllerSource: ControllerSource | null }} FolderSettings
  * @typedef {{ appId: string, publicKey: string, source: 'generated' | 'imported', createdAt: string, createdBy: string, inBucket: boolean,
  *   customer: FolderCustomer | null, controller: string | null }} KeyListEntry
@@ -93,6 +98,24 @@ export async function api(method, path, body) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw failure(res.status, data);
   return data;
+}
+
+/**
+ * GET a file (the tarball of a Linux release, for the post-install import).
+ * @param {string} path  under /api
+ * @returns {Promise<Uint8Array>}
+ */
+export async function getBinary(path) {
+  let res;
+  try {
+    res = await fetch(`/api${path}`, { headers: { accept: 'application/octet-stream, application/json' }, credentials: 'same-origin' });
+  } catch {
+    throw new ApiError(NO_CONNECTION, 0);
+  }
+  const type = res.headers.get('content-type') || '';
+  if (res.redirected || type.includes('text/html')) throw new ApiError(SESSION_EXPIRED, 401);
+  if (!res.ok) throw failure(res.status, await res.json().catch(() => ({})));
+  return new Uint8Array(await res.arrayBuffer());
 }
 
 /** The filename in a Content-Disposition header, or null. @param {string | null} header */

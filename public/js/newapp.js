@@ -1,13 +1,16 @@
 // @ts-check
 // New application: the card at the bottom of Status (and an App ID that does not exist yet).
-// App ID, customer, controller (S1 only: upload and signing here are S1 only) and the
-// distribution host → POST /api/folders → its folder page, where the key and the first
-// release follow. Nothing is written to the bucket until that first release.
+// App ID, customer and controller → POST /api/folders → its folder page, where the rest
+// follows: for S1 the signing key and the first release (and here the distribution host);
+// for M1, L4 and HMI1 the package definition and the first release (no host: Linux packages
+// are downloaded through the Moduline dashboard, the root manifest holds relative paths).
+// Nothing is written to the bucket until that first release.
 
 import { ApiError, api } from './api.js';
 import { esc, field, toast } from './lib.js';
+import { linuxAppIdProblem } from './package.js';
 import { appIdProblem } from './source.js';
-import { formDialog, formValues } from './ui.js';
+import { CONTROLLERS, formDialog, formValues } from './ui.js';
 
 /**
  * The bucket's two hosts (cloud-r2-distribution.md §2.1), for when the Worker does not send
@@ -15,7 +18,13 @@ import { formDialog, formValues } from './ui.js';
  */
 export const DEFAULT_DISTRIBUTION_URLS = ['https://deploy.gocontroll.tech', 'https://deploy.gocontroll.com'];
 
-const APP_ID_HINT = 'The App ID the controllers carry: 1–32 characters, no spaces and no "/". It names the folder and goes into every container header.';
+const HINTS = {
+  S1: 'The App ID the controllers carry: 1–32 characters, no spaces and no "/". It names the folder and goes into every container header.',
+  linux: 'Lower case: letters, digits, ".", "_" and "-", starting with a letter or digit (as app_id in r2-deploy.config.json). It names the folder.',
+};
+
+/** @param {string} controller @param {string} appId */
+const problemFor = (controller, appId) => (controller === 'S1' ? appIdProblem(appId) : linuxAppIdProblem(appId));
 
 /**
  * Ask for a new application and create it; afterwards its folder page opens.
@@ -31,43 +40,59 @@ export async function newApplication(opts) {
   /** @type {{ appId: string | null, existed: boolean }} */
   const out = { appId: null, existed: false };
   const idOf = (/** @type {HTMLFormElement} */ form) => String(formValues(form).appId ?? '').trim();
+  const controllerOf = (/** @type {HTMLFormElement} */ form) => String(formValues(form).controller ?? 'S1');
 
   const ok = await formDialog({
     title: 'New application',
     submitLabel: 'Create application',
-    body: `<p>A folder in the distribution bucket for one S1 application, named after its App ID. Its signing key and first release follow on its page.</p>
-      ${field('App ID', (id) => `<input id="${id}" name="appId" class="mono" maxlength="32" autocomplete="off" spellcheck="false" autocapitalize="off"
-        placeholder="GOCOXYZ" value="${esc(opts.appId ?? '')}">`, '', `<span data-appid-hint>${esc(APP_ID_HINT)}</span>`)}
+    body: `<p>A folder in the distribution bucket for one application, named after its App ID. What goes into it follows on its page.</p>
+      ${field('Controller', (id) => `<select id="${id}" name="controller">${CONTROLLERS.map((c) => `<option value="${c}"${c === 'S1' ? ' selected' : ''}>${c}</option>`).join('')}</select>`,
+        '', '<span data-controller-hint></span>')}
+      ${field('App ID', (id) => `<input id="${id}" name="appId" class="mono" maxlength="64" autocomplete="off" spellcheck="false" autocapitalize="off"
+        placeholder="GOCOXYZ" value="${esc(opts.appId ?? '')}">`, '', '<span data-appid-hint></span>')}
       ${field('Customer', (id) => `<select id="${id}" name="customerId"><option value="">No customer yet</option>
         ${customers.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`, '', 'Customers are managed in the CRM.')}
-      ${field('Controller', (id) => `<select id="${id}" name="controller" disabled><option value="S1" selected>S1</option></select>`, '',
-        'Only S1 applications are published here. Releases for Linux controllers (M1, L4, HMI1) are published by go-deploy, not in Deploy.')}
+      <div data-host>
       ${field('Distribution host', (id) => `<select id="${id}" name="distributionUrl">${dists.map((u, i) => `<option value="${esc(u)}"${i === 0 ? ' selected' : ''}>${esc(u)}</option>`).join('')}</select>`,
-        '', 'The binary URLs in its manifest start with it, and its controllers carry the same one. Both hosts serve the same bucket.')}`,
+        '', 'The binary URLs in its manifest start with it, and its controllers carry the same one. Both hosts serve the same bucket.')}
+      </div>`,
     onOpen: (form) => {
-      const hint = /** @type {HTMLElement} */ (form.querySelector('[data-appid-hint]'));
+      const appHint = /** @type {HTMLElement} */ (form.querySelector('[data-appid-hint]'));
+      const ctlHint = /** @type {HTMLElement} */ (form.querySelector('[data-controller-hint]'));
+      const host = /** @type {HTMLElement} */ (form.querySelector('[data-host]'));
       const input = /** @type {HTMLInputElement} */ (form.querySelector('[name=appId]'));
       const show = () => {
+        const controller = controllerOf(form);
+        const s1 = controller === 'S1';
+        host.hidden = !s1;
+        input.placeholder = s1 ? 'GOCOXYZ' : 'customer-application';
+        input.maxLength = s1 ? 32 : 64;
+        ctlHint.textContent = s1
+          ? 'S1: signed GOCO binaries, which controllers download from the distribution host.'
+          : `${controller}: a Linux application. Its releases are go-deploy packages (files plus a post-install), installed through the Moduline dashboard; they are not signed.`;
         const id = idOf(form);
-        const problem = id ? appIdProblem(id) : null;
+        const problem = id ? problemFor(controller, id) : null;
         const other = byLower.get(id.toLowerCase());
-        if (problem) hint.innerHTML = `<span class="error">${esc(problem)}</span>`;
-        else if (existing.has(id)) hint.innerHTML = `<span class="error"><span class="mono">${esc(id)}</span> exists already.</span> <a href="#/folders/${encodeURIComponent(id)}">Open it</a>`;
-        else if (other) hint.innerHTML = `<span class="error">There is a folder <span class="mono">${esc(other)}</span>: App IDs are case-sensitive, so this would be another one.</span>`;
-        else hint.textContent = APP_ID_HINT;
+        if (problem) appHint.innerHTML = `<span class="error">${esc(problem)}</span>`;
+        else if (existing.has(id)) appHint.innerHTML = `<span class="error"><span class="mono">${esc(id)}</span> exists already.</span> <a href="#/folders/${encodeURIComponent(id)}">Open it</a>`;
+        else if (other) appHint.innerHTML = `<span class="error">There is a folder <span class="mono">${esc(other)}</span>: App IDs are case-sensitive, so this would be another one.</span>`;
+        else appHint.textContent = s1 ? HINTS.S1 : HINTS.linux;
         if (problem || existing.has(id)) input.setAttribute('aria-invalid', 'true');
         else input.removeAttribute('aria-invalid');
       };
       input.addEventListener('input', show);
-      if (input.value) show();
+      form.querySelector('[name=controller]')?.addEventListener('change', show);
+      show();
     },
-    valid: (form) => { const id = idOf(form); return Boolean(id) && !appIdProblem(id) && !existing.has(id); },
+    valid: (form) => { const id = idOf(form); return Boolean(id) && !problemFor(controllerOf(form), id) && !existing.has(id); },
     submit: async (form) => {
       const v = formValues(form);
       const appId = idOf(form);
+      const controller = controllerOf(form);
       try {
         const res = await api('POST', '/folders', {
-          appId, customerId: v.customerId ? Number(v.customerId) : null, controller: 'S1', distributionUrl: v.distributionUrl,
+          appId, customerId: v.customerId ? Number(v.customerId) : null, controller,
+          ...(controller === 'S1' ? { distributionUrl: v.distributionUrl } : {}),
         });
         out.appId = typeof res?.appId === 'string' ? res.appId : appId;
       } catch (err) {

@@ -1,18 +1,20 @@
 # GOcontroll Deploy
 
-Publishing Moduline **S1** firmware at **https://deploy.gocontroll.tools**: an STM32 application
-binary goes into GOcontroll's own distribution bucket (R2 `gocontroll-deploy`), signed with the
-folder's key when it has one, and its manifest points at it, so controllers on update-to-latest
-install it. A binary can also be signed without publishing it (the signed container comes back
+Publishing controller applications at **https://deploy.gocontroll.tools**: Moduline **S1**
+firmware (an STM32 application binary in a GOCO container, signed with the folder's key when it
+has one) and, for **M1, L4 and HMI1**, Linux **go-deploy packages** (`update.tar.gz` + version
+manifest), into GOcontroll's own distribution bucket (R2 `gocontroll-deploy`), with the manifest
+pointing at them so controllers on update-to-latest install them. A binary can also be signed without publishing it (the signed container comes back
 as a download). One **signing key per App ID** lives here, sealed. And the **status** of every
 deployment: customers → their applications (App ID folders) → controller type, releases, file
-and header checks, the controllers on that App ID and the download counts. New S1 applications
-are made here; an application folder can be deleted, strongly protected and always archived
+and header checks, the controllers on that App ID and the download counts. New applications (S1
+and Linux) are made here; an application folder can be deleted, strongly protected and always archived
 first. For the members of the Entra group **`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> The Worker, the API and the pages are deployed (0.2.0 on 2026-10-21: Status and Keys tabs, new
-> applications, releases from the folder page, protected folder delete); the Access application
+> The Worker, the API and the pages are deployed (0.3.0 on 2026-10-21: Linux releases for M1, L4 and HMI1 next to
+> S1; 0.2.0: Status and Keys tabs, new applications, releases from the folder page, protected
+> folder delete); the Access application
 > (with its `/pub` bypass) exists and its AUD is in `POLICY_AUD`; `DEPLOY_GROUPS` and the hub tile
 > hold the object ID of `CF_Deploy`. Download counts wait for the Cloudflare API token
 > ([Download counts](#download-counts)).
@@ -25,9 +27,10 @@ Old links `#/publish` and `#/sign` (milestone 1) lead to the folder page with `?
 
 | Page | What you do there |
 |---|---|
-| **Status** (`#/`) | Totals: applications (S1 / Linux), releases, storage, controllers (how many online) and downloads over 7 and 30 days (approx., or *Not configured*). Below that every customer with its applications, then the folders without a customer. Columns: App ID, Controller (S1, M1, L4, HMI1 or a derived type such as M2), latest version, releases, whether a signing key exists, last upload. Search (App ID, customer, version) and a filter (all / S1 / S1 without key / M1 / L4 / HMI1 / controller unknown) work without reloading and stay in the address. At the bottom, **New application…**: App ID (checked as you type, including "already exists"), customer, controller fixed to S1 (Linux releases are published by go-deploy), and distribution host (default deploy.gocontroll.tech). Creating it opens its folder page. |
-| **Folder** (`#/folders/<APP_ID>`) | Customer and controller, each with **Change…** (by hand, or back to derived), plus latest, releases, last upload, distribution host and controllers on the App ID. **New release** in three steps (S1 only). **1 File:** pick or drop a `.bin`, S-record or GOCO container; it is read and compressed in the browser and the version comes from the filename or header, with what you type winning. **2 Sign:** the folder's public key with **Copy**; signing is ticked and locked when a key exists. Without a key you **Generate key…** or **Import key…** right there, or tick *Publish unsigned*. **3 Publish:** shows the latest release now, requires a description, warns when the version exists (**Replace…** asks first) or when latest moves back, then progress and the binary URL with **Copy**. **Download signed file instead** saves `<APP_ID>-<version>.bin` for a local upload with the Deployment Tool, without publishing. Below: the releases table with badges, the signing key card (Generate / Import / Replace with the App ID typed out), controllers per version, downloads per day, and files the manifest does not name. Linux folders (and non-S1 controllers) get a read-only note instead of New release. **Danger zone → Delete application folder…**: the dialog says what goes, that everything is archived first (manifest first) and that the signing key stays. Delete stays disabled until the App ID is typed, a reason of at least 10 characters is given and, if controllers still run the App ID, that is acknowledged. It then repeats the delete until done, with progress, and returns to Status with a notice; a delete that stopped halfway continues with **Continue deleting**. An unknown App ID offers **Create it as a new application…**. |
-| **Keys** (`#/keys`) | Applications with a key: App ID (link, with a badge if it is not in the bucket yet), customer, controller, the public key shortened with **Copy** for the full key, made when and by whom, generated or imported. S1 applications without a key: **Generate…** (the private key is shown once and must be acknowledged) or **Import…**. A short note on where the keys are kept: encrypted with the Secrets Store master key in `gocontroll-deploy-state`. |
+| **Status** (`#/`) | Totals, then every customer with its applications and the folders without a customer. Columns: App ID, Controller (S1, M1, L4, HMI1 or a derived type), latest, releases, signing key ("n/a" for Linux applications, which are not signed), last upload. Search and a filter (all / S1 / S1 without key / M1 / L4 / HMI1 / controller unknown) stay in the address. At the bottom, **New application…**: controller S1, M1, L4 or HMI1, then the App ID (S1: up to 32 characters, no spaces or "/"; Linux: lower case `^[a-z0-9][a-z0-9._-]*$`, up to 64), customer, and for S1 the distribution host. Creating it opens its folder page. |
+| **Folder, S1** (`#/folders/<APP_ID>`) | Customer and controller (**Change…** each). **New release** in three steps: **1 File** (`.bin` / S-record / GOCO container, version from the filename) → **2 Sign** (public key with Copy; Generate or Import a key there, or tick *publish unsigned*) → **3 Publish** (description, Replace… / latest-moves-back confirmations, binary URL with Copy), or **Download signed file instead**. Then the releases with header checks, the signing key card, controllers per version, downloads per day, other files, and the **Danger zone**. |
+| **Folder, Linux (M1, L4, HMI1)** | Customer and controller. **Package** card: the files in `files/` (name, destination, mode, owner, group) with Add / Edit / Remove; default owner and group; after install: Nothing, *Restart services* (comma list, nodered and go-simulink suggested, preview of the rendered `post-install.sh.tmpl`) or *A script of its own*. **Save package**; **Import r2-deploy.config.json…** (paste or file); **From the latest release** (files from its version manifest, `files/post-install.sh` from its tarball). **New release** in three steps: **1 Files**: one file per package file (choose per row, or drop several, matched by name), or *Upload a built package* (`update.tar.gz` + `manifest.json` from a CI `dist/`, sent as they are after a SHA-256 check here), plus the version (next patch of latest) and what changed. **2 Review**: not signed, and why (go-deploy checks SHA-256 only); size and SHA-256 of the tarball; the version manifest's files with destination, mode, owner and short SHA-256; the post-install script; `manifest.json` as it will be written; what happens to `latest_version`. **3 Publish**: Publish / Replace…, progress, result (keys written, SHA-256 with Copy, size, `latest_version`). Then the Versions table (with a Tarball download per version), controllers per version, downloads, other files, Danger zone. |
+| **Keys** (`#/keys`) | S1 applications with a key (App ID, customer, controller, short public key with Copy, made by and when, source) and without one (Generate / Import with the one-time backup). Plus: Linux packages (M1, L4, HMI1) are not signed; go-deploy checks the SHA-256 only. |
 
 ## How it works
 
@@ -94,8 +97,9 @@ Python-signed one, which must verify here; and one signed by `src/goco.ts`, whic
 `POST /api/releases` does what `r2.py publish()` does, with the folder's key held here:
 
 - a description is mandatory (the manifest carries it as the release note);
-- a folder holding a Linux manifest (go-deploy tarballs: `versions[]`) is refused, and so is a
-  manifest that cannot be read or has no `binaries`: Deploy never writes into another format;
+- a folder holding a Linux manifest (go-deploy packages: `versions[]`) is refused here (Linux
+  releases go through `POST /api/linux-releases`), and so is a manifest that cannot be read or
+  has no `binaries`: an S1 release never goes into another format;
 - a version already in the manifest is refused (409) unless *replace* is ticked: that binary
   may be on controllers already;
 - a folder with a signing key only gets signed releases, signed with that key: an unsigned
@@ -106,8 +110,8 @@ Python-signed one, which must verify here; and one signed by `src/goco.ts`, whic
 - the distribution URL of an existing folder is the host its manifest's URLs name; a folder
   made with *New application* takes the host chosen then (its settings); any other new folder
   the one sent, from `DISTRIBUTION_URLS` (the first is the default);
-- a folder whose controller is set to a Linux type gets no S1 release (422), and a folder that
-  is being deleted gets nothing new (409);
+- a folder whose controller is set to a Linux type gets no S1 release (422: it takes Linux
+  releases), and a folder that is being deleted gets nothing new (409);
 - the binary goes to `<APP_ID>/<APP_ID>-<version>.bin` **first**
   (`application/octet-stream`), then the manifest: `application_id`, `latest` = this version,
   `binaries[version] = { url: "<dist>/<key>?v=<first 16 hex of the payload SHA-256>",
@@ -122,16 +126,65 @@ Python-signed one, which must verify here; and one signed by `src/goco.ts`, whic
 Publishing an older version than `latest` is allowed (a bad release has to be undone) and the
 answer says so (`latestMovedBack`).
 
+### Linux applications (M1, L4, HMI1)
+
+The contract is `GOcontroll-Architecture/cloudflare/linux-application/spec.md` (§1 bucket, §2 root
+manifest, §3 version manifest, §4 tarball and go-deploy install); the producer Deploy mirrors is
+the CI pipeline of the skill `GOcontroll-Claude-Skills/r2-application-deploy-setup`
+(`build-package.py`, `upload-r2.py`). Deploy is a second producer next to it, in the same layout:
+
+```
+<APP_ID>/v<version>/update.tar.gz   application/gzip: files/<name> per package file (+ files/post-install.sh)
+<APP_ID>/v<version>/manifest.json   the version manifest, stored as sent
+<APP_ID>/manifest.json              root manifest { app_id, latest_version, versions[] }
+```
+
+- **Package definition** (`PUT /api/folders/:appId/package`, in `folders/<APP_ID>.json`): owner
+  and group (default `root`), the files (`name` in `files/`, absolute `destination`, octal
+  `mode`, optional owner/group; names and destinations unique, no `post-install.sh`), and the
+  post-install: none, restart services (the skill's `post-install.sh.tmpl` with the service
+  names), or a script. The browser builds the tarball (ustar, gzip) and the version manifest
+  (build-package.py's shape) from it; a CI-built `dist/` can be sent as it is.
+- **Publishing** (`POST /api/linux-releases`): the folder must be a Linux application (a
+  go-deploy root manifest, or settings with M1, L4 or HMI1) and never S1 (422 either way round);
+  version `major.minor.patch[-suffix]`; the version manifest must name this App ID, version and
+  description, have a `released` date, `files[]` with source `files/<name>`, absolute
+  destination, octal mode and lower-case SHA-256, and a `post_install` (if any) with source
+  `files/post-install.sh`; the package must be gzip, at most 100 MB. The Worker computes the
+  package's SHA-256 (streamed) and size; it does **not** unpack it, so the per-file SHA-256
+  values are the browser's or CI's (go-deploy checks them when it installs).
+- A version already in the root manifest is refused (409, `version`) unless *replace*; then the
+  old `v<version>/update.tar.gz` and `manifest.json` are first copied to `STATE`
+  `replaced/<APP_ID>/v<version>/<timestamp>/`.
+- Order: package, version manifest, then the root manifest, written over the version that was
+  read (etag; `If-None-Match: *` for the first), so a race is a 409. The root manifest is built
+  exactly as `upload-r2.py` does: the entry of this version replaced, versions sorted newest
+  first by its `semver_key` (numbers, a release above its pre-releases), **`latest_version` =
+  the highest** version (publishing a lower one does not make it latest; the answer says
+  `latestVersion`), every other field kept, `json.dumps(indent=2)` + newline with its ASCII
+  escaping. `test/linux-release.test.ts` holds the Worker to `upload-r2.py`'s own output
+  (`test/fixtures/linux/root-manifests.json`, made by `npm run fixtures:linux` with the real
+  `upload()` against an in-memory bucket).
+- **No signature**: the go-deploy contract has none; integrity is the SHA-256 in the root
+  manifest, which the Moduline dashboard sends with the update. The Keys page stays S1-only.
+- Controllers download through the Moduline signed route (`updates.gocontroll.tech`), not from a
+  Deploy host: root-manifest paths are relative, and a Linux application has no distribution URL.
+- `GET /api/folders/:appId/versions/:version/tarball` gives a stored package (Access-protected),
+  so the browser can take a post-install script over from the latest release.
+- Uploads are multipart; a whole request is at most about 100 MB at Cloudflare's edge, and the
+  Worker holds the package in memory once (128 MB per isolate), so stay well below that.
+
 ### Applications, settings and the controller type
 
 An application is a folder: what the bucket holds under `<APP_ID>/`, a signing key, or settings
 in `STATE` (`folders/<APP_ID>.json`). Any of the three makes it show on Status and gives it a
 page.
 
-- **New application** (`POST /api/folders`): only settings (customer, controller `S1`,
-  distribution URL, who and when); nothing in the bucket until its first release. 409 when the
-  App ID has objects, a key or settings already. Only S1 (422 otherwise: Linux releases are not
-  published here); App ID rules as for publishing.
+- **New application** (`POST /api/folders`): only settings (customer, controller, who and
+  when; for S1 also the distribution URL its first release gets); nothing in the bucket until its
+  first release. 409 when the App ID has objects, a key or settings already. S1 App IDs follow
+  the publishing rules; Linux ones (M1, L4, HMI1) `^[a-z0-9][a-z0-9._-]*$`, at most 64
+  characters (the CI config's pattern), without a distribution URL.
 - **Settings** (`PUT /api/folders/:appId/settings`): customer and controller by hand; a field
   left out stays, `null` goes back to the derived value.
 - **Controller type**, first that applies: set by hand (`S1`, `M1`, `L4`, `HMI1`); an S1 manifest
@@ -140,8 +193,8 @@ page.
   where a Linux manifest leaves the S1 controllers out (one App ID can have both); else none.
   The API gives `controller` and `controllerSource` (`manual`, `manifest`, `controllers` or
   `null`) next to `kind` (`s1`, `linux`, `unknown`: what the manifest is). Without a manifest a
-  folder counts as `s1` when its settings say S1, or when it has a key and no controller set
-  (keys are only made for S1).
+  folder counts as `s1` when its settings say S1 (or when it has a key and no controller set:
+  keys are only made for S1), and as `linux` when they say M1, L4 or HMI1.
 
 ### Deleting a folder
 
@@ -202,9 +255,10 @@ enough for this data, so it stays there.
 |---|---|
 | `keys/<APP_ID>.json` | The active signing key of a folder: `app_id`, `public_key` (130 hex), `sealed_private_key` (`v1.<iv>.<ciphertext+tag>`), `source` (generated / imported), `created_at`, `created_by`. Kept when the folder is deleted. |
 | `keys-retired/<APP_ID>/<timestamp>.json` | A key that was replaced, with who replaced it when. Never deleted. |
-| `folders/<APP_ID>.json` | Folder settings: `customer_id` and `controller` set by hand, `distribution_url` (an application made here, for its first release), `created_at` / `created_by`, `updated_at` / `updated_by`. Customer, controller and URL are also in the object's custom metadata (marked `index`), so the overview needs one listing. |
-| `log/<yyyy>/<mm>/<timestamp>-<APP_ID>-<version or action>.json` | One entry per publish, sign, key action (generate, import, replace), `create-folder`, `settings` and `delete-folder`: action, App ID, version, actor, time, signed, replaced, payload SHA-256, size, description; a publish also its URL, the previous `latest`, the previous manifest and where a replaced binary went; a delete its reason, objects, bytes, controllers and archive. |
+| `folders/<APP_ID>.json` | Folder settings: `customer_id` and `controller` set by hand, `distribution_url` (an S1 application made here, for its first release), `package` (a Linux application's package definition), `created_at` / `created_by`, `updated_at` / `updated_by`. Customer, controller and URL are also in the object's custom metadata (marked `index`), so the overview needs one listing. |
+| `log/<yyyy>/<mm>/<timestamp>-<APP_ID>-<version or action>.json` | One entry per publish, sign, key action (generate, import, replace), `publish-linux`, `create-folder`, `settings`, `package` and `delete-folder`: action, App ID, version, actor, time, signed, replaced, payload SHA-256, size, description; a publish also its URL, the previous `latest`, the previous manifest and where a replaced binary went; a delete its reason, objects, bytes, controllers and archive. |
 | `replaced/<APP_ID>/<APP_ID>-<version>/<timestamp>.bin` | A binary a publish overwrote. |
+| `replaced/<APP_ID>/v<version>/<timestamp>/update.tar.gz`, `…/manifest.json` | A Linux release a publish replaced. |
 | `deleted/<APP_ID>/<timestamp>/<original key>` | Every object of a deleted folder, plus its `folder-settings.json` ([Deleting a folder](#deleting-a-folder)). |
 | `deleting/<APP_ID>.json` | A delete under way: archive timestamp, actor, reason, progress. Gone when it is done. |
 | `downloads/<yyyy-mm-dd>.json` | Download counts of a finished UTC day ([Download counts](#download-counts)). |
@@ -312,6 +366,8 @@ curl localhost:8787/api/health   # {"ok":true,"version":…,"signingKeys":false,
 npm test                         # vitest in the Workers runtime; Cloudflare's API mocked
 npm run typecheck                # strict TS for the Worker, JSDoc-checked JS for public/js
 npm run fixtures:goco            # only when the container format changes (needs Python + cryptography)
+npm run fixtures:linux           # only when upload-r2.py changes (the skill next to GOcontroll-Team)
+npm run fixtures:tar             # only when build-package.py or public/js/package.js changes
 ```
 
 `.dev.vars` needs `DEPLOY_GROUPS` and `DEV_USER_GROUPS` with the same value (or every request
@@ -325,8 +381,9 @@ every pull request.
 ### API
 
 All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "…", "field"?: "…" }`
-(`field`: `appId`, `version`, `description`, `file`, `privateKey`, `sign`, `distributionUrl`,
-`confirm`, `customerId`, `controller`, `reason`, `acknowledgeControllers`, `days`) with
+(`field`: `appId`, `version`, `description`, `file`, `tarball`, `manifest`, `files.<n>.<name>`,
+`privateKey`, `sign`, `distributionUrl`, `confirm`, `customerId`, `controller`, `reason`,
+`acknowledgeControllers`, `days`) with
 400/403/404/409/413/415/422/500/503.
 
 | Method | Path | |
@@ -334,8 +391,11 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
 | GET | `/api/me` | Signed-in colleague: email, name, groups (object IDs and names, to look an ID up) |
 | GET | `/api/health` | `{ ok, version, signingKeys, downloads }`: whether the KEK and the API token are readable |
 | GET | `/api/overview` | Every folder (kind s1/linux/unknown, `controller` + `controllerSource`, latest, releases, bytes, last upload, distribution URL, key, `inBucket`, customer, controllers), the customers with their folders, totals, `distributionUrls`, download totals of 7 and 30 days |
-| GET | `/api/folders/:appId` | One folder: kind, controller, customer, key; releases with their stored header (range read), `keyMatches`, `digestMatches`, size, upload time and downloads; Linux versions; objects the manifest does not name; `objects: { count, bytes }`; `deleting` (an unfinished delete, or null); controllers per version and per distribution URL; downloads per day. 404 when nothing exists for it |
-| POST | `/api/folders` | `{ appId, customerId, controller: "S1", distributionUrl }` → 201 `{ appId }`: a new application (settings only). 409 when it exists, 422 for another controller |
+| GET | `/api/folders/:appId` | One folder: kind, controller, customer, key; releases with their stored header (range read), `keyMatches`, `digestMatches`, size, upload time and downloads; Linux versions; objects the manifest does not name; `objects: { count, bytes }`; `deleting` (an unfinished delete, or null); for a Linux application `package`, `packageSource`, and `latestVersionManifest` (the parsed version manifest of the latest release) or `latestVersionManifestError`; controllers per version and per distribution URL; downloads per day. 404 when nothing exists for it |
+| POST | `/api/folders` | `{ appId, customerId, controller: "S1" \| "M1" \| "L4" \| "HMI1", distributionUrl }` (no `distributionUrl` for Linux) → 201 `{ appId }`: a new application (settings only). 409 when it exists |
+| PUT | `/api/folders/:appId/package` | A Linux application's package definition `{ owner?, group?, files: [ { name, destination, mode, owner?, group? } ], post_install?: { mode: "none" } \| { mode: "services", services } \| { mode: "script", script } }` → `{ package, packageSource: "manual" }` |
+| POST | `/api/linux-releases` | multipart `appId`, `version`, `description`, `replace`, `tarball` (gzip, ≤ 100 MB), `manifest` (the version manifest, text or file) → `{ tarballKey, manifestKey, rootManifestKey, version, released, sha256, sizeBytes, previousLatest, latestVersion, replaced }` |
+| GET | `/api/folders/:appId/versions/:version/tarball` | The stored package of a Linux release (`application/gzip`, `private, no-store`) |
 | PUT | `/api/folders/:appId/settings` | `{ customerId?: number \| null, controller?: "S1" \| "M1" \| "L4" \| "HMI1" \| null }` (absent: unchanged, null: derived) → `{ customer, controller, controllerSource }` |
 | PUT | `/api/folders/:appId/customer` | `{ customerId: number \| null }` → `{ customer }` (the milestone-1 call; same as settings with the customer only) |
 | DELETE | `/api/folders/:appId` | `{ confirm, reason, acknowledgeControllers }` → `{ done, deleted, remaining, archive }`; repeat until `done` ([Deleting a folder](#deleting-a-folder)) |
@@ -400,6 +460,11 @@ curl -sI https://deploy.gocontroll.tools/   # 302 to gocontroll.cloudflareaccess
   (`log/…`, `previous_manifest`); put either back with
   `npx wrangler r2 object put gocontroll-deploy/<key> --remote --file=<file>` (content type
   `application/json` for a manifest, `application/octet-stream` for a binary).
+- **A Linux release**: publish the version before it again (*replace*) or a newer one; a
+  replaced one is in `STATE` `replaced/<APP_ID>/v<version>/<timestamp>/` (package and version
+  manifest) and the root manifest before every publish is in its `publish-linux` log entry
+  (`previous_manifest`); put them back with `npx wrangler r2 object put`, the root manifest last
+  (`application/gzip` for the package, `application/json` for the manifests).
 - **A key**: the replaced one is in `keys-retired/<APP_ID>/`; copying it back to
   `keys/<APP_ID>.json` makes it active again (it stays sealed for that App ID).
 - **A deleted folder**: put it back from `deleted/…`, the manifest last
@@ -408,7 +473,13 @@ curl -sI https://deploy.gocontroll.tools/   # 302 to gocontroll.cloudflareaccess
   and the hub tile. The distribution bucket is not this app's and stays as it is; keep the
   state bucket (the sealed keys, the log).
 
-## Relation to the Deployment Tool and the S1 knowledge base
+## Relation to the Deployment Tool, the CI pipeline and the specs
+
+Linux applications follow `GOcontroll-Architecture/cloudflare/linux-application/spec.md`; their
+other producer is the CI pipeline of the skill `r2-application-deploy-setup` (Deploy writes what
+its `upload-r2.py` writes), their consumers the Moduline dashboard (which sends the update with
+the root manifest's SHA-256 and the version manifest's `files[]`) and go-deploy on the
+controller.
 
 The **Deployment Tool** (`GOcontroll-Deployment-Tool`) programs and provisions S1 controllers
 over Bluetooth and publishes from a laptop with a `.cred` file; Deploy publishes to the same

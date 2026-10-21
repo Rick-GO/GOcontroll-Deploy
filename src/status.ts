@@ -36,6 +36,7 @@ import {
   type ControllerType, type SettingsIndexEntry, type StoredKey,
 } from './state';
 import { HttpError } from './lib/http';
+import { folderKey, isLinuxController, rootEntry } from './linux';
 
 export interface FolderCustomer { id: number; name: string; source: 'manual' | 'controllers' | 'project' }
 export type ControllerSource = 'manual' | 'manifest' | 'controllers' | null;
@@ -85,13 +86,15 @@ export function resolveController(manifestKindOfFolder: FolderKind, manual: Cont
 }
 
 /**
- * The kind of a folder: its manifest's; without a manifest, S1 when its settings say S1, or
- * when it has a signing key and no controller set (keys are only made for S1 folders).
+ * The kind of a folder: its manifest's; without a manifest, S1 when its settings say S1 (or
+ * when it has a signing key and no controller set: keys are only made for S1 folders), Linux
+ * when they say M1, L4 or HMI1.
  */
 export function folderKind(manifestDoc: Record<string, unknown> | null | undefined, hasManifest: boolean, settings: SettingsIndexEntry | null | undefined, hasKey: boolean): FolderKind {
   const kind = manifestKind(manifestDoc);
   if (kind !== 'unknown' || hasManifest) return kind;
   if (settings?.controller === 'S1') return 's1';
+  if (isLinuxController(settings?.controller)) return 'linux';
   if (hasKey && !settings?.controller) return 's1';
   return 'unknown';
 }
@@ -378,9 +381,30 @@ export async function folderDetail(env: Env, appId: string, days = 30) {
     // What a delete would take: every object under the folder.
     objects: { count: objects.length, bytes: objects.reduce((n, o) => n + o.size, 0) },
     deleting: deleting ? { startedAt: deleting.value.started_at, actor: deleting.value.actor, reason: deleting.value.reason } : null,
+    // A Linux application: what its releases hold, and the version manifest of its latest release
+    // (to take the package definition over from).
+    package: kind === 'linux' ? settings?.package ?? null : null,
+    packageSource: kind === 'linux' && settings?.package ? 'manual' as const : null,
+    ...(kind === 'linux' ? await latestVersionManifest(env.DEPLOY_BUCKET, appId, manifest?.doc, latest) : { latestVersionManifest: null, latestVersionManifestError: null }),
     downloads: downloadDays(window, appId),
     ...(manifest?.error ? { manifestError: manifest.error } : {}),
   };
+}
+
+/** The parsed version manifest of a Linux folder's latest release, or null with why. */
+async function latestVersionManifest(bucket: R2Bucket, appId: string, doc: Record<string, unknown> | null | undefined, latest: string | null): Promise<{ latestVersionManifest: Record<string, unknown> | null; latestVersionManifestError: string | null }> {
+  if (!latest) return { latestVersionManifest: null, latestVersionManifestError: null };
+  const key = folderKey(appId, rootEntry(doc, latest)?.manifest ?? `v${latest}/manifest.json`);
+  if (!key) return { latestVersionManifest: null, latestVersionManifestError: `The root manifest names no valid manifest path for ${latest}.` };
+  const obj = await bucket.get(key);
+  if (!obj) return { latestVersionManifest: null, latestVersionManifestError: `${key} is not in the bucket.` };
+  try {
+    const parsed = JSON.parse(await obj.text());
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return { latestVersionManifest: parsed, latestVersionManifestError: null };
+    return { latestVersionManifest: null, latestVersionManifestError: `${key} is not a JSON object.` };
+  } catch {
+    return { latestVersionManifest: null, latestVersionManifestError: `${key} is not valid JSON.` };
+  }
 }
 
 export function downloadDays(window: Awaited<ReturnType<typeof loadWindow>>, appId?: string): { configured: boolean; days: DayCounts[]; error?: string; missingDays?: number } {

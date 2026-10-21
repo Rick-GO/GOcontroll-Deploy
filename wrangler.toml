@@ -29,10 +29,11 @@ enabled = true
 [triggers]
 crons = ["17 2 * * *"]
 
-# The S1 distribution bucket: <APP_ID>/manifest.json and <APP_ID>/<APP_ID>-<version>.bin,
+# The distribution bucket. S1: <APP_ID>/manifest.json and <APP_ID>/<APP_ID>-<version>.bin,
 # public on https://deploy.gocontroll.com (R2 custom domain) and https://deploy.gocontroll.tech
-# (Worker gocontroll-deploy). Linux folders (go-deploy tarballs) live in it too; Deploy only
-# reads those. Publishing writes the binary first, then the manifest. Only the protected folder
+# (Worker gocontroll-deploy). Linux (M1, L4, HMI1, go-deploy): <APP_ID>/manifest.json (root) and
+# <APP_ID>/v<version>/update.tar.gz + manifest.json, as the CI pipeline writes them (src/linux.ts).
+# Publishing writes the release first, then the manifest. Only the protected folder
 # delete (DELETE /api/folders/:appId, src/delete.ts) removes objects, always archived to STATE
 # first (deleted/…); a replaced binary is archived as well (replaced/…).
 [[r2_buckets]]

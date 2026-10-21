@@ -17,10 +17,16 @@ import { meta } from './routes/meta';
 import { releases } from './routes/releases';
 
 const PUBLIC_PREFIX = '/pub/';
-/** The two calls that take an upload (multipart/form-data); everything else that writes is JSON. */
-const MULTIPART_PATHS = new Set(['/api/sign', '/api/releases']);
-/** Largest upload: a full S1 image, compressed, with room for the form around it. */
-const MAX_UPLOAD = 4 * 1024 * 1024;
+/**
+ * The calls that take an upload (multipart/form-data), with their largest body: a full S1
+ * image, compressed, or a Linux package of at most 100 MB, each with room for the form around
+ * it. Everything else that writes is JSON.
+ */
+const MULTIPART_PATHS = new Map([
+  ['/api/sign', 4 * 1024 * 1024],
+  ['/api/releases', 4 * 1024 * 1024],
+  ['/api/linux-releases', 102 * 1024 * 1024],
+]);
 
 const SECURITY_HEADERS: Record<string, string> = {
   'content-security-policy':
@@ -64,7 +70,9 @@ api.use('*', async (c, next) => {
     if (MULTIPART_PATHS.has(c.req.path)) {
       if (!origin || (c.req.header('sec-fetch-site') ?? 'same-origin') !== 'same-origin') return c.json({ error: 'Invalid origin.' }, 403);
       if (!type.startsWith('multipart/form-data')) return c.json({ error: 'Expected an upload (multipart/form-data).' }, 415);
-      if (Number(c.req.header('content-length') || 0) > MAX_UPLOAD) return c.json({ error: 'The upload is larger than an S1 image can be.' }, 413);
+      if (Number(c.req.header('content-length') || 0) > MULTIPART_PATHS.get(c.req.path)!) {
+        return c.json({ error: c.req.path === '/api/linux-releases' ? 'A package is at most 100 MB.' : 'The upload is larger than an S1 image can be.' }, 413);
+      }
     } else if (!type.startsWith('application/json')) {
       return c.json({ error: 'Expected JSON.' }, 415);
     }

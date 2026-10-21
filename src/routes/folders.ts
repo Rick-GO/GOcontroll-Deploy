@@ -11,6 +11,7 @@ import { deleteFolder, deleteUnderWay } from '../delete';
 import { loadWindow } from '../downloads';
 import { KeyFormatError, generateKey, parsePrivateKey, privateKeyPem, publicKeyHex, scalarB64, type KeyMaterial } from '../keys';
 import { HttpError, parse } from '../lib/http';
+import { LINUX_APP_ID, LINUX_APP_ID_MAX, LINUX_VERSION, PackageSchema, folderKey, isLinuxController, normalisePackage, rootEntry } from '../linux';
 import { folderParam, s1AppId } from '../lib/validate';
 import { downloadDays, folderDetail, folderIdentity, keysList, overview } from '../status';
 import {
@@ -61,16 +62,30 @@ const CreateBody = z.object({
   distributionUrl: z.string().optional(),
 });
 
+/** A new Linux App ID: config.schema.json's pattern (lower case), at most 64 characters. */
+function linuxAppId(value: unknown): string {
+  const v = typeof value === 'string' ? value.trim() : '';
+  if (!v) throw new HttpError(400, 'Fill in the App ID.', 'appId');
+  if (!LINUX_APP_ID.test(v) || v.length > LINUX_APP_ID_MAX) {
+    throw new HttpError(400, `A Linux App ID is at most ${LINUX_APP_ID_MAX} characters: lower-case letters, digits and . _ -, starting with a letter or digit.`, 'appId');
+  }
+  return v;
+}
+
 // An application made here before its first release: only settings in STATE, nothing in the
-// bucket yet. Only S1: upload and signing are S1-only.
+// bucket yet. S1: with the distribution host its first release gets. M1, L4, HMI1: no host
+// (go-deploy downloads go through the Moduline signed route; root-manifest paths are relative).
 folders.post('/folders', async (c) => {
   const body = parse(CreateBody, await c.req.json().catch(() => null));
-  const appId = s1AppId(body.appId);
   if (!(CONTROLLER_TYPES as readonly string[]).includes(body.controller)) throw new HttpError(400, `Choose one of ${CONTROLLER_TYPES.join(', ')}.`, 'controller');
-  if (body.controller !== 'S1') throw new HttpError(422, 'Releases for Linux controllers are not published here.', 'controller');
-  const bases = distributionUrls(c.env.DISTRIBUTION_URLS);
-  const dist = (body.distributionUrl ?? '').trim().replace(/\/+$/, '') || bases[0];
-  if (!dist || !bases.includes(dist)) throw new HttpError(422, `The distribution URL must be one of ${bases.join(', ')}.`, 'distributionUrl');
+  const linux = isLinuxController(body.controller);
+  const appId = linux ? linuxAppId(body.appId) : s1AppId(body.appId);
+  let dist: string | null = null;
+  if (!linux) {
+    const bases = distributionUrls(c.env.DISTRIBUTION_URLS);
+    dist = (body.distributionUrl ?? '').trim().replace(/\/+$/, '') || bases[0];
+    if (!dist || !bases.includes(dist)) throw new HttpError(422, `The distribution URL must be one of ${bases.join(', ')}.`, 'distributionUrl');
+  }
   if ((await folderExists(c.env, appId)) || (await deleteUnderWay(c.env, appId))) {
     throw new HttpError(409, `${appId} already exists. Open it instead.`, 'appId', { appId });
   }
@@ -78,11 +93,11 @@ folders.post('/folders', async (c) => {
   const user = c.get('user');
   const now = new Date().toISOString();
   const settings: FolderSettings = {
-    customer_id: body.customerId ?? null, controller: 'S1', distribution_url: dist,
+    customer_id: body.customerId ?? null, controller: body.controller as FolderSettings['controller'], distribution_url: dist,
     created_at: now, created_by: user.email, updated_at: now, updated_by: user.email,
   };
   if (!(await saveFolderSettings(c.env, appId, settings, 'absent'))) throw new HttpError(409, `${appId} already exists. Open it instead.`, 'appId', { appId });
-  await audit(c.env, { action: 'create-folder', app_id: appId, actor: user.email, customer_id: settings.customer_id, controller: 'S1', distribution_url: dist })
+  await audit(c.env, { action: 'create-folder', app_id: appId, actor: user.email, customer_id: settings.customer_id, controller: body.controller, distribution_url: dist })
     .catch((err) => console.error('audit', err));
   return c.json({ appId }, 201);
 });
@@ -128,6 +143,53 @@ folders.put('/folders/:appId/customer', async (c) => {
   return c.json({ customer });
 });
 
+// ── Package of a Linux application ───────────────────────────────────────────
+
+// What its releases hold: the files (name in files/, destination, mode, owner, group) and the
+// post-install (none, restart services with the skill's post-install.sh.tmpl, or a script).
+// The browser builds the tarball and the version manifest from it.
+folders.put('/folders/:appId/package', async (c) => {
+  const appId = folderParam(c.req.param('appId'));
+  const definition = normalisePackage(parse(PackageSchema, await c.req.json().catch(() => null)));
+  const [current, manifest] = await Promise.all([loadFolderSettingsVersioned(c.env, appId), readManifest(c.env.DEPLOY_BUCKET, appId)]);
+  const kind = manifestKind(manifest?.doc);
+  const linux = kind === 'linux' || (!manifest && isLinuxController(current?.value.controller));
+  if (kind === 's1' || current?.value.controller === 'S1' || !linux) {
+    if (!manifest && !current) throw new HttpError(404, `There is no folder ${appId} in the bucket.`);
+    throw new HttpError(422, `${appId} is not a Linux application: a package definition is for M1, L4 and HMI1 applications.`);
+  }
+  const user = c.get('user');
+  const next: FolderSettings = { ...(current?.value ?? { customer_id: null }), package: definition, updated_at: new Date().toISOString(), updated_by: user.email };
+  if (!(await saveFolderSettings(c.env, appId, next, current ? { etag: current.etag } : 'absent'))) {
+    throw new HttpError(409, 'The settings of this folder were changed a moment ago. Reload the page.');
+  }
+  await audit(c.env, { action: 'package', app_id: appId, actor: user.email, package: definition }).catch((err) => console.error('audit', err));
+  return c.json({ package: definition, packageSource: 'manual' });
+});
+
+// The stored package of a Linux release (Access-protected; for taking a post-install script
+// over from the latest release).
+folders.get('/folders/:appId/versions/:version/tarball', async (c) => {
+  const appId = folderParam(c.req.param('appId'));
+  const version = c.req.param('version');
+  if (!LINUX_VERSION.test(version)) throw new HttpError(404, 'Not found.');
+  const manifest = await readManifest(c.env.DEPLOY_BUCKET, appId);
+  if (manifestKind(manifest?.doc) !== 'linux') throw new HttpError(404, `${appId} holds no Linux releases.`);
+  const entry = rootEntry(manifest?.doc, version);
+  const key = entry ? folderKey(appId, entry.tarball ?? `v${version}/update.tar.gz`) : null;
+  const obj = key ? await c.env.DEPLOY_BUCKET.get(key) : null;
+  if (!obj) throw new HttpError(404, `Version ${version} of ${appId} has no package in the bucket.`);
+  return new Response(obj.body, {
+    headers: {
+      'content-type': 'application/gzip',
+      'content-length': String(obj.size),
+      'content-disposition': `attachment; filename="${`${appId}-v${version}-update.tar.gz`.replace(/[^A-Za-z0-9._-]/g, '_')}"`,
+      'cache-control': 'private, no-store',
+      'x-content-type-options': 'nosniff',
+    },
+  });
+});
+
 // ── Deleting a folder ────────────────────────────────────────────────────────
 
 const DeleteBody = z.object({
@@ -168,9 +230,9 @@ folders.post('/folders/:appId/key', async (c) => {
   const body = parse(KeyBody, await c.req.json().catch(() => null));
   const user = c.get('user');
 
-  const manifest = await readManifest(c.env.DEPLOY_BUCKET, appId);
-  if (manifestKind(manifest?.doc) === 'linux') {
-    throw new HttpError(422, `The folder ${appId} holds Linux releases (go-deploy tarballs); signing keys are for S1 firmware.`);
+  const [manifest, settings] = await Promise.all([readManifest(c.env.DEPLOY_BUCKET, appId), loadFolderSettingsVersioned(c.env, appId)]);
+  if (manifestKind(manifest?.doc) === 'linux' || isLinuxController(settings?.value.controller)) {
+    throw new HttpError(422, `The folder ${appId} is a Linux application; go-deploy packages are not signed (go-deploy checks their SHA-256), signing keys are for S1 firmware.`);
   }
   const existing = await loadKey(c.env, appId);
   if (existing && !(body.replace === true && body.confirm === appId)) {

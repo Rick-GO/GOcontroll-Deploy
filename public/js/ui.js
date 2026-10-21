@@ -50,16 +50,23 @@ export function controllerOf(f) {
   return f.kind === 's1' ? { controller: 'S1', source: 'manifest' } : { controller: null, source: null };
 }
 
+/** The Linux controllers: their releases are go-deploy packages (DESIGN-v3). */
+const LINUX_CONTROLLERS = ['M1', 'L4', 'HMI1'];
+
 /**
- * Whether S1 releases are published into this folder here (upload and signing are S1 only):
- * an S1 manifest, or no Linux manifest and a controller that is S1 or not known yet.
+ * What kind of release goes into this folder here: 's1' (signed GOCO binaries), 'linux'
+ * (go-deploy packages for M1, L4 and HMI1), or null (another controller type, read-only).
+ * The manifest decides first; without one the controller does, and an unknown controller
+ * is taken for S1 (a folder made from a key only is an S1 one).
  * @param {{ kind: string, controller?: string | null, controllerSource?: string | null }} f
+ * @returns {'s1' | 'linux' | null}
  */
-export function releasable(f) {
-  if (f.kind === 's1') return true;
-  if (f.kind === 'linux') return false;
+export function flavour(f) {
+  if (f.kind === 's1') return 's1';
+  if (f.kind === 'linux') return 'linux';
   const { controller } = controllerOf(f);
-  return controller === null || controller === 'S1';
+  if (controller === null || controller === 'S1') return 's1';
+  return LINUX_CONTROLLERS.includes(controller) ? 'linux' : null;
 }
 
 /** Where a folder's controller type comes from, in words. @param {string | null} source */

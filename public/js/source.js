@@ -244,7 +244,7 @@ export function readHeaderPreview(bytes) {
   const rest = 5 + width;
   if (bytes.length < rest + 11) return null;
   let appId = '';
-  for (const b of bytes.subarray(5, rest)) appId += b < 0x80 ? String.fromCharCode(b) : '�';
+  for (const b of bytes.subarray(5, rest)) appId += b < 0x80 ? String.fromCharCode(b) : '\ufffd';
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   return {
     headerVersion: bytes[4],

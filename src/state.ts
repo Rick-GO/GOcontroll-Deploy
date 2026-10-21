@@ -7,10 +7,12 @@
 //                                           kept when the folder is deleted
 //   keys-retired/<APP_ID>/<timestamp>.json  keys that were replaced; never deleted
 //   folders/<APP_ID>.json                   folder settings: customer and controller set by hand,
-//                                           distribution URL of a folder made here before its first release
+//                                           distribution URL of an S1 folder made here before its first
+//                                           release, the package definition of a Linux application
 //   log/<yyyy>/<mm>/<timestamp>-<APP_ID>-<version|action>.json   audit of every publish, sign, key, settings and delete action
 //   downloads/<yyyy-mm-dd>.json             download counts of a finished UTC day (src/downloads.ts)
 //   replaced/<APP_ID>/<APP_ID>-<version>/<timestamp>.bin   a binary that a publish overwrote (src/release.ts)
+//   replaced/<APP_ID>/v<version>/<timestamp>/update.tar.gz|manifest.json   a Linux release replaced (src/linux.ts)
 //   deleted/<APP_ID>/<timestamp>/<original key>            every object of a deleted folder (src/delete.ts),
 //                                           plus folder-settings.json
 //   deleting/<APP_ID>.json                  an unfinished delete: its archive timestamp, actor, reason
@@ -20,6 +22,7 @@
 
 import type { Env } from './env';
 import { HttpError } from './lib/http';
+import type { PackageDefinition } from './linux';
 
 export interface StoredKey {
   app_id: string;
@@ -38,6 +41,7 @@ export interface FolderSettings {
   customer_id: number | null;
   controller?: ControllerType | null;  // set by hand; null or absent: derived
   distribution_url?: string | null;    // a folder made here: the host its first release gets
+  package?: PackageDefinition | null;   // a Linux application: what its releases hold (src/linux.ts)
   created_at?: string;
   created_by?: string;
   updated_at: string;
@@ -175,7 +179,7 @@ export async function deleteFolderSettings(env: Env, appId: string): Promise<voi
 // ── Audit log ────────────────────────────────────────────────────────────────
 
 export interface AuditEntry {
-  action: 'publish' | 'sign' | 'key-generate' | 'key-import' | 'key-replace' | 'settings' | 'create-folder' | 'delete-folder';
+  action: 'publish' | 'publish-linux' | 'sign' | 'key-generate' | 'key-import' | 'key-replace' | 'settings' | 'package' | 'create-folder' | 'delete-folder';
   app_id: string;
   version?: string;
   actor: string;

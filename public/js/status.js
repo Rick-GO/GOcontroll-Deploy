@@ -8,7 +8,7 @@ import { api } from './api.js';
 import { fmtBytes, fmtCount, fmtDateTime, plural } from './format.js';
 import { esc, hydrateIcons } from './lib.js';
 import { newApplication } from './newapp.js';
-import { badge, controllerBadge, controllerOf, releasable, setHero, stale, wireRowLinks } from './ui.js';
+import { badge, controllerBadge, controllerOf, flavour, setHero, stale, wireRowLinks } from './ui.js';
 
 /**
  * @typedef {import('./ui.js').Ctx} Ctx
@@ -52,7 +52,7 @@ export async function renderStatus(ctx, params) {
     </section>
     <section class="panel">
       <div class="panel-head"><h2>New application</h2></div>
-      <p class="text">Start the folder of an S1 application: its App ID, customer and distribution host. Its signing key and first release follow on its page.</p>
+      <p class="text">Start the folder of an application: its App ID, customer and controller (S1, or M1, L4 and HMI1 for Linux). Its signing key or package, and its first release, follow on its page.</p>
       <div class="btn-row"><button type="button" class="btn primary" data-new-app data-icon="plus">New application…</button></div>
     </section>`;
   hydrateIcons(ctx.view);
@@ -155,7 +155,8 @@ function folderTable(folders, withCustomer = false) {
       <td data-label="Controller">${controllerBadge(controller, source)}</td>
       <td data-label="Latest" class="mono">${esc(f.latest ?? '—')}</td>
       <td data-label="Releases" class="num">${fmtCount(f.releases)}</td>
-      <td data-label="Signing key">${!releasable(f) ? '<span class="muted">n/a</span>' : f.hasKey ? badge('Yes', 'ok') : badge('No', 'warn')}</td>
+      <td data-label="Signing key">${flavour(f) !== 's1' ? '<span class="muted" title="Only S1 binaries are signed; go-deploy checks the SHA-256 of a Linux package">n/a</span>'
+        : f.hasKey ? badge('Yes', 'ok') : badge('No', 'warn')}</td>
       <td data-label="Last upload">${esc(fmtDateTime(f.lastUpload))}</td></tr>`;
     }).join('')}</tbody>
   </table></div>`;

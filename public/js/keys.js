@@ -72,6 +72,7 @@ export async function renderKeys(ctx) {
         <span class="mono">gocontroll-deploy-state</span>. Deploy only signs with it and never shows it again; a generated private key is shown
         once, right after it is made, for your offline backup (the password manager, or the application's .cred file). Replacing a key is done
         on the application's page, and archives the old one.</p>
+      <p class="text">Linux packages (M1, L4, HMI1) are not signed: go-deploy checks the SHA-256 of the tarball and of every file only, so those applications have no key here.</p>
     </section>`;
   hydrateIcons(ctx.view);
   const after = async (/** @type {Promise<unknown>} */ made) => { if (await made) await renderKeys(ctx); };

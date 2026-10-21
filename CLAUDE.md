@@ -30,9 +30,10 @@
   opnieuw met Python (`python -I`, de Deployment Tool ernaast). Die fixtures zijn de kruiscontrole met Python
   (unsigned byte-gelijk, Python-signed verifieert hier, TS-signed is door Python geverifieerd); niet met de hand wijzigen.
 - `src/goco.ts` en `src/keys.ts` hebben **geen imports** en alleen erasable TypeScript: het fixture-script draait ze onder Node.
-- Publiceren: binary eerst, dan manifest (etag-conditioneel, 409 bij race); onbekende manifestvelden blijven;
+- S1 publiceren: binary eerst, dan manifest (etag-conditioneel, 409 bij race); onbekende manifestvelden blijven;
   `?v=` = eerste 16 hex van de payload-SHA-256; een bestaande map houdt de host die zijn manifest noemt (nooit twee
-  hosts, §2.1); Linux-manifest (`versions[]`) = 422, nooit in schrijven; map met sleutel = alleen gesigneerd met die sleutel.
+  hosts, §2.1); een Linux-map (`versions[]` of settings M1/L4/HMI1) = 422 (die neemt Linux-releases); map met sleutel =
+  alleen gesigneerd met die sleutel.
 - **Alleen de beveiligde map-delete** (`DELETE /api/folders/:appId`, `src/delete.ts`) verwijdert objecten uit
   `gocontroll-deploy`, en altijd na archiveren naar `STATE` `deleted/<APP_ID>/<ts>/<key>` (grootte gecontroleerd).
   Manifest eerst en alleen, dan de rest; max. 200 per call, hervatbaar via `deleting/<APP_ID>.json`; vereist exacte
@@ -43,13 +44,30 @@
 ## Applicaties
 - Een applicatie = map: objecten onder `<APP_ID>/`, een sleutel, of settings (`folders/<APP_ID>.json`). Elk van de
   drie laat hem zien op Status en geeft hem een pagina.
-- *New application* (`POST /api/folders`) maakt alleen settings (customer, controller `S1`, distributiehost);
-  alleen S1, 409 als de App ID al bestaat. De eerste release neemt de host uit de settings.
+- *New application* (`POST /api/folders`) maakt alleen settings (customer, controller, wie/wanneer); 409 als de App ID
+  al bestaat. S1: met distributiehost (de eerste release neemt die). M1/L4/HMI1: Linux-App-ID
+  (`^[a-z0-9][a-z0-9._-]*$`, max. 64, zoals `config.schema.json`), geen host; zo'n map is `kind: "linux"`.
 - Controllertype: handmatig (`S1`/`M1`/`L4`/`HMI1`) → S1-manifest = `S1` → meest voorkomende
   `controller_series.controller_type` (zonder `Moduline `) van de controllers op die App ID; bij een Linux-manifest de
   S1-controllers niet meetellen (`gocontroll-application` heeft er één L4 en één S1) → `null`. `kind` blijft voor de
   logica (wat het manifest is).
 - Settings-index staat in de custom metadata van `folders/*.json` (`index`); zonder die markering leest Deploy het object.
+
+## Linux-applicaties (M1, L4, HMI1)
+- Contract: `GOcontroll-Architecture/cloudflare/linux-application/spec.md`. Deploy is een **tweede producent** naast de
+  CI van de skill `r2-application-deploy-setup` en schrijft wat `upload-r2.py` schrijft: `v<versie>/update.tar.gz`
+  (`application/gzip`), `v<versie>/manifest.json` (zoals verstuurd), dan het root-manifest. Root-manifest exact als
+  `upload-r2.py` (`src/godeploy.ts`): entry vervangen, sorteren op `semver_key` (release > pre-release), `latest_version`
+  = de **hoogste** versie, onbekende velden blijven, `json.dumps(indent=2)` + `\n` met ASCII-escapes. Kruiscontrole:
+  `npm run fixtures:linux` draait de echte `upload()` (boto3 gestubd, `python -I`); fixtures niet met de hand wijzigen.
+- Packagedefinitie in `folders/<APP_ID>.json` `package` (`PUT …/package`): bestanden (naam in `files/`, absolute
+  bestemming, octale mode, owner/group), post-install none/services (exact `post-install.sh.tmpl`)/script. De browser
+  bouwt tarball + versiemanifest; de Worker controleert het versiemanifest, berekent SHA-256 (gestreamd) en grootte, en
+  pakt **niet** uit (de per-file-SHA-256 komen van browser/CI; go-deploy controleert ze).
+- Bestaande versie zonder replace = 409; replace archiveert eerst naar `replaced/<APP_ID>/v<versie>/<ts>/`. Root-manifest
+  etag-conditioneel. S1 en Linux mengen nooit (422 beide kanten op). **Geen handtekening** (go-deploy kent er geen);
+  de Keys-pagina blijft S1. Downloads van controllers lopen via de signed route van Moduline, niet via Deploy.
+- Max. 100 MB per package (Cloudflare-edge ~100 MB per request; de Worker houdt het package één keer in geheugen).
 
 ## Sleutels
 - Eén P-256-sleutel per App ID in `STATE` `keys/<APP_ID>.json`, privédeel verzegeld met AES-256-GCM onder

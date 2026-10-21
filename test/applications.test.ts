@@ -61,9 +61,10 @@ describe('POST /api/folders', () => {
     }
   });
 
-  test('only S1; App ID rules as for publishing; the customer must exist', async () => {
+  test('S1 App ID rules as for publishing; a known controller; the customer must exist', async () => {
+    // Linux controllers have their own App ID rules (lower case): test/linux-release.test.ts.
     const lin = await call('POST', '/api/folders', { appId: appId('N'), customerId: null, controller: 'L4' });
-    expect([lin.status, lin.body.error]).toEqual([422, 'Releases for Linux controllers are not published here.']);
+    expect([lin.status, lin.body.field]).toEqual([400, 'appId']);
     expect((await call('POST', '/api/folders', { appId: appId('N'), customerId: null, controller: 'X1' })).status).toBe(400);
     for (const bad of ['', 'has space', 'a/b', 'X'.repeat(33)]) {
       const res = await call('POST', '/api/folders', { appId: bad, customerId: null, controller: 'S1' });

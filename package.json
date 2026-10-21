@@ -1,6 +1,6 @@
 {
   "name": "gocontroll-deploy-intranet",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "GOcontroll Deploy at deploy.gocontroll.tools: sign and publish S1 firmware to the gocontroll-deploy bucket",
@@ -11,7 +11,9 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p public/js",
     "db:setup:local": "node scripts/setup-local-db.mjs",
-    "fixtures:goco": "node scripts/goco-fixtures.mjs"
+    "fixtures:goco": "node scripts/goco-fixtures.mjs",
+    "fixtures:linux": "python -I scripts/linux-root-fixtures.py ../../GOcontroll-Claude-Skills/r2-application-deploy-setup test/fixtures/linux/root-manifests.json",
+    "fixtures:tar": "python -I scripts/tar-fixture.py"
   },
   "dependencies": {
     "hono": "^4.13.13",
