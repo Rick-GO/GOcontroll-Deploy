@@ -8,8 +8,10 @@ import { $, esc, hydrateBars, hydrateIcons, wireDialog } from './lib.js';
 
 /**
  * @typedef {import('./api.js').Me} Me
- * @typedef {{ me: Me, view: HTMLElement, nav: number }} Ctx
+ * @typedef {import('./api.js').FolderSummary} FolderSummary
+ * @typedef {{ me: Me, view: HTMLElement, nav: number, flash?: string | null }} Ctx
  *   nav counts navigations: a page that loaded slowly checks it before drawing (stale()).
+ *   flash: a notice (markup) for the next page to show once, such as "folder deleted" on Status.
  */
 
 /**
@@ -34,17 +36,46 @@ export function setHero(h) {
 
 // ── Badges ───────────────────────────────────────────────────────────────────
 
-const KIND_LABELS = /** @type {Record<string, string>} */ ({ s1: 'S1', linux: 'Linux', unknown: 'Unknown' });
+/** The controller types an application can be set to by hand (DESIGN-v2 "Controller type"). */
+export const CONTROLLERS = ['S1', 'M1', 'L4', 'HMI1'];
 
-/** S1 / Linux / Unknown. @param {string} kind */
-export const kindBadge = (kind) => `<span class="badge k-${esc(kind)}" title="${esc(kindTitle(kind))}">${esc(KIND_LABELS[kind] ?? kind)}</span>`;
+/**
+ * The controller of a folder and where it comes from. Until the Worker sends `controller`,
+ * an S1 manifest means S1.
+ * @param {{ kind: string, controller?: string | null, controllerSource?: string | null }} f
+ * @returns {{ controller: string | null, source: string | null }}
+ */
+export function controllerOf(f) {
+  if (f.controller !== undefined) return { controller: f.controller ?? null, source: f.controllerSource ?? null };
+  return f.kind === 's1' ? { controller: 'S1', source: 'manifest' } : { controller: null, source: null };
+}
 
-/** @param {string} kind */
-const kindTitle = (kind) => ({
-  s1: 'Moduline S1 application binaries (GOCO containers)',
-  linux: 'go-deploy tarballs for Linux controllers: read-only here',
-  unknown: 'A manifest this app does not recognise',
-})[kind] ?? '';
+/**
+ * Whether S1 releases are published into this folder here (upload and signing are S1 only):
+ * an S1 manifest, or no Linux manifest and a controller that is S1 or not known yet.
+ * @param {{ kind: string, controller?: string | null, controllerSource?: string | null }} f
+ */
+export function releasable(f) {
+  if (f.kind === 's1') return true;
+  if (f.kind === 'linux') return false;
+  const { controller } = controllerOf(f);
+  return controller === null || controller === 'S1';
+}
+
+/** Where a folder's controller type comes from, in words. @param {string | null} source */
+export const controllerSourceText = (source) => ({
+  manual: 'set by hand',
+  manifest: 'from its manifest',
+  controllers: 'from the controllers on this App ID',
+})[source ?? ''] ?? '';
+
+/** S1 / M1 / L4 / HMI1 (or a derived type), as a badge; a dash when unknown. @param {string | null} controller @param {string | null} [source] */
+export function controllerBadge(controller, source = null) {
+  if (!controller) return '<span class="muted" title="Not known: set it on the folder page">—</span>';
+  const tone = controller === 'S1' ? 's1' : 'linux';
+  const why = controllerSourceText(source);
+  return `<span class="badge k-${tone}"${why ? ` title="${esc(why)}"` : ''}>${esc(controller)}</span>`;
+}
 
 /**
  * A small coloured badge. @param {string} text @param {'ok'|'warn'|'err'|'info'|'muted'|'brand'} [tone] @param {string} [title]
@@ -116,21 +147,34 @@ export function runSteps(el, labels) {
  * Show an API error in a form: the message in its notice, and the field it names marked.
  * @param {HTMLElement} root @param {HTMLElement} notice @param {unknown} err
  */
-export function showError(root, notice, err) {
-  root.querySelectorAll('[aria-invalid]').forEach((el) => el.removeAttribute('aria-invalid'));
+function showError(root, notice, err) {
+  root.querySelectorAll('[data-flagged]').forEach((el) => { el.removeAttribute('aria-invalid'); delete /** @type {HTMLElement} */ (el).dataset.flagged; });
   notice.textContent = err instanceof Error ? err.message : String(err);
   notice.hidden = false;
   const name = err instanceof ApiError ? err.field : undefined;
   if (!name) return;
   const el = root.querySelector(`[name="${CSS.escape(name.split('.')[0])}"]`);
-  if (el instanceof HTMLElement) { el.setAttribute('aria-invalid', 'true'); el.focus(); }
+  if (el instanceof HTMLElement) flagField(el);
+}
+
+/**
+ * Mark a field a failed attempt names, and focus it; editing it unmarks it again (app.js).
+ * @param {HTMLElement} el
+ */
+export function flagField(el) {
+  el.setAttribute('aria-invalid', 'true');
+  el.dataset.flagged = '1';
+  el.focus();
 }
 
 /**
  * The generic form dialog. `body` is the markup of its fields; `submit` runs on submit and
  * closes the dialog when it resolves. An error stays in the dialog, at its field.
+ * `valid`, when given, keeps the submit button disabled until it returns true (checked on
+ * every edit and after a failed attempt).
  * @param {{ title: string, submitLabel: string, body: string, danger?: boolean, narrow?: boolean,
- *   onOpen?: (form: HTMLFormElement) => void, submit: (form: HTMLFormElement) => Promise<unknown> }} opts
+ *   onOpen?: (form: HTMLFormElement) => void, submit: (form: HTMLFormElement) => Promise<unknown>,
+ *   valid?: (form: HTMLFormElement) => boolean }} opts
  * @returns {Promise<boolean>} true when submitted
  */
 export function formDialog(opts) {
@@ -150,11 +194,14 @@ export function formDialog(opts) {
   button.classList.toggle('primary', !opts.danger);
   dialog.classList.toggle('narrow', Boolean(opts.narrow));
   notice.hidden = true;
+  const check = () => { if (opts.valid) button.disabled = !opts.valid(form); };
+  form.oninput = check;
+  form.onchange = check;
   return new Promise((resolve) => {
     let done = false;
     form.onsubmit = async (e) => {
       e.preventDefault();
-      if (button.disabled) return;
+      if (button.disabled || (opts.valid && !opts.valid(form))) return;
       button.disabled = true;
       button.setAttribute('aria-busy', 'true');
       try {
@@ -166,11 +213,19 @@ export function formDialog(opts) {
       } finally {
         button.disabled = false;
         button.removeAttribute('aria-busy');
+        check();
       }
     };
-    dialog.addEventListener('close', () => { form.onsubmit = null; $('form-dialog-body').innerHTML = ''; resolve(done); }, { once: true });
+    dialog.addEventListener('close', () => {
+      form.onsubmit = null;
+      form.oninput = null;
+      form.onchange = null;
+      $('form-dialog-body').innerHTML = '';
+      resolve(done);
+    }, { once: true });
     dialog.showModal();
     opts.onOpen?.(form);
+    check();
     const first = /** @type {HTMLElement | null} */ (form.querySelector('#form-dialog-body input:not([type=hidden]):not([type=radio]):not([type=file]), #form-dialog-body select, #form-dialog-body textarea'));
     first?.focus();
   });

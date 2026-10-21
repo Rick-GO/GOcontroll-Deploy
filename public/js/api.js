@@ -9,14 +9,16 @@
  * @typedef {{ email: string, name: string, groups: string[] }} Me
  * @typedef {{ id: number, name: string, source: 'manual' | 'controllers' | 'project' }} FolderCustomer
  * @typedef {{ total: number, online: number, upToDate: number }} ControllerCounts
+ * @typedef {'manual' | 'manifest' | 'controllers'} ControllerSource
  * @typedef {{ appId: string, kind: 's1' | 'linux' | 'unknown', latest: string | null, releases: number, bytes: number,
  *   lastUpload: string | null, distributionUrl: string | null, hasKey: boolean, customer: FolderCustomer | null,
- *   controllers: ControllerCounts }} FolderSummary
+ *   controller?: string | null, controllerSource?: ControllerSource | null, controllers: ControllerCounts }} FolderSummary
+ *   controller: S1, M1, L4, HMI1 (by hand) or a derived controller type such as M2
  * @typedef {{ configured: boolean, last7: number | null, last30: number | null, error?: string }} DownloadTotals
  * @typedef {{ folders: FolderSummary[], customers: { id: number, name: string, folders: string[] }[],
  *   totals: { folders: number, s1Folders: number, linuxFolders: number, releases: number, bytes: number, controllers: number },
  *   downloads: DownloadTotals, distributionUrls?: string[] }} Overview
- *   distributionUrls: the Worker's DISTRIBUTION_URLS when it sends them (publish.js falls back to the two hosts)
+ *   distributionUrls: the Worker's DISTRIBUTION_URLS, the first the default for a new application
  * @typedef {{ publicKey: string, source: 'generated' | 'imported', createdAt: string, createdBy: string }} KeyInfo
  * @typedef {{ privateKeyB64: string, privateKeyPem: string }} KeyBackup
  * @typedef {{ headerVersion: number, signed: boolean, appId: string, version: string | number[], compressedSize: number,
@@ -29,9 +31,16 @@
  * @typedef {{ configured: boolean, days: DownloadDay[], error?: string }} Downloads
  * @typedef {{ appId: string, kind: 's1' | 'linux' | 'unknown', latest: string | null, distributionUrl: string | null,
  *   mixedHosts: boolean, key: KeyInfo | null, customer: FolderCustomer | null,
+ *   controller?: string | null, controllerSource?: ControllerSource | null,
  *   controllers: ControllerCounts & { versions: { version: string | null, count: number }[] },
  *   releases: Release[], linuxVersions: LinuxVersion[], otherObjects: { key: string, size: number, uploaded: string | null }[],
- *   downloads: Downloads }} FolderDetail
+ *   downloads: Downloads, manifestError?: string, distributionUrls?: string[] }} FolderDetail
+ *   distributionUrl: the host of the manifest's binary URLs, or the one chosen at New application
+ * @typedef {{ customer: FolderCustomer | null, controller: string | null, controllerSource: ControllerSource | null }} FolderSettings
+ * @typedef {{ appId: string, publicKey: string, source: 'generated' | 'imported', createdAt: string, createdBy: string, inBucket: boolean,
+ *   customer: FolderCustomer | null, controller: string | null }} KeyListEntry
+ * @typedef {{ keys: KeyListEntry[], withoutKey: { appId: string, customer: FolderCustomer | null, controller: string | null }[] }} KeyList
+ * @typedef {{ done: boolean, deleted: number, remaining: number, archive: string }} DeleteStep
  * @typedef {{ binaryKey: string, binaryUrl: string, manifestKey: string, version: string, releaseDate: string,
  *   previousLatest: string | null, replaced: boolean, latestMovedBack: boolean, signed: boolean }} PublishResult
  */

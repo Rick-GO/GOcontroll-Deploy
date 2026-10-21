@@ -137,7 +137,7 @@ function describe(p) {
 }
 
 /** The version the file suggests: from its name, else from its container header. @param {Picked | null} p */
-export const suggestedVersion = (p) => (p ? p.source.versionFromName ?? p.source.header?.version ?? '' : '');
+const suggestedVersion = (p) => (p ? p.source.versionFromName ?? p.source.header?.version ?? '' : '');
 
 /**
  * Fill in the version field from a newly chosen file, unless the colleague typed one: what

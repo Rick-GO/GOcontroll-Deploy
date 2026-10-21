@@ -3,12 +3,17 @@
 // (2026-10-21) the account was at the Free-plan D1 limit, and R2 is enough for this data.
 // Layout:
 //
-//   keys/<APP_ID>.json                      active signing key of a folder (private key sealed)
+//   keys/<APP_ID>.json                      active signing key of a folder (private key sealed);
+//                                           kept when the folder is deleted
 //   keys-retired/<APP_ID>/<timestamp>.json  keys that were replaced; never deleted
-//   folders/<APP_ID>.json                   folder settings: the customer assigned by hand
-//   log/<yyyy>/<mm>/<timestamp>-<APP_ID>-<version|action>.json   audit of every publish, sign and key action
+//   folders/<APP_ID>.json                   folder settings: customer and controller set by hand,
+//                                           distribution URL of a folder made here before its first release
+//   log/<yyyy>/<mm>/<timestamp>-<APP_ID>-<version|action>.json   audit of every publish, sign, key, settings and delete action
 //   downloads/<yyyy-mm-dd>.json             download counts of a finished UTC day (src/downloads.ts)
 //   replaced/<APP_ID>/<APP_ID>-<version>/<timestamp>.bin   a binary that a publish overwrote (src/release.ts)
+//   deleted/<APP_ID>/<timestamp>/<original key>            every object of a deleted folder (src/delete.ts),
+//                                           plus folder-settings.json
+//   deleting/<APP_ID>.json                  an unfinished delete: its archive timestamp, actor, reason
 //
 // Writes that must not overwrite each other are conditional (an R2 etag): a key is created
 // only where none is, replaced only when it is still the one that was read.
@@ -25,11 +30,22 @@ export interface StoredKey {
   created_by: string;
 }
 
+/** The controller types a colleague can choose; derived ones can be any controller_series type. */
+export const CONTROLLER_TYPES = ['S1', 'M1', 'L4', 'HMI1'] as const;
+export type ControllerType = (typeof CONTROLLER_TYPES)[number];
+
 export interface FolderSettings {
   customer_id: number | null;
+  controller?: ControllerType | null;  // set by hand; null or absent: derived
+  distribution_url?: string | null;    // a folder made here: the host its first release gets
+  created_at?: string;
+  created_by?: string;
   updated_at: string;
   updated_by: string;
 }
+
+/** What the overview needs of a folder's settings, from the object's custom metadata. */
+export interface SettingsIndexEntry { customer_id: number | null; controller: ControllerType | null; distribution_url: string | null }
 
 export interface Versioned<T> { value: T; etag: string }
 
@@ -99,30 +115,67 @@ export async function loadFolderSettings(env: Env, appId: string): Promise<Folde
   return (await readJson<FolderSettings>(env.STATE, folderPath(appId)))?.value ?? null;
 }
 
+export async function loadFolderSettingsVersioned(env: Env, appId: string): Promise<Versioned<FolderSettings> | null> {
+  return readJson<FolderSettings>(env.STATE, folderPath(appId));
+}
+
+/** Marks settings whose custom metadata carries the index (customer, controller, distribution URL). */
+const INDEX_VERSION = '2';
+
+const asController = (v: unknown): ControllerType | null => (CONTROLLER_TYPES as readonly unknown[]).includes(v) ? v as ControllerType : null;
+
 /**
- * The customer assigned by hand per folder, from one listing: the id is also kept in the
- * object's custom metadata, so the overview reads no object per folder.
+ * The settings of every folder from one listing: customer, controller and distribution URL
+ * are also kept in the object's custom metadata, so the overview reads no object per folder.
  */
-export async function assignedCustomers(env: Env): Promise<Map<string, number | null>> {
+export async function settingsIndex(env: Env): Promise<Map<string, SettingsIndexEntry>> {
   const objects = await listAll(env.STATE, { prefix: 'folders/', include: ['customMetadata'] });
-  const out = new Map<string, number | null>();
-  for (const o of objects) {
-    if (!o.key.endsWith('.json')) continue;
-    const raw = o.customMetadata?.customer_id ?? '';
-    const id = raw ? Number(raw) : null;
-    out.set(o.key.slice('folders/'.length, -5), Number.isSafeInteger(id) ? id : null);
-  }
+  const out = new Map<string, SettingsIndexEntry>();
+  await Promise.all(objects.filter((o) => o.key.endsWith('.json')).map(async (o) => {
+    const appId = o.key.slice('folders/'.length, -5);
+    const m = o.customMetadata ?? {};
+    if (m.index !== INDEX_VERSION) {
+      // Written without this index (milestone 1, or put back by hand from an archive): read it.
+      const entry = settingsEntry((await readJson<FolderSettings>(env.STATE, o.key))?.value);
+      if (entry) out.set(appId, entry);
+      return;
+    }
+    const id = m.customer_id ? Number(m.customer_id) : null;
+    out.set(appId, {
+      customer_id: Number.isSafeInteger(id) ? id : null,
+      controller: asController(m.controller),
+      distribution_url: m.distribution_url || null,
+    });
+  }));
   return out;
 }
 
-export async function saveFolderSettings(env: Env, appId: string, settings: FolderSettings): Promise<void> {
-  await writeJson(env.STATE, folderPath(appId), settings, undefined, { customer_id: settings.customer_id === null ? '' : String(settings.customer_id) });
+export function settingsEntry(s: FolderSettings | null | undefined): SettingsIndexEntry | null {
+  if (!s) return null;
+  return { customer_id: s.customer_id ?? null, controller: asController(s.controller), distribution_url: s.distribution_url ?? null };
+}
+
+/**
+ * Write a folder's settings. `onlyIf` 'absent' creates them only where none are (a new
+ * folder); returns false when the condition did not hold.
+ */
+export async function saveFolderSettings(env: Env, appId: string, settings: FolderSettings, onlyIf?: 'absent' | { etag: string }): Promise<boolean> {
+  return writeJson(env.STATE, folderPath(appId), settings, onlyIf, {
+    customer_id: settings.customer_id === null || settings.customer_id === undefined ? '' : String(settings.customer_id),
+    controller: settings.controller ?? '',
+    distribution_url: settings.distribution_url ?? '',
+    index: INDEX_VERSION,
+  });
+}
+
+export async function deleteFolderSettings(env: Env, appId: string): Promise<void> {
+  await env.STATE.delete(folderPath(appId));
 }
 
 // ── Audit log ────────────────────────────────────────────────────────────────
 
 export interface AuditEntry {
-  action: 'publish' | 'sign' | 'key-generate' | 'key-import' | 'key-replace' | 'assign-customer';
+  action: 'publish' | 'sign' | 'key-generate' | 'key-import' | 'key-replace' | 'settings' | 'create-folder' | 'delete-folder';
   app_id: string;
   version?: string;
   actor: string;

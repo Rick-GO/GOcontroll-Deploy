@@ -18,7 +18,8 @@ import {
 import { parsePublicKeyHex } from './keys';
 import { HttpError } from './lib/http';
 import { s1AppId, versionField } from './lib/validate';
-import { audit, loadKey } from './state';
+import { deleteUnderWay } from './delete';
+import { audit, loadFolderSettings, loadKey } from './state';
 import { folderSigner } from './vault';
 
 /** Largest compressed payload accepted: a raw image that fills the flash, plus zlib's worst-case overhead. */
@@ -163,8 +164,14 @@ export async function publish(env: Env, user: User, form: FormData): Promise<Pub
   const replace = form.get('replace') === '1';
   const bases = distributionUrls(env.DISTRIBUTION_URLS);
 
+  // A folder being deleted gets nothing new; one set to a Linux controller gets no S1 release.
+  const [manifest, settings, deleting] = await Promise.all([
+    readManifest(env.DEPLOY_BUCKET, appId), loadFolderSettings(env, appId), deleteUnderWay(env, appId),
+  ]);
+  if (deleting) throw new HttpError(409, `The folder ${appId} is being deleted. Finish or wait for that first.`);
+  if (settings?.controller && settings.controller !== 'S1') throw fail(422, 'Releases for Linux controllers are not published here.');
+
   // The manifest as it stands: a folder in another format is never written into.
-  const manifest = await readManifest(env.DEPLOY_BUCKET, appId);
   if (manifest?.error) throw fail(422, `The folder ${appId} holds a manifest.json that cannot be read (${manifest.error}); fix it before publishing.`);
   const doc: Record<string, unknown> = manifest?.doc ? structuredClone(manifest.doc) : {};
   const kind = manifestKind(doc);
@@ -188,6 +195,9 @@ export async function publish(env: Env, user: User, form: FormData): Promise<Pub
       throw fail(422, `The manifest of ${appId} names ${named ?? 'no valid URL'}, which is not one of this bucket’s distribution URLs (${bases.join(', ')}).`);
     }
     distribution = named;
+  } else if (settings?.distribution_url && bases.includes(settings.distribution_url)) {
+    // A folder made here (POST /api/folders) chose its host then.
+    distribution = settings.distribution_url;
   } else {
     const field = form.get('distributionUrl');
     const asked = typeof field === 'string' ? field.trim().replace(/\/+$/, '') : '';

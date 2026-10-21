@@ -1,98 +1,165 @@
 // @ts-check
-// One deployment folder (#/folders/<APP_ID>): its summary and distribution host, the
-// customer it belongs to (assigned by hand, or derived), its signing key, the releases in
-// its manifest with what their headers say, the controllers per version and the downloads
-// per day. A Linux folder (go-deploy tarballs) is shown read-only. An App ID that is not in
-// the bucket yet still gets its key panel, so a key can be made before the first release.
+// One application folder (#/folders/<APP_ID>): its customer and controller type (both can be
+// set by hand), the New release flow (S1 only: release.js), the releases in its manifest with
+// what their headers say, its signing key, the controllers per version, the downloads per
+// day, files the manifest does not name, and the danger zone (danger.js). A Linux folder
+// (go-deploy tarballs) is shown read-only. An App ID that does not exist gets a way to create it.
 
 import { ApiError, api, folderPath } from './api.js';
 import { fmtBytes, fmtCount, fmtDateTime, fmtDay, fmtDayShort, hostOf, plural, shortHash, versionText } from './format.js';
 import { esc, field, hydrateIcons, toast } from './lib.js';
 import { keyPanel, wireKeyPanel } from './key.js';
+import { dangerPanel, deleteFolder } from './danger.js';
+import { newApplication } from './newapp.js';
+import { mountRelease } from './release.js';
 import { compareVersions } from './source.js';
-import { badge, barList, customerSource, drawBars, formDialog, formValues, kindBadge, setHero, stale } from './ui.js';
+import {
+  CONTROLLERS, badge, barList, controllerBadge, controllerOf, controllerSourceText, customerSource, drawBars, formDialog, formValues,
+  releasable, setHero, stale,
+} from './ui.js';
 
 /**
  * @typedef {import('./ui.js').Ctx} Ctx
  * @typedef {import('./api.js').FolderDetail} FolderDetail
+ * @typedef {import('./api.js').FolderSettings} FolderSettings
+ * @typedef {import('./api.js').KeyInfo} KeyInfo
+ * @typedef {import('./api.js').PublishResult} PublishResult
  * @typedef {import('./api.js').Release} Release
  * @typedef {import('./api.js').FolderCustomer} FolderCustomer
  */
 
-/** @param {Ctx} ctx @param {string} appId */
-export async function renderFolder(ctx, appId) {
+/**
+ * @param {Ctx} ctx @param {string} appId
+ * @param {{ published?: PublishResult }} [after]  the release just published, shown on top of New release
+ */
+export async function renderFolder(ctx, appId, after = {}) {
   const nav = ctx.nav;
   /** @type {FolderDetail} */
   let d;
   try {
     d = await api('GET', folderPath(appId));
   } catch (err) {
-    if (err instanceof ApiError && err.status === 404 && !stale(ctx, nav)) return renderNotInBucket(ctx, appId);
+    if (err instanceof ApiError && err.status === 404 && !stale(ctx, nav)) return renderMissing(ctx, appId);
     throw err;
   }
   if (stale(ctx, nav)) return;
-  const reload = () => renderFolder(ctx, appId);
-  const publishable = d.kind !== 'linux';
+  const canRelease = releasable(d);
   const releases = [...(d.releases ?? [])].sort((a, b) => compareVersions(b.version, a.version));
-  const bytes = releases.reduce((n, r) => n + (r.size ?? 0), 0);
-  const uploads = releases.map((r) => r.uploaded).filter(Boolean).sort();
-  setHero({
-    back: { href: '#/', label: 'Deployments' },
-    title: d.appId,
-    mono: true,
-    tags: `${kindBadge(d.kind)}${d.latest ? `<span>Latest <strong class="mono">${esc(d.latest)}</strong></span>` : ''}${
-      d.customer ? `<span>${esc(d.customer.name)}</span>` : ''}`,
-  });
-  const c = d.controllers;
+  drawHero(d);
   ctx.view.innerHTML = `
-    <section class="panel">
-      ${d.mixedHosts ? `<div class="notice warn">The binary URLs in this manifest name more than one host. A controller carries one distribution URL and
-        installs only binaries under that host, so not every controller can install every release. Move the App ID to one host
-        (GOcontroll-Deployment-Tool, <span class="mono">worker/README.md</span>).</div>` : ''}
-      <dl class="facts">
-        <div><dt>Kind</dt><dd>${d.kind === 'linux' ? 'Linux (go-deploy tarballs), read-only here' : d.kind === 's1' ? 'Moduline S1 application' : 'Unrecognised manifest'}</dd></div>
-        <div><dt>Latest</dt><dd class="mono">${esc(d.latest ?? '—')}</dd></div>
-        <div><dt>Releases</dt><dd>${publishable ? `${fmtCount(releases.length)}${bytes ? ` · ${esc(fmtBytes(bytes))}` : ''}` : fmtCount(d.linuxVersions?.length ?? 0)}</dd></div>
-        <div><dt>Last upload</dt><dd>${esc(fmtDateTime(uploads[uploads.length - 1]))}</dd></div>
-        <div><dt>Distribution host</dt><dd>${d.distributionUrl ? `<span class="mono">${esc(hostOf(d.distributionUrl))}</span>` : '—'}</dd></div>
-        <div><dt>Controllers</dt><dd>${c?.total ? `${fmtCount(c.total)} · ${fmtCount(c.online)} online · ${fmtCount(c.upToDate)} up to date` : 'None report this App ID'}</dd></div>
-        <div class="span-all"><dt>Customer</dt><dd>${customerText(d.customer)} <button type="button" class="link-btn" data-act="customer">Change…</button></dd></div>
-      </dl>
-      ${publishable ? `<div class="btn-row">
-        <a class="btn sm primary" href="#/publish?app=${encodeURIComponent(d.appId)}" data-icon="cloud-arrow-up">Publish a release</a>
-      </div>` : ''}
-    </section>
-    ${publishable ? keyPanel(d.appId, d.key) : ''}
-    ${publishable ? releasesPanel(d, releases) : linuxPanel(d)}
+    <section class="panel" id="folder-summary"></section>
+    ${canRelease ? '<section class="panel" id="release-panel"></section>' : readOnlyNote(d)}
+    ${canRelease ? releasesPanel(d, releases) : linuxPanel(d)}
+    ${canRelease ? keyPanel(d.key) : ''}
     <div class="two-up">
       ${controllersPanel(d)}
       ${downloadsPanel(d)}
     </div>
-    ${otherPanel(d)}`;
+    ${otherPanel(d)}
+    ${dangerPanel(d)}`;
   hydrateIcons(ctx.view);
   drawBars(ctx.view);
-  ctx.view.querySelector('[data-act="customer"]')?.addEventListener('click', () => changeCustomer(d.appId, d.customer, reload));
-  if (publishable) wireKeyPanel(ctx.view, d.appId, reload);
+
+  const summary = /** @type {HTMLElement} */ (ctx.view.querySelector('#folder-summary'));
+  const drawSummary = () => {
+    summary.innerHTML = summaryHtml(d, releases);
+    summary.querySelector('[data-act="customer"]')?.addEventListener('click', () => changeCustomer(d, applySettings));
+    summary.querySelector('[data-act="controller"]')?.addEventListener('click', () => changeController(d, applySettings));
+  };
+  /** New settings from the Worker: redraw in place, or the whole page when New release comes or goes. @param {FolderSettings} s */
+  const applySettings = async (s) => {
+    const before = releasable(d);
+    d = { ...d, customer: s.customer, controller: s.controller, controllerSource: s.controllerSource };
+    if (releasable(d) !== before) { await renderFolder(ctx, appId); return; }
+    drawHero(d);
+    drawSummary();
+  };
+  drawSummary();
+
+  /** @type {{ setKey: (key: KeyInfo | null) => void } | null} */
+  let release = null;
+  /** A key made in the key card or in step 2: both show it. @param {KeyInfo} key */
+  const keyChanged = (key) => {
+    d = { ...d, key };
+    const panel = ctx.view.querySelector('#key-panel');
+    if (panel) {
+      panel.outerHTML = keyPanel(key);
+      const fresh = /** @type {HTMLElement} */ (ctx.view.querySelector('#key-panel'));
+      hydrateIcons(fresh);
+      wireKeyPanel(fresh, d.appId, (k) => { keyChanged(k); release?.setKey(k); });
+    }
+  };
+  const releaseEl = /** @type {HTMLElement | null} */ (ctx.view.querySelector('#release-panel'));
+  if (releaseEl) {
+    release = mountRelease(releaseEl, {
+      detail: d,
+      published: after.published ?? null,
+      onKey: keyChanged,
+      onPublished: async (res) => {
+        await renderFolder(ctx, appId, { published: res });
+        ctx.view.querySelector('#release-panel')?.scrollIntoView({ block: 'start' });
+      },
+    });
+  }
+  const keyEl = /** @type {HTMLElement | null} */ (ctx.view.querySelector('#key-panel'));
+  if (keyEl) wireKeyPanel(keyEl, d.appId, (k) => { keyChanged(k); release?.setKey(k); });
+  ctx.view.querySelector('[data-delete]')?.addEventListener('click', () => deleteFolder(ctx, d));
 }
 
-/** An App ID without a folder in the bucket: only its key. @param {Ctx} ctx @param {string} appId */
-async function renderNotInBucket(ctx, appId) {
-  const nav = ctx.nav;
-  let key = null;
-  try {
-    key = await api('GET', `${folderPath(appId)}/key`);
-  } catch (err) {
-    if (!(err instanceof ApiError && err.status === 404)) throw err;
-  }
-  if (stale(ctx, nav)) return;
-  setHero({ back: { href: '#/', label: 'Deployments' }, title: appId, mono: true, lede: 'Not in the bucket yet.' });
+/** @param {FolderDetail} d */
+function drawHero(d) {
+  const { controller, source } = controllerOf(d);
+  setHero({
+    back: { href: '#/', label: 'Deployments' },
+    title: d.appId,
+    mono: true,
+    tags: `${controllerBadge(controller, source)}${d.latest ? `<span>Latest <strong class="mono">${esc(d.latest)}</strong></span>` : ''}${
+      d.customer ? `<span>${esc(d.customer.name)}</span>` : ''}`,
+  });
+}
+
+/** The facts at the top, with the customer and controller to change. @param {FolderDetail} d @param {Release[]} releases */
+function summaryHtml(d, releases) {
+  const { controller, source } = controllerOf(d);
+  const bytes = releases.reduce((n, r) => n + (r.size ?? 0), 0);
+  const uploads = releases.map((r) => r.uploaded).filter(Boolean).sort();
+  const c = d.controllers;
+  return `
+    ${d.mixedHosts ? `<div class="notice warn">The binary URLs in this manifest name more than one host. A controller carries one distribution URL and
+      installs only binaries under that host, so not every controller can install every release. Move the App ID to one host
+      (GOcontroll-Deployment-Tool, <span class="mono">worker/README.md</span>).</div>` : ''}
+    ${d.manifestError ? `<div class="notice err">The manifest cannot be read: ${esc(d.manifestError)}</div>` : ''}
+    <dl class="facts">
+      <div class="span-2"><dt>Customer</dt><dd>${customerText(d.customer)} <button type="button" class="link-btn" data-act="customer">Change…</button></dd></div>
+      <div><dt>Controller</dt><dd>${controller ? `<strong>${esc(controller)}</strong>` : '<span class="muted">Not known</span>'}${
+        source ? ` <span class="muted">(${esc(controllerSourceText(source))})</span>` : ''} <button type="button" class="link-btn" data-act="controller">Change…</button></dd></div>
+      <div><dt>Latest</dt><dd class="mono">${esc(d.latest ?? '—')}</dd></div>
+      <div><dt>Releases</dt><dd>${d.kind === 'linux'
+        ? `${fmtCount(d.linuxVersions?.length ?? 0)} (go-deploy)`
+        : `${fmtCount(releases.length)}${bytes ? ` · ${esc(fmtBytes(bytes))}` : ''}`}</dd></div>
+      <div><dt>Last upload</dt><dd>${esc(fmtDateTime(uploads[uploads.length - 1]))}</dd></div>
+      <div><dt>Distribution host</dt><dd>${d.distributionUrl ? `<span class="mono">${esc(hostOf(d.distributionUrl))}</span>` : '—'}</dd></div>
+      <div><dt>Controllers</dt><dd>${c?.total ? `${fmtCount(c.total)} · ${fmtCount(c.online)} online · ${fmtCount(c.upToDate)} up to date` : 'None report this App ID'}</dd></div>
+    </dl>`;
+}
+
+/** Instead of New release, for a folder whose releases are made elsewhere. @param {FolderDetail} d */
+function readOnlyNote(d) {
+  const { controller } = controllerOf(d);
+  return `<section class="panel"><p class="text">${d.kind === 'linux'
+    ? 'This folder holds go-deploy tarballs for Linux controllers. Those are published by their own pipeline, not here: in Deploy the folder is read-only.'
+    : `Releases for ${esc(controller ?? 'these')} controllers are not published here: upload and signing in Deploy are for S1 applications only.`}</p></section>`;
+}
+
+/** An App ID that does not exist (no folder, key or settings). @param {Ctx} ctx @param {string} appId */
+function renderMissing(ctx, appId) {
+  setHero({ back: { href: '#/', label: 'Deployments' }, title: appId, mono: true, lede: 'There is no application with this App ID yet.' });
   ctx.view.innerHTML = `<section class="panel">
-      <p class="text">There is no folder <span class="mono">${esc(appId)}</span> in the bucket yet: its first release creates it, with its manifest.</p>
-      <div class="btn-row"><a class="btn sm primary" href="#/publish?app=${encodeURIComponent(appId)}" data-icon="cloud-arrow-up">Publish the first release</a></div>
-    </section>
-    ${keyPanel(appId, key)}`;
+      <p class="text">Nothing in the bucket, no signing key and no settings carry the App ID <span class="mono">${esc(appId)}</span>.</p>
+      <div class="btn-row"><button type="button" class="btn sm primary" data-create data-icon="plus">Create it as a new application…</button></div>
+    </section>`;
   hydrateIcons(ctx.view);
-  wireKeyPanel(ctx.view, appId, () => renderFolder(ctx, appId));
+  ctx.view.querySelector('[data-create]')?.addEventListener('click', () => newApplication({ existing: [], appId }));
 }
 
 /** @param {FolderCustomer | null} c */
@@ -100,13 +167,21 @@ const customerText = (c) => (c
   ? `${esc(c.name)} <span class="muted">(${esc(customerSource(c.source))})</span>`
   : '<span class="muted">None found: not assigned by hand, and no controller or project ties this App ID to a customer.</span>');
 
-/** Assign a customer by hand, or go back to the derived one. @param {string} appId @param {FolderCustomer | null} current @param {() => Promise<unknown>} reload */
-async function changeCustomer(appId, current, reload) {
+/** PUT the folder settings. @param {string} appId @param {Record<string, unknown>} body @returns {Promise<FolderSettings>} */
+const putSettings = (appId, body) => api('PUT', `${folderPath(appId)}/settings`, body);
+
+/**
+ * Assign a customer by hand, or go back to the derived one.
+ * @param {FolderDetail} d @param {(s: FolderSettings) => Promise<unknown>} done
+ */
+async function changeCustomer(d, done) {
   /** @type {{ id: number, name: string }[]} */
   const customers = await api('GET', '/customers');
-  const manual = current?.source === 'manual' ? current.id : null;
+  const manual = d.customer?.source === 'manual' ? d.customer.id : null;
+  /** @type {{ s: FolderSettings | null }} */
+  const out = { s: null };
   const ok = await formDialog({
-    title: `Customer of ${appId}`,
+    title: `Customer of ${d.appId}`,
     submitLabel: 'Save',
     narrow: true,
     body: `${field('Customer', (id) => `<select id="${id}" name="customerId">
@@ -116,10 +191,36 @@ async function changeCustomer(appId, current, reload) {
         project provisioned with it. Customers are managed in the CRM.</p>`,
     submit: async (form) => {
       const v = String(formValues(form).customerId ?? '');
-      await api('PUT', `${folderPath(appId)}/customer`, { customerId: v ? Number(v) : null });
+      out.s = await putSettings(d.appId, { customerId: v ? Number(v) : null });
     },
   });
-  if (ok) { toast('Customer saved.'); await reload(); }
+  if (ok && out.s) { toast('Customer saved.'); await done(out.s); }
+}
+
+/**
+ * Set the controller type by hand, or go back to the derived one.
+ * @param {FolderDetail} d @param {(s: FolderSettings) => Promise<unknown>} done
+ */
+async function changeController(d, done) {
+  const { controller, source } = controllerOf(d);
+  const manual = source === 'manual' ? controller : null;
+  /** @type {{ s: FolderSettings | null }} */
+  const out = { s: null };
+  const ok = await formDialog({
+    title: `Controller of ${d.appId}`,
+    submitLabel: 'Save',
+    narrow: true,
+    body: `${field('Controller', (id) => `<select id="${id}" name="controller">
+        <option value="">Not set by hand: derive it</option>
+        ${CONTROLLERS.map((c) => `<option value="${c}"${c === manual ? ' selected' : ''}>${c}</option>`).join('')}</select>`)}
+      <p class="hint">Without one set by hand, an S1 manifest means S1; otherwise it is the type most controllers on this App ID are.
+        New releases are published here for S1 only.</p>`,
+    submit: async (form) => {
+      const v = String(formValues(form).controller ?? '');
+      out.s = await putSettings(d.appId, { controller: v || null });
+    },
+  });
+  if (ok && out.s) { toast('Controller saved.'); await done(out.s); }
 }
 
 // ── Releases ─────────────────────────────────────────────────────────────────
@@ -141,7 +242,7 @@ function releasesPanel(d, releases) {
         <td data-label="Downloads" class="num">${r.downloads === null || r.downloads === undefined ? '—' : `≈ ${esc(fmtCount(r.downloads))}`}</td></tr>`).join('')}</tbody>
     </table></div>
     <p class="hint muted">Size and SHA-256 come from each binary's header (its first bytes, read from the bucket). Downloads are Cloudflare's sampled estimates.</p>`
-    : '<p class="muted">The manifest names no releases.</p>'}
+    : '<p class="muted">No releases yet.</p>'}
   </section>`;
 }
 
@@ -226,7 +327,7 @@ function otherPanel(d) {
   const other = d.otherObjects ?? [];
   if (!other.length) return '';
   return `<section class="panel">
-    <div class="panel-head"><h2>Other files in the folder</h2><span class="sub">not named by the manifest; Deploy never deletes anything</span></div>
+    <div class="panel-head"><h2>Other files in the folder</h2><span class="sub">not named by the manifest</span></div>
     <div class="table-wrap"><table class="data cards">
       <thead><tr><th>Object</th><th class="num">Size</th><th>Uploaded</th></tr></thead>
       <tbody>${other.map((o) => `<tr><td data-label="Object" class="mono">${esc(o.key)}</td><td data-label="Size" class="num">${esc(fmtBytes(o.size))}</td>

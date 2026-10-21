@@ -1,6 +1,6 @@
 {
   "name": "gocontroll-deploy-intranet",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "GOcontroll Deploy at deploy.gocontroll.tools: sign and publish S1 firmware to the gocontroll-deploy bucket",

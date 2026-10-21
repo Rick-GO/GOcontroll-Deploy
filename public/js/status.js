@@ -1,13 +1,14 @@
 // @ts-check
-// Status (#/): the deployments at a glance. KPI tiles; the customers with their deployment
-// folders (App IDs); the folders no customer was found for. The search and the filter work
-// on the page itself, without a reload, and stay in the address (#/?q=&show=) so Back
-// returns to the same list.
+// Status (#/): the deployments at a glance. KPI tiles; the customers with their application
+// folders (App IDs); the folders no customer was found for; at the bottom New application.
+// The search and the filter work on the page itself, without a reload, and stay in the
+// address (#/?q=&show=) so Back returns to the same list.
 
 import { api } from './api.js';
 import { fmtBytes, fmtCount, fmtDateTime, plural } from './format.js';
 import { esc, hydrateIcons } from './lib.js';
-import { badge, kindBadge, setHero, stale, wireRowLinks } from './ui.js';
+import { newApplication } from './newapp.js';
+import { badge, controllerBadge, controllerOf, releasable, setHero, stale, wireRowLinks } from './ui.js';
 
 /**
  * @typedef {import('./ui.js').Ctx} Ctx
@@ -16,16 +17,20 @@ import { badge, kindBadge, setHero, stale, wireRowLinks } from './ui.js';
  */
 
 const FILTERS = /** @type {const} */ ([
-  ['all', 'All folders'],
-  ['s1', 'S1 folders'],
+  ['all', 'All applications'],
+  ['S1', 'S1'],
   ['nokey', 'S1 without signing key'],
-  ['linux', 'Linux folders'],
-  ['unknown', 'Unrecognised folders'],
+  ['M1', 'M1'],
+  ['L4', 'L4'],
+  ['HMI1', 'HMI1'],
+  ['unknown', 'Controller unknown'],
 ]);
 
 /** @param {Ctx} ctx @param {URLSearchParams} params */
 export async function renderStatus(ctx, params) {
   const nav = ctx.nav;
+  const flash = ctx.flash;
+  ctx.flash = null;
   setHero({
     title: 'Deployments',
     lede: "Firmware in GOcontroll's distribution bucket, per customer and App ID: releases, signing keys, the controllers on each App ID and how often they download.",
@@ -34,17 +39,23 @@ export async function renderStatus(ctx, params) {
   const data = await api('GET', '/overview');
   if (stale(ctx, nav)) return;
   const show = FILTERS.some(([k]) => k === params.get('show')) ? /** @type {string} */ (params.get('show')) : 'all';
-  ctx.view.innerHTML = `${kpis(data)}
+  ctx.view.innerHTML = `${flash ? `<section class="panel flash">${flash}</section>` : ''}
+    ${kpis(data)}
     <section class="panel">
       <div class="table-tools">
         <label class="search"><span class="sr-only">Search</span>
           <input type="search" id="st-q" value="${esc(params.get('q') ?? '')}" placeholder="Search App ID, customer or version" autocomplete="off"></label>
         <label class="filter"><span class="sr-only">Show</span>
           <select id="st-show">${FILTERS.map(([k, label]) => `<option value="${k}"${k === show ? ' selected' : ''}>${esc(label)}</option>`).join('')}</select></label>
-        <a class="btn sm primary" href="#/publish" data-icon="cloud-arrow-up">Publish a release</a>
       </div>
       <div id="st-list"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>New application</h2></div>
+      <p class="text">Start the folder of an S1 application: its App ID, customer and distribution host. Its signing key and first release follow on its page.</p>
+      <div class="btn-row"><button type="button" class="btn primary" data-new-app data-icon="plus">New application…</button></div>
     </section>`;
+  hydrateIcons(ctx.view);
   const q = /** @type {HTMLInputElement} */ (ctx.view.querySelector('#st-q'));
   const sel = /** @type {HTMLSelectElement} */ (ctx.view.querySelector('#st-show'));
   const list = /** @type {HTMLElement} */ (ctx.view.querySelector('#st-list'));
@@ -61,6 +72,9 @@ export async function renderStatus(ctx, params) {
   };
   q.addEventListener('input', draw);
   sel.addEventListener('change', draw);
+  ctx.view.querySelector('[data-new-app]')?.addEventListener('click', () => newApplication({
+    existing: data.folders.map((f) => f.appId), distributionUrls: data.distributionUrls,
+  }));
   draw();
 }
 
@@ -71,7 +85,7 @@ function kpis(d) {
   const dl = d.downloads;
   /** @type {string[]} */
   const tiles = [
-    tile('Folders', fmtCount(t.folders), `${fmtCount(t.s1Folders)} S1 · ${fmtCount(t.linuxFolders)} Linux`),
+    tile('Applications', fmtCount(t.folders), `${fmtCount(t.s1Folders)} S1 · ${fmtCount(t.linuxFolders)} Linux`),
     tile('Releases', fmtCount(t.releases), 'in the manifests'),
     tile('Storage', fmtBytes(t.bytes), 'in gocontroll-deploy'),
     tile('Controllers', fmtCount(t.controllers), `${fmtCount(online)} online now`),
@@ -96,8 +110,10 @@ const tile = (label, value, sub, bad = false) => `<div class="kpi"><span class="
  * @param {FolderSummary} f @param {string} q lower case @param {string} show @param {string} [customerName]
  */
 function matches(f, q, show, customerName = '') {
-  if (show === 'nokey' && (f.kind !== 's1' || f.hasKey)) return false;
-  if (show !== 'all' && show !== 'nokey' && f.kind !== show) return false;
+  const { controller } = controllerOf(f);
+  if (show === 'nokey' && (controller !== 'S1' || f.hasKey)) return false;
+  if (show === 'unknown' && controller !== null) return false;
+  if (show !== 'all' && show !== 'nokey' && show !== 'unknown' && controller !== show) return false;
   if (!q) return true;
   return f.appId.toLowerCase().includes(q) || (f.latest ?? '').toLowerCase().includes(q) || customerName.toLowerCase().includes(q);
 }
@@ -111,7 +127,7 @@ function folderLists(d, q, show) {
     folders.forEach((f) => placed.add(f.appId));
     const shown = folders.filter((f) => matches(f, q, show, c.name));
     return shown.length ? `<div class="group">
-      <h2 class="group-head">${esc(c.name)} <span class="count">${plural(shown.length, 'folder')}</span></h2>
+      <h2 class="group-head">${esc(c.name)} <span class="count">${plural(shown.length, 'application')}</span></h2>
       ${folderTable(shown)}</div>` : '';
   }).filter(Boolean);
   const loose = d.folders.filter((f) => !f.customer && !placed.has(f.appId)).filter((f) => matches(f, q, show));
@@ -120,7 +136,7 @@ function folderLists(d, q, show) {
   const nothing = !groups.length && !loose.length && !stray.length;
   return `
     <div class="section-label">Customers</div>
-    ${groups.length ? groups.join('') : `<p class="muted">${d.customers.length ? 'No customer folder matches.' : 'No folder could be tied to a customer yet.'}</p>`}
+    ${groups.length ? groups.join('') : `<p class="muted">${d.customers.length ? 'No customer application matches.' : 'No application could be tied to a customer yet.'}</p>`}
     ${stray.length ? `<div class="group"><h2 class="group-head">Other customers</h2>${folderTable(stray, true)}</div>` : ''}
     <div class="section-label">Folders without a customer</div>
     ${loose.length ? folderTable(loose) : `<p class="muted">${nothing ? 'Nothing matches.' : 'None.'}</p>`}
@@ -130,22 +146,17 @@ function folderLists(d, q, show) {
 /** @param {FolderSummary[]} folders @param {boolean} [withCustomer] */
 function folderTable(folders, withCustomer = false) {
   return `<div class="table-wrap"><table class="data rows cards folders">
-    <thead><tr><th>App ID</th><th>Kind</th><th>Latest</th><th class="num">Releases</th><th>Controllers</th><th>Signing key</th><th>Last upload</th></tr></thead>
-    <tbody>${folders.map((f) => `<tr>
+    <thead><tr><th>App ID</th><th>Controller</th><th>Latest</th><th class="num">Releases</th><th>Signing key</th><th>Last upload</th></tr></thead>
+    <tbody>${folders.map((f) => {
+      const { controller, source } = controllerOf(f);
+      return `<tr>
       <td data-label="App ID"><a class="cell-main mono" href="#/folders/${encodeURIComponent(f.appId)}">${esc(f.appId)}</a>${
         withCustomer && f.customer ? `<div class="cell-sub">${esc(f.customer.name)}</div>` : ''}</td>
-      <td data-label="Kind">${kindBadge(f.kind)}</td>
+      <td data-label="Controller">${controllerBadge(controller, source)}</td>
       <td data-label="Latest" class="mono">${esc(f.latest ?? '—')}</td>
       <td data-label="Releases" class="num">${fmtCount(f.releases)}</td>
-      <td data-label="Controllers">${controllersCell(f)}</td>
-      <td data-label="Signing key">${f.kind === 'linux' ? '<span class="muted">n/a</span>' : f.hasKey ? badge('Yes', 'ok') : badge('No', 'warn')}</td>
-      <td data-label="Last upload">${esc(fmtDateTime(f.lastUpload))}</td></tr>`).join('')}</tbody>
+      <td data-label="Signing key">${!releasable(f) ? '<span class="muted">n/a</span>' : f.hasKey ? badge('Yes', 'ok') : badge('No', 'warn')}</td>
+      <td data-label="Last upload">${esc(fmtDateTime(f.lastUpload))}</td></tr>`;
+    }).join('')}</tbody>
   </table></div>`;
-}
-
-/** @param {FolderSummary} f */
-function controllersCell(f) {
-  const c = f.controllers;
-  if (!c || !c.total) return '<span class="muted">—</span>';
-  return `${fmtCount(c.total)}<div class="cell-sub">${fmtCount(c.online)} online · ${fmtCount(c.upToDate)} up to date</div>`;
 }

@@ -33,8 +33,23 @@
 - Publiceren: binary eerst, dan manifest (etag-conditioneel, 409 bij race); onbekende manifestvelden blijven;
   `?v=` = eerste 16 hex van de payload-SHA-256; een bestaande map houdt de host die zijn manifest noemt (nooit twee
   hosts, §2.1); Linux-manifest (`versions[]`) = 422, nooit in schrijven; map met sleutel = alleen gesigneerd met die sleutel.
-- **Nooit iets verwijderen** uit `gocontroll-deploy`. Een overschreven binary gaat eerst naar `STATE` `replaced/…`,
-  het manifest van vóór een publish staat in de logregel (`previous_manifest`).
+- **Alleen de beveiligde map-delete** (`DELETE /api/folders/:appId`, `src/delete.ts`) verwijdert objecten uit
+  `gocontroll-deploy`, en altijd na archiveren naar `STATE` `deleted/<APP_ID>/<ts>/<key>` (grootte gecontroleerd).
+  Manifest eerst en alleen, dan de rest; max. 200 per call, hervatbaar via `deleting/<APP_ID>.json`; vereist exacte
+  App ID, reden ≥ 10 tekens en bevestiging als er nog controllers op die App ID staan. **De sleutel blijft.**
+  Publiceren verwijdert nooit: een overschreven binary gaat eerst naar `replaced/…`, het manifest van vóór een
+  publish staat in de logregel (`previous_manifest`). Terugzetten: README → *Deleting a folder* (manifest als laatste).
+
+## Applicaties
+- Een applicatie = map: objecten onder `<APP_ID>/`, een sleutel, of settings (`folders/<APP_ID>.json`). Elk van de
+  drie laat hem zien op Status en geeft hem een pagina.
+- *New application* (`POST /api/folders`) maakt alleen settings (customer, controller `S1`, distributiehost);
+  alleen S1, 409 als de App ID al bestaat. De eerste release neemt de host uit de settings.
+- Controllertype: handmatig (`S1`/`M1`/`L4`/`HMI1`) → S1-manifest = `S1` → meest voorkomende
+  `controller_series.controller_type` (zonder `Moduline `) van de controllers op die App ID; bij een Linux-manifest de
+  S1-controllers niet meetellen (`gocontroll-application` heeft er één L4 en één S1) → `null`. `kind` blijft voor de
+  logica (wat het manifest is).
+- Settings-index staat in de custom metadata van `folders/*.json` (`index`); zonder die markering leest Deploy het object.
 
 ## Sleutels
 - Eén P-256-sleutel per App ID in `STATE` `keys/<APP_ID>.json`, privédeel verzegeld met AES-256-GCM onder
@@ -47,11 +62,13 @@
 ## Opslag en databases
 - **Geen eigen D1** (bij het bouwen op 21-10 zat het account aan de Free-plan-D1-limiet; R2 volstaat voor deze data,
   dus het blijft zo): app-state is JSON in R2 **`gocontroll-deploy-state`**
-  (`STATE`, privé): `keys/`, `keys-retired/`, `folders/`, `log/`, `replaced/`, `downloads/` (zie README → *Data*).
+  (`STATE`, privé): `keys/`, `keys-retired/`, `folders/`, `log/`, `replaced/`, `deleted/`, `deleting/`, `downloads/`
+  (zie README → *Data*).
 - **`gocontroll-business`** (eigenaar Hours) en **`gocontroll-db`** (eigenaar GOcontroll-Database): **alleen lezen**,
   `migrations_dir = "no-migrations-here"`. Uit `gocontroll-db` alleen `controllers` (client_id, project_id, app_id,
-  app_version, app_uptodate, distribution_url, online, last_online, `COUNT(*)`) en `project_provisioning`; nooit
-  `controller_tunnels`, `app_settings` of een geheim. `test/readonly-db.test.ts` bewaakt dat.
+  app_version, app_uptodate, distribution_url, online, last_online, controller_series_id, `COUNT(*)`),
+  `controller_series` (id, controller_type) en `project_provisioning`; nooit `controller_tunnels`, `app_settings` of een
+  geheim. Queries gebruiken aliassen (`c.`, `s.`, `p.`); `test/readonly-db.test.ts` controleert elke tabel en kolom.
 - `test/fixtures/business` en `test/fixtures/moduline` zijn vastgezette kopieën, alleen voor test- en lokale databases.
 
 ## Downloads

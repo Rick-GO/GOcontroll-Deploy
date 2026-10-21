@@ -9,8 +9,12 @@ import { appId, call, controller, customer, ok, upload, zlibPayload } from './he
 
 const sources = import.meta.glob('../src/**/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
-/** Columns of controllers Deploy may read (DESIGN: no secrets, serial only to count). */
-const CONTROLLER_COLUMNS = new Set(['client_id', 'project_id', 'app_id', 'app_version', 'app_uptodate', 'distribution_url', 'online', 'last_online']);
+/** What Deploy may read per table of gocontroll-db (no secrets; COUNT(*) to count), by the alias the queries use. */
+const ALLOWED: Record<string, { table: string; columns: Set<string> }> = {
+  c: { table: 'controllers', columns: new Set(['client_id', 'project_id', 'app_id', 'app_version', 'app_uptodate', 'distribution_url', 'online', 'last_online', 'controller_series_id']) },
+  s: { table: 'controller_series', columns: new Set(['id', 'controller_type']) },
+  p: { table: 'project_provisioning', columns: new Set(['project_id', 'app_id']) },
+};
 const SECRET = /tunnel_token|mqtt_password|controller_tunnels|app_settings|password|secret|token|esp_mac|sim_card|wlan_serial|wan_serial/i;
 
 function recording(real: D1Database, seen: string[]): D1Database {
@@ -29,7 +33,7 @@ test('every statement on BUSINESS_DB and MODULINE_DB is a SELECT of what Deploy 
   const dbs = { BUSINESS_DB: recording(env.BUSINESS_DB, business), MODULINE_DB: recording(env.MODULINE_DB, moduline) };
   const id = appId('R');
   const cu = await customer(`Recorded ${id}`);
-  await controller({ app_id: id, app_version: '1.0.0', client_id: cu, online: 1 });
+  await controller({ app_id: id, app_version: '1.0.0', client_id: cu, online: 1, type: 'Moduline S1' });
   await env.MODULINE_DB.prepare(`INSERT INTO controller_tunnels (serial_number, tunnel_id, tunnel_token, tunnel_hostname, mqtt_password) VALUES ('SN-R', 't', 'SECRET-TOKEN', 'h', 'SECRET-PW')`).run();
 
   const { payload, rawSize } = await zlibPayload();
@@ -50,13 +54,15 @@ test('every statement on BUSINESS_DB and MODULINE_DB is a SELECT of what Deploy 
     expect(s, s).not.toMatch(/\b(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|ATTACH|PRAGMA)\b/i);
     expect(s, s).not.toMatch(SECRET);
   }
+  expect(moduline.some((s) => /\bcontroller_series\b/.test(s)), 'the controller type is read').toBe(true);
   for (const s of moduline) {
-    expect(s, s).toMatch(/\bFROM (controllers|project_provisioning)\b/);
-    if (/\bFROM controllers\b/.test(s)) {
-      const identifiers = s.replace(/'[^']*'/g, '').match(/\b[a-z_]+\b/g) ?? [];
-      const columns = identifiers.filter((w) => w.includes('_') || ['online'].includes(w));
-      for (const col of columns.filter((c) => !['up_to_date'].includes(c))) expect(CONTROLLER_COLUMNS.has(col), `${col} in ${s}`).toBe(true);
-    }
+    // Every table named is one of the three, under its alias; every column is qualified and allowed.
+    const tables = [...s.matchAll(/\b(?:FROM|JOIN)\s+([a-z_]+)(?:\s+([a-z]))?/gi)];
+    expect(tables.length, s).toBeGreaterThan(0);
+    for (const [, table, alias] of tables) expect(ALLOWED[alias]?.table, `${table} ${alias} in ${s}`).toBe(table);
+    for (const [, alias, column] of s.matchAll(/\b([a-z])\.([a-z_]+)\b/g)) expect(ALLOWED[alias]?.columns.has(column), `${alias}.${column} in ${s}`).toBe(true);
+    const bare = s.replace(/'[^']*'/g, '').replace(/\b[a-z]\.[a-z_]+\b/g, '').replace(/\b(?:FROM|JOIN)\s+[a-z_]+(?:\s+[a-z])?\b/gi, '').replace(/\bAS\s+[a-z_]+\b/gi, '');
+    expect(bare.match(/\b[a-z][a-z_]*_[a-z_]+\b|\bonline\b/g) ?? [], `unqualified columns in ${s}`).toEqual([]);
   }
 });
 

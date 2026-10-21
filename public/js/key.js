@@ -1,9 +1,10 @@
 // @ts-check
-// The signing key of a folder (one per App ID), on its page: the public key to copy into a
-// controller's configuration, and generate / import / replace. The private key stays in the
-// Worker, sealed; it leaves it once, right after Generate, in a window that has to be
-// acknowledged (showBackup). Replacing asks for the App ID typed out: controllers carrying
-// the old public key refuse every image signed with the new one.
+// The signing key of an application (one per App ID): the key card on its folder page with
+// the public key to copy into a controller's configuration, and the dialogs to generate,
+// import and replace one (also used by the New release flow and the Keys page). The private
+// key stays in the Worker, sealed; it leaves it once, right after Generate, in a window that
+// has to be acknowledged (showBackup). Replacing asks for the App ID typed out: controllers
+// carrying the old public key refuse every image signed with the new one.
 
 import { ApiError, api, folderPath } from './api.js';
 import { fmtDateTime } from './format.js';
@@ -19,9 +20,9 @@ import { badge, formDialog, formValues } from './ui.js';
 export const fileSafe = (s) => s.replace(/[\\/:*?"<>|\s]/g, '_');
 
 /**
- * The key panel. @param {string} appId @param {KeyInfo | null} key
+ * The key card of a folder page. @param {KeyInfo | null} key
  */
-export function keyPanel(appId, key) {
+export function keyPanel(key) {
   const head = `<div class="panel-head"><h2>Signing key</h2><span class="spacer"></span>${key ? badge('Active', 'ok') : badge('None', 'warn')}</div>`;
   if (!key) {
     return `<section class="panel" id="key-panel">${head}
@@ -45,29 +46,34 @@ export function keyPanel(appId, key) {
       <div><dt>By</dt><dd>${esc(key.createdBy)}</dd></div>
     </dl>
     <div class="btn-row">
-      <a class="btn sm" href="#/sign?app=${encodeURIComponent(appId)}" data-icon="shield-check">Sign a binary</a>
       <button type="button" class="btn sm danger" data-key="replace" data-icon="arrow-path">Replace key…</button>
     </div>
   </section>`;
 }
 
 /**
- * Wire the buttons of the key panel. `reload` draws the page again afterwards.
- * @param {HTMLElement} root @param {string} appId @param {() => Promise<unknown>} reload
+ * Wire the buttons of the key panel; onKey gets the new key once one is made, imported or replaced.
+ * @param {HTMLElement} root @param {string} appId @param {(key: KeyInfo) => unknown} onKey
  */
-export function wireKeyPanel(root, appId, reload) {
+export function wireKeyPanel(root, appId, onKey) {
   root.querySelectorAll('[data-key]').forEach((btn) => btn.addEventListener('click', async () => {
     const what = btn.getAttribute('data-key');
-    const done = what === 'generate' ? await generateKey(appId) : what === 'import' ? await importKey(appId) : await replaceKey(appId);
-    if (done) await reload();
+    const key = what === 'generate' ? await generateKey(appId) : what === 'import' ? await importKey(appId) : await replaceKey(appId);
+    if (key) await onKey(key);
   }));
 }
 
 /** POST the key action. @param {string} appId @param {Record<string, unknown>} body @returns {Promise<KeyInfo & { backup?: KeyBackup }>} */
 const postKey = (appId, body) => api('POST', `${folderPath(appId)}/key`, body);
 
-/** @param {string} appId */
-async function generateKey(appId) {
+/** The key as the rest of the page uses it, without the backup. @param {KeyInfo & { backup?: KeyBackup }} k @returns {KeyInfo} */
+const keyInfo = (k) => ({ publicKey: k.publicKey, source: k.source, createdAt: k.createdAt, createdBy: k.createdBy });
+
+/**
+ * Generate a key for an application that has none; the backup window follows.
+ * @param {string} appId @returns {Promise<KeyInfo | null>}  null when cancelled
+ */
+export async function generateKey(appId) {
   /** @type {{ made: (KeyInfo & { backup?: KeyBackup }) | null }} */
   const out = { made: null };
   const ok = await formDialog({
@@ -78,10 +84,10 @@ async function generateKey(appId) {
       <p>Controllers check an image against the public key they were provisioned with, so provision this App ID's controllers with the new public key.</p>`,
     submit: async () => { out.made = await postKey(appId, { action: 'generate' }); },
   });
-  if (!ok || !out.made) return false;
+  if (!ok || !out.made) return null;
   if (out.made.backup) await showBackup(appId, out.made.backup);
   toast('Signing key made.');
-  return true;
+  return keyInfo(out.made);
 }
 
 /** The fields to paste or pick a private key. */
@@ -110,20 +116,29 @@ function privateKeyOf(form) {
   return key;
 }
 
-/** @param {string} appId */
-async function importKey(appId) {
+/**
+ * Import the key an application is signed with already.
+ * @param {string} appId @returns {Promise<KeyInfo | null>}  null when cancelled
+ */
+export async function importKey(appId) {
+  /** @type {{ made: (KeyInfo & { backup?: KeyBackup }) | null }} */
+  const out = { made: null };
   const ok = await formDialog({
     title: `Import a signing key for ${appId}`,
     submitLabel: 'Import key',
     body: `<p>The key goes to the Worker, which keeps it encrypted and only signs with it; it is never shown again. Keep your own copy where it is now.</p>${importFields()}`,
     onOpen: wireKeyFile,
-    submit: async (form) => postKey(appId, { action: 'import', privateKey: privateKeyOf(form) }),
+    submit: async (form) => { out.made = await postKey(appId, { action: 'import', privateKey: privateKeyOf(form) }); },
   });
-  if (ok) toast('Signing key imported.');
-  return ok;
+  if (!ok || !out.made) return null;
+  toast('Signing key imported.');
+  return keyInfo(out.made);
 }
 
-/** @param {string} appId */
+/**
+ * Replace an application's key, with the App ID typed out to confirm.
+ * @param {string} appId @returns {Promise<KeyInfo | null>}  null when cancelled
+ */
 async function replaceKey(appId) {
   /** @type {{ made: (KeyInfo & { backup?: KeyBackup }) | null }} */
   const out = { made: null };
@@ -144,6 +159,7 @@ async function replaceKey(appId) {
       const part = /** @type {HTMLElement} */ (form.querySelector('[data-import]'));
       form.querySelectorAll('[name=how]').forEach((r) => r.addEventListener('change', () => { part.hidden = formValues(form).how !== 'import'; }));
     },
+    valid: (form) => String(formValues(form).confirm ?? '').trim() === appId,
     submit: async (form) => {
       const v = formValues(form);
       if (String(v.confirm ?? '').trim() !== appId) throw new ApiError(`Type the App ID exactly as it is (${appId}) to confirm.`, 400, 'confirm');
@@ -153,10 +169,10 @@ async function replaceKey(appId) {
       out.made = await postKey(appId, body);
     },
   });
-  if (!ok || !out.made) return false;
+  if (!ok || !out.made) return null;
   if (out.made.backup) await showBackup(appId, out.made.backup);
   toast('Signing key replaced.');
-  return true;
+  return keyInfo(out.made);
 }
 
 /**
@@ -165,7 +181,7 @@ async function replaceKey(appId) {
  * @param {string} appId @param {KeyBackup} backup
  * @returns {Promise<void>}
  */
-export function showBackup(appId, backup) {
+function showBackup(appId, backup) {
   /** @type {HTMLDialogElement} */
   const dialog = $('backup-dialog');
   const body = $('backup-body');

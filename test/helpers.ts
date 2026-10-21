@@ -83,11 +83,20 @@ export async function project(customerId: number, code = 'P-1'): Promise<number>
   return row!.id;
 }
 
-export async function controller(fields: { app_id: string; app_version?: string | null; client_id?: number | null; online?: number; app_uptodate?: number; distribution_url?: string | null }) {
+/** The controller_series row of a type ("Moduline S1"), made once. */
+async function seriesId(type: string): Promise<number> {
+  const hit = await env.MODULINE_DB.prepare('SELECT id FROM controller_series WHERE controller_type = ?1').bind(type).first<{ id: number }>();
+  if (hit) return hit.id;
+  const row = await env.MODULINE_DB.prepare('INSERT INTO controller_series (controller_type) VALUES (?1) RETURNING id').bind(type).first<{ id: number }>();
+  return row!.id;
+}
+
+export async function controller(fields: { app_id: string; app_version?: string | null; client_id?: number | null; online?: number; app_uptodate?: number; distribution_url?: string | null; type?: string }) {
+  const series = fields.type ? await seriesId(fields.type) : null;
   await env.MODULINE_DB.prepare(
-    `INSERT INTO controllers (serial_number, app_id, app_version, client_id, online, app_uptodate, distribution_url, last_online)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, '2026-10-20T10:00:00Z')`,
-  ).bind(`SN-${++seq}`, fields.app_id, fields.app_version ?? null, fields.client_id ?? null, fields.online ?? 0, fields.app_uptodate ?? 0, fields.distribution_url ?? null).run();
+    `INSERT INTO controllers (serial_number, app_id, app_version, client_id, online, app_uptodate, distribution_url, controller_series_id, last_online)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '2026-10-20T10:00:00Z')`,
+  ).bind(`SN-${++seq}`, fields.app_id, fields.app_version ?? null, fields.client_id ?? null, fields.online ?? 0, fields.app_uptodate ?? 0, fields.distribution_url ?? null, series).run();
 }
 
 /**

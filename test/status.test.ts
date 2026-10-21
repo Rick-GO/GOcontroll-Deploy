@@ -37,7 +37,7 @@ describe('GET /api/overview', () => {
     expect(Date.parse(f.lastUpload)).toBeGreaterThan(Date.now() - 60_000);
 
     expect(body.folders.find((x: any) => x.appId === linux)).toMatchObject({ kind: 'linux', latest: '2.0.0', releases: 1, distributionUrl: null, hasKey: false });
-    expect(body.folders.find((x: any) => x.appId === keyOnly)).toMatchObject({ kind: 'unknown', latest: null, releases: 0, bytes: 0, lastUpload: null, hasKey: true });
+    expect(body.folders.find((x: any) => x.appId === keyOnly)).toMatchObject({ kind: 's1', controller: null, controllerSource: null, latest: null, releases: 0, bytes: 0, lastUpload: null, hasKey: true, inBucket: false });
 
     expect(body.customers).toContainEqual({ id: acme, name: `Acme ${s1}`, folders: [s1] });
     const names = body.customers.map((c: any) => c.name);

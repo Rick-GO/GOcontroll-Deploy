@@ -32,13 +32,16 @@ crons = ["17 2 * * *"]
 # The S1 distribution bucket: <APP_ID>/manifest.json and <APP_ID>/<APP_ID>-<version>.bin,
 # public on https://deploy.gocontroll.com (R2 custom domain) and https://deploy.gocontroll.tech
 # (Worker gocontroll-deploy). Linux folders (go-deploy tarballs) live in it too; Deploy only
-# reads those. Publishing writes the binary first, then the manifest; nothing is ever deleted.
+# reads those. Publishing writes the binary first, then the manifest. Only the protected folder
+# delete (DELETE /api/folders/:appId, src/delete.ts) removes objects, always archived to STATE
+# first (deleted/…); a replaced binary is archived as well (replaced/…).
 [[r2_buckets]]
 binding = "DEPLOY_BUCKET"
 bucket_name = "gocontroll-deploy"
 
 # Private state of this app (no public access, no custom domain): sealed signing keys,
-# folder settings, the audit log and the download counts of finished days (src/state.ts).
+# folder settings, the audit log, the download counts of finished days, and the archives of
+# replaced binaries and deleted folders (src/state.ts).
 # A bucket instead of a D1 of our own: when Deploy was made (2026-10-21) the account was at
 # the Free-plan D1 limit, and JSON objects in R2 are enough for this data, so it stays here.
 [[r2_buckets]]
@@ -58,8 +61,9 @@ migrations_dir = "no-migrations-here"
 migrations_table = "deploy_migrations"
 
 # Controller database (schema owned by GOcontroll-Database). Deploy only READS which
-# controllers run which App ID and version (controllers) and the App ID of a project
-# (project_provisioning); never a secret column, never a write (test/readonly-db.test.ts).
+# controllers run which App ID and version (controllers), their type (controller_series) and
+# the App ID of a project (project_provisioning); never a secret column, never a write
+# (test/readonly-db.test.ts).
 # Same guard against migrations as above.
 [[d1_databases]]
 binding = "MODULINE_DB"
