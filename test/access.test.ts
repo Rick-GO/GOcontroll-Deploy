@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { env } from 'cloudflare:test';
 import { extractGroupIds, resetAccessCaches } from '../src/access';
 import { isDeployMember } from '../src/auth';
+import { CONTENT_SECURITY_POLICY, SECURITY_HEADERS } from '../src/lib/headers';
+import { httpsRedirect } from '../src/lib/https';
 import worker from '../src/index';
 
 const TEAM = 'https://gocontroll.cloudflareaccess.com';
@@ -92,6 +94,61 @@ describe('the Worker', () => {
     expect((await prod('/pubx', {}, { ASSETS: assets })).status).toBe(403);
   });
 
+  test('/pub/ answers carry the same security headers as the pages, assets and API (F4 of 2026-10-23)', async () => {
+    const assets = { fetch: async () => new Response('<svg xmlns="http://www.w3.org/2000/svg"/>', { headers: { 'content-type': 'image/svg+xml' } }) };
+    const pub = await prod('/pub/logo.svg', {}, { ASSETS: assets });
+    const asset = await prod('/styles.css', { 'Cf-Access-Jwt-Assertion': await token() }, { ASSETS: assets });
+    const api = await prod('/api/me', { 'Cf-Access-Jwt-Assertion': await token() });
+    const missing = await prod('/api/nope', { 'Cf-Access-Jwt-Assertion': await token() });
+    expect([pub.status, asset.status, api.status, missing.status]).toEqual([200, 200, 200, 404]);
+    expect(Object.keys(SECURITY_HEADERS).sort()).toEqual([
+      'content-security-policy', 'referrer-policy', 'strict-transport-security', 'x-content-type-options', 'x-frame-options',
+    ]);
+    for (const res of [pub, asset, api, missing]) {
+      for (const [k, v] of Object.entries(SECURITY_HEADERS)) expect(res.headers.get(k), k).toBe(v);
+    }
+    expect(pub.headers.get('content-security-policy')).toBe(CONTENT_SECURITY_POLICY);
+    expect(pub.headers.get('strict-transport-security')).toBe('max-age=31536000');
+    expect(pub.headers.get('x-frame-options')).toBe('DENY');
+    expect(pub.headers.get('content-type')).toBe('image/svg+xml');
+  });
+
+  test('plain HTTP is redirected to HTTPS on every path, /pub/ included, before the token check (F4 of 2026-10-23)', async () => {
+    const asked: string[] = [];
+    const assets = { fetch: async (r: Request) => { asked.push(new URL(r.url).pathname); return new Response('asset'); } };
+    const http = (path: string, method = 'GET') => worker.fetch(
+      new Request(`http://deploy.gocontroll.tools${path}`, { method, headers: method === 'POST' ? { 'content-type': 'application/json' } : {}, body: method === 'POST' ? '{}' : undefined }),
+      { ...env, DEPLOY_GROUPS: 'GID-DEP', ASSETS: assets } as typeof env,
+    );
+    for (const path of ['/pub/logo.svg', '/pub/signout.js', '/pub/', '/', '/index.html?x=1', '/api/me', '/api/downloads?appId=GOCO&days=7', '/styles.css']) {
+      const res = await http(path);
+      expect(res.status, path).toBe(301);
+      expect(res.headers.get('location'), path).toBe(`https://deploy.gocontroll.tools${path}`);
+      for (const [k, v] of Object.entries(SECURITY_HEADERS)) expect(res.headers.get(k), `${path} ${k}`).toBe(v);
+    }
+    expect((await http('/pub/logo.svg', 'HEAD')).status).toBe(301);
+    const post = await http('/api/folders', 'POST');
+    expect(post.status).toBe(308);
+    expect(post.headers.get('location')).toBe('https://deploy.gocontroll.tools/api/folders');
+    expect((await http('/api/folders/GOCO', 'DELETE')).status).toBe(308);
+    expect((await http('/api/folders/GOCO/package', 'PUT')).status).toBe(308);
+    // Nothing was served and no token was looked at (the fetch mock would have seen the certs call).
+    expect(asked).toEqual([]);
+    expect(vi.mocked(globalThis.fetch)).not.toHaveBeenCalled();
+    // HTTPS as before; http://localhost (wrangler dev, the DEV_USER bypass below) is never redirected.
+    expect((await prod('/pub/logo.svg', {}, { ASSETS: assets })).status).toBe(200);
+    expect((await worker.fetch(new Request('http://localhost/pub/logo.svg'), { ...env, ASSETS: assets } as typeof env)).status).toBe(200);
+  });
+
+  test('httpsRedirect: only http:// off the local hosts, path and query kept', () => {
+    expect(httpsRedirect(new Request('https://deploy.gocontroll.tools/pub/logo.svg'))).toBeNull();
+    for (const host of ['localhost:8787', '127.0.0.1:8787', '[::1]:8787']) expect(httpsRedirect(new Request(`http://${host}/`)), host).toBeNull();
+    const res = httpsRedirect(new Request('http://deploy.gocontroll.tools:80/a/b?c=d&e=f'))!;
+    expect(res.status).toBe(301);
+    expect(res.headers.get('location')).toBe('https://deploy.gocontroll.tools/a/b?c=d&e=f');
+    expect(httpsRedirect(new Request('http://deploy.gocontroll.tools/x', { method: 'OPTIONS' }))!.status).toBe(308);
+  });
+
   test('the DEV_USER bypass works on localhost only, and still needs the group', async () => {
     const dev = { DEV_USER_EMAIL: 'dev@gocontroll.com', DEV_USER_GROUPS: 'CF_Deploy' };
     expect((await prod('/api/me', {}, dev)).status).toBe(403);
@@ -112,7 +169,12 @@ describe('the Worker', () => {
     expect((await send('/api/releases', { origin: 'https://evil.example' }, form())).status).toBe(403);
     expect((await send('/api/sign', { origin: 'http://localhost', 'sec-fetch-site': 'cross-site' }, form())).status).toBe(403);
     expect((await send('/api/releases', { origin: 'http://localhost', 'content-type': 'application/json' })).status).toBe(415);
-    expect((await send('/api/releases', { origin: 'http://localhost' }, form())).status).toBe(400); // past the guard: no file
+    const bad = await send('/api/releases', { origin: 'http://localhost' }, form());
+    expect(bad.status).toBe(400); // past the guard: no file
+    // The refusals and errors carry the security headers too.
+    const refused = await send('/api/folders/GOCO/key', { 'content-type': 'application/json', origin: 'https://evil.example' });
+    expect(refused.status).toBe(403);
+    for (const res of [bad, refused]) for (const [k, v] of Object.entries(SECURITY_HEADERS)) expect(res.headers.get(k), k).toBe(v);
   });
 });
 

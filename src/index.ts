@@ -4,6 +4,11 @@
 // API alike) passes through authenticate() before anything is served — except /pub/: brand
 // assets, which Access serves through a bypass app. Who may use Deploy is decided here
 // (verified Access token + membership of DEPLOY_GROUPS), never in the browser.
+//
+// Before all of that, plain HTTP is redirected to HTTPS on every path (src/lib/https.ts): Access
+// does so for the paths it protects, but not for the /pub/ bypass. /pub/ answers carry the same
+// security headers as the pages, assets and API (src/lib/headers.ts; the external security
+// assessment of 2026-10-23, F4).
 // scheduled() is the daily cron of wrangler.toml: the download counts of finished days.
 
 import { Hono } from 'hono';
@@ -11,7 +16,9 @@ import type { AppEnv, Env } from './env';
 import { AccessError } from './access';
 import { authenticate } from './auth';
 import { collectMissingDays } from './downloads';
+import { withSecurityHeaders, SECURITY_HEADERS } from './lib/headers';
 import { HttpError } from './lib/http';
+import { httpsRedirect } from './lib/https';
 import { folders } from './routes/folders';
 import { meta } from './routes/meta';
 import { releases } from './routes/releases';
@@ -28,17 +35,17 @@ const MULTIPART_PATHS = new Map([
   ['/api/linux-releases', 102 * 1024 * 1024],
 ]);
 
-const SECURITY_HEADERS: Record<string, string> = {
-  'content-security-policy':
-    "default-src 'none'; style-src 'self'; img-src 'self' data:; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
-  'x-content-type-options': 'nosniff',
-  'referrer-policy': 'strict-origin-when-cross-origin',
-};
-
 export const app = new Hono<AppEnv>();
 
+// Plain HTTP: to the same path and query on https://, before /pub/, the token check and the assets.
+app.use('*', async (c, next) => {
+  const redirect = httpsRedirect(c.req.raw);
+  if (redirect) return withSecurityHeaders(redirect);
+  await next();
+});
+
 // Static files only: no token is read and nothing user-specific is served here.
-app.use('/pub/*', async (c) => c.env.ASSETS.fetch(c.req.raw));
+app.use('/pub/*', async (c) => withSecurityHeaders(await c.env.ASSETS.fetch(c.req.raw)));
 
 // ── Authentication ───────────────────────────────────────────────────────────
 app.use('*', async (c, next) => {
@@ -59,6 +66,9 @@ const api = new Hono<AppEnv>();
 
 api.use('*', async (c, next) => {
   c.header('cache-control', 'private, no-store');
+  // The security headers on every answer: here for the refusals below, after next() for the routes
+  // and the errors of app.onError.
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) c.header(k, v);
   // State-changing calls must come from this origin. JSON cannot be sent cross-site without a
   // CORS preflight, which this API never grants. An upload is multipart, which a cross-site
   // form can send, so it must carry this Origin (every browser sends one on a POST).
@@ -78,6 +88,7 @@ api.use('*', async (c, next) => {
     }
   }
   await next();
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) c.res.headers.set(k, v);
 });
 
 api.route('/', meta);
@@ -106,18 +117,14 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-function withSecurityHeaders(res: Response): Response {
-  const out = new Response(res.body, res);
-  for (const [k, v] of Object.entries(SECURITY_HEADERS)) out.headers.set(k, v);
-  if ((out.headers.get('content-type') || '').includes('text/html')) out.headers.set('cache-control', 'private, no-store');
-  return out;
-}
-
 const esc = (s: string) => s.replace(/[&<>"']/g, (ch) => (
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as Record<string, string>)[ch]
 ));
 
-/** Minimal, self-contained page for 403 (assets are behind the same check). */
+/**
+ * Minimal, self-contained page for 403 (assets are behind the same check). Inline styles, so it
+ * goes out without the CSP of SECURITY_HEADERS (as does the JSON 403 of the token check).
+ */
 function renderError(status: number, title: string, message: string): string {
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">

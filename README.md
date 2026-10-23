@@ -12,7 +12,8 @@ and Linux) are made here; an application folder can be deleted, strongly protect
 first. For the members of the Entra group **`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> The Worker, the API and the pages are deployed (0.3.0 on 2026-10-21: Linux releases for M1, L4 and HMI1 next to
+> The Worker, the API and the pages are deployed (0.3.1 on 2026-10-23: plain HTTP redirected to HTTPS and the
+> security headers on `/pub/` too; 0.3.0 on 2026-10-21: Linux releases for M1, L4 and HMI1 next to
 > S1; 0.2.0: Status and Keys tabs, new applications, releases from the folder page, protected
 > folder delete); the Access application
 > (with its `/pub` bypass) exists and its AUD is in `POLICY_AUD`; `DEPLOY_GROUPS` and the hub tile
@@ -52,7 +53,12 @@ controllers ──► https://deploy.gocontroll.tech (Worker gocontroll-deploy) 
 
 - **One Worker with static assets** (`public/`), like Logistic, Finance, the CRM and Hours:
   `run_worker_first = true` sends every request through the token check in `src/index.ts`; only
-  `/pub/*` (brand assets) skips it, via an Access bypass app. Its name is
+  `/pub/*` (brand assets) skips it, via an Access bypass app. Before all of that, **plain HTTP
+  is redirected** to the same path and query on `https://` on every path (301 for GET/HEAD, 308
+  otherwise; `src/lib/https.ts`, the copy of GOcontroll-Configurator's): Access does so for the
+  paths it protects, not for the `/pub/` bypass (F4 of the external security assessment of
+  2026-10-23, `GOcontroll-Team/docs/security/external-security-assessment-configurator-2026-10-23.md`);
+  `http://localhost` (`wrangler dev`) is never redirected. Its name is
   `gocontroll-deploy-intranet`, not `gocontroll-deploy`: that is the public Worker of the
   Deployment Tool on `deploy.gocontroll.tech` that serves the same bucket to controllers.
 - **Identity and access**: the verified Access token (`src/access.ts`, the copy of Logistic,
@@ -62,7 +68,15 @@ controllers ──► https://deploy.gocontroll.tech (Worker gocontroll-deploy) 
   or a failed group lookup lets nobody in. Every write records the colleague as actor.
 - **Server**: TypeScript + Hono + zod (`src/`). **Browser**: plain ES modules with
   `// @ts-check` (`public/js/`), no framework, no build step. The CSP forbids inline scripts
-  and style attributes.
+  and style attributes:
+  `default-src 'none'; style-src 'self'; img-src 'self' data:; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`.
+  Every page, asset, `/pub/*` file, API answer (refusals and errors included) and HTTP redirect
+  carries it together with `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+  strict-origin-when-cross-origin`, `X-Frame-Options: DENY` and `Strict-Transport-Security:
+  max-age=31536000` (this hostname only, no `includeSubDomains`): `SECURITY_HEADERS` in
+  `src/lib/headers.ts`; on `/pub/*` and the API, and HSTS and `X-Frame-Options` at all, since
+  2026-10-23 (0.3.1, F4). The 403 of the token check (page or JSON) has none of them (the page
+  has inline styles).
 - **Small uploads, little Worker CPU**: the browser parses the S-record and compresses the
   image (`CompressionStream('deflate')`, a zlib stream); the Worker never inflates. It
   hashes and signs with `crypto.subtle`, computes the CRC over the header only, writes header
@@ -433,8 +447,10 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
    `deploy.gocontroll.tools`, identity provider Entra ID, policy **Allow**, include the group
    **`CF_Deploy`**. Copy its **Audience (AUD) tag** into `POLICY_AUD` (empty: every request
    403). Add a second self-hosted application, domain `deploy.gocontroll.tools`, path `pub`,
-   one policy: **Bypass**, include **Everyone** (brand assets only). Signing out ends on the
-   hub's `https://gocontroll.tools/pub/signed-out`. Done 2026-10-21: AUD `d26a80ee…cab10`,
+   one policy: **Bypass**, include **Everyone** (brand assets only). Access redirects plain HTTP
+   only on the paths it protects: for `/pub/` the Worker does it (every path, 301/308), and it
+   gives the `/pub/` files the same security headers as everything else (since 2026-10-23).
+   Signing out ends on the hub's `https://gocontroll.tools/pub/signed-out`. Done 2026-10-21: AUD `d26a80ee…cab10`,
    bypass on `/pub` in place.
 3. **Tile on the hub** (`GOcontroll-Team/src/cards.js`), link `https://deploy.gocontroll.tools`,
    shown to the object ID of `CF_Deploy` (since 2026-10-21). Hiding a tile is not access
@@ -449,12 +465,19 @@ counts of finished days. First deploy 2026-10-21: version
 `211d969d-5468-45eb-b102-57746d737af5` (without the cron). Verify:
 
 ```sh
-curl -sI https://deploy.gocontroll.tools/   # 302 to gocontroll.cloudflareaccess.com
+curl -sI https://deploy.gocontroll.tools/              # 302 to gocontroll.cloudflareaccess.com
+curl -sI http://deploy.gocontroll.tools/pub/logo.svg   # 301, location: https://deploy.gocontroll.tools/pub/logo.svg
+curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-security-policy, strict-transport-security,
+                                                       # x-frame-options, x-content-type-options, referrer-policy
 ```
 
 ### Rolling back
 
 - **Code**: `npx wrangler deployments list`, then `npx wrangler rollback <version-id>`.
+  0.3.1 (HTTPS redirect and security headers on `/pub/`, 2026-10-23; no data or binding
+  changed): back to 0.3.0 with `npx wrangler rollback 961ad1da-be9c-47f0-b196-f26f035a16bf`, which
+  serves `/pub/` over plain HTTP and without the headers again. Browsers that saw the HSTS header
+  keep using `https://` for this hostname for a year either way; that needs no rollback.
 - **A release**: publish the version before it again (*replace*) or a newer one; a replaced
   binary is in `STATE` `replaced/…` and the manifest before every publish is in its log entry
   (`log/…`, `previous_manifest`); put either back with

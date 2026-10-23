@@ -10,6 +10,14 @@
   `workers_dev = false`, `preview_urls = false`, custom domain `deploy.gocontroll.tools`. Worker-naam
   **`gocontroll-deploy-intranet`**, nooit `gocontroll-deploy`: dat is de publieke device-Worker van de Deployment Tool op
   `deploy.gocontroll.tech` (zelfde bucket).
+- **Vóór alles** plain HTTP → HTTPS op elk pad (301 GET/HEAD, 308 anders, zelfde pad + query; `src/lib/https.ts`,
+  kopie van die van GOcontroll-Configurator, houd ze in de pas; `localhost` nooit): Access doet dat alleen op de
+  beschermde paden, niet op de `/pub`-bypass. `/pub/*`, pagina's, assets, API-antwoorden (ook weigeringen en fouten) en
+  de redirect krijgen `SECURITY_HEADERS` (`src/lib/headers.ts`: CSP, nosniff, Referrer-Policy, `X-Frame-Options: DENY`,
+  HSTS `max-age=31536000` zonder `includeSubDomains`); niet de 403 van de tokencheck (inline styles). Sinds 23-10
+  (0.3.1), F4 van het externe securityonderzoek
+  (`GOcontroll-Team/docs/security/external-security-assessment-configurator-2026-10-23.md`). Geen named exports van
+  constanten in `src/index.ts` (workerd weigert ze): headers en redirect staan daarom in `src/lib/`.
 - **Server**: TypeScript + Hono + zod (`src/`). **Browser**: plain ES-modules in `public/js/` met `// @ts-check` + JSDoc,
   geen framework, geen bundler. CSP verbiedt inline scripts én inline `style`-attributen.
 - **Toegang**: Access-policy op Entra-groep `CF_Deploy` én in de Worker `DEPLOY_GROUPS`, **alleen op object-ID**
@@ -104,6 +112,8 @@
 - Functionaliteit, README, dit bestand en de tests veranderen in dezelfde commit.
 - `npm test` en `npm run typecheck` groen vóór commit en deploy (`predeploy` draait ze; er is geen migratiecheck, want
   geen eigen D1).
-- Na deploy: `curl -sI https://deploy.gocontroll.tools/` → 302 naar `gocontroll.cloudflareaccess.com`.
+- Na deploy: `curl -sI https://deploy.gocontroll.tools/` → 302 naar `gocontroll.cloudflareaccess.com`;
+  `curl -sI http://deploy.gocontroll.tools/pub/logo.svg` → 301 naar `https://`, en via https 200 met
+  `content-security-policy` en `strict-transport-security`.
   Terug: `npx wrangler deployments list` → `npx wrangler rollback <versie-id>`.
 - `npm install` vraagt `legacy-peer-deps` (staat in `.npmrc`).
