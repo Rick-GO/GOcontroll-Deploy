@@ -177,6 +177,10 @@ try {
   named.c10 = commit('Bump the version to 0.4.0\n');
   annotatedTag('v0.4.0', 'Release 0.4.0\n\n- Diagnostics\n- Calibration data\n');
 
+  // 5. A remote whose tracking branch is behind HEAD (pushed up to c8 only).
+  git(['remote', 'add', 'origin', 'https://github.com/GOcontroll/Module-Fixture.git']);
+  git(['update-ref', 'refs/remotes/origin/main', named.c8]);
+
   // ── Checks on the layout the test relies on ─────────────────────────────────
   const gitDir = join(repo, '.git');
   const packDir = join(gitDir, 'objects', 'pack');
@@ -260,6 +264,16 @@ try {
     { from: 'c1' },
   ];
   const rev = (n) => (named[n] ? named[n] : git(['rev-parse', `${n}^{commit}`]).trim());
+
+  // Every file of a few commits, as git show <commit>:<path> gives it (fileAt), and the remote.
+  const trees = ['c1', 'c2', 'c10'].map((n) => {
+    const files = {};
+    for (const path of git(['ls-tree', '-r', '--name-only', named[n]]).split('\n').filter(Boolean)) {
+      files[path] = Buffer.from(git(['show', `${named[n]}:${path}`]), 'utf-8').toString('base64');
+    }
+    return { name: n, commit: named[n], files };
+  });
+  const remote = { url: git(['config', 'remote.origin.url']).trim(), main: git(['rev-parse', 'refs/remotes/origin/main']).trim() };
   const logs = ranges.map((r) => {
     const from = rev(r.from);
     const exclude = r.exclude ? rev(r.exclude) : undefined;
@@ -286,7 +300,7 @@ try {
     git_version: git(['--version']).trim(),
     coverage: { packs: packKinds, loose_objects: looseObjects },
     named,
-    expected: { head, commits, tags, logs, objects },
+    expected: { head, commits, tags, logs, objects, trees, remote },
     files,
   };
   mkdirSync(dirname(outFile), { recursive: true });

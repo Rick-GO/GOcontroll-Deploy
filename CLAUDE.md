@@ -10,6 +10,9 @@
   `images.gocontroll.tech` (map `images/`). Die geeft 503 tot de eigenaar de Access-app met one-time PIN heeft gemaakt
   en de AUD in `images/wrangler.toml` staat (`images/README.md` → *One-time setup*). Terug naar 0.3.1:
   `npx wrangler rollback 8ccd2c42-fe88-459b-8b10-d2b37238797d` (de buckets en hun inhoud blijven).
+- **0.4.1 (2026-10-28, versie `acbf96ba-4f0f-4689-b06d-74f4f4059b20`)**: de tab Firmware volgt de regels van agent 08 (zie
+  *Module-firmware*); terug naar 0.4.0: `npx wrangler rollback 4876a23e-944b-4f73-b497-d978d321036b` (staat weer vervangen
+  van een `.srec` toe en publiceert de werkkopie).
 
 ## Architectuur
 - **Worker met static assets** (geen Pages), zelfde opzet als GOcontroll-Logistic: `run_worker_first = true`,
@@ -56,24 +59,33 @@
   publish staat in de logregel (`previous_manifest`). Terugzetten: README → *Deleting a folder* (manifest als laatste).
 
 ## Module-firmware (`src/firmware.ts`, tab Firmware)
-- Contract `GOcontroll-Architecture/cloudflare/firmware/spec.md` (≥ 1.2.0). Deploy is **tweede producent** naast de CI van
+- Vervangt agent 08 (*Moduline Module Firmware Deployer*, `18-Agents/08 - …`, sinds 28-10 buiten gebruik) en volgt diens
+  regels. Contract `GOcontroll-Architecture/cloudflare/firmware/spec.md` (≥ 1.2.1). Deploy is **tweede producent** naast de CI van
   de `Module-*`-repos (`.github/scripts/publish_firmware.py`, skill `module-firmware-deployment`) en schrijft wat dat script
   schrijft, in die volgorde: `modules/<hw_id>/<file>.srec`, `modules/<hw_id>/manifest.json`, `modules/manifest.json`
   (`JSON.stringify(…, 2)` zonder newline = `json.dumps(indent=2, ensure_ascii=False)`). `npm run fixtures:firmware` draait
   het echte script (boto3 gestubd, `python -I`); `test/firmware.test.ts` eist dezelfde bytes (op `updated` na). Fixtures
   niet met de hand wijzigen.
-- Bewust anders dan het script: `releases` **aflopend op versie** (go-modules flasht `releases[0]`), `latest_firmware` = de
-  hoogste; bestaande versie of andere bytes onder dezelfde naam = 409 tenzij `replace` (oud `.srec` eerst naar `STATE`
-  `firmware-replaced/…`); manifests etag-conditioneel met retry; **alleen LF** (browser zet CRLF om, Worker weigert CR):
-  een Windows-checkout met `core.autocrlf` heeft CRLF, git en de CI LF, dus anders klopt de SHA-256 niet met de CI.
+- Bewust anders dan het script (regels van agent 08): `releases` **aflopend op versie** (go-modules flasht `releases[0]`);
+  **`latest_firmware` nooit omlaag**; **een gepubliceerde `.srec` verandert nooit** (andere bytes onder dezelfde naam = altijd
+  409, correctie = nieuw versienummer); bestaande versie = 409 tenzij `replace` (alleen de manifest-entry opnieuw, zelfde
+  bestand); manifests etag-conditioneel met retry; `dry_run` = alles controleren, niets schrijven (de pagina toont dat altijd
+  eerst); changelog genormaliseerd zoals de CI hem uit een tag leest (`normaliseChangelog`).
+- **Het bestand zoals git het heeft**: vanuit een repo stuurt de pagina de blob op HEAD (`git.js` `fileAt`), nooit de
+  werkkopie (Windows + `core.autocrlf` = CRLF, andere SHA-256 dan de CI); niet gecommit of afwijkend van de commit = niet
+  te publiceren; HEAD niet op origin wordt gemeld. Losse bestanden: CRLF → LF. Worker weigert CR.
 - Bestandsnaam = alles: `20-10-1-6-2-0-3.srec` → `20100106`, `2.0.3`, HW `1.06` (`parseSrecName`, in `src/` én
   `public/js/release-helpers.js`, `test/pages.test.ts` houdt ze gelijk). Naam van een nieuwe hardware-ID: andere HW-versie van
   hetzelfde type → `MODULE_TYPE_NAMES` → door de collega ingetypt. Nooit iets onder `brcm/`.
-- Releasedatum = datum van het `.srec`-bestand (`lastModified`), als `DD/MM/YY` in het manifest. Changelog voorgesteld door
-  **`public/js/git.js`** (git lezen in de browser, alleen lezen: loose + packs met OFS/REF-delta, `packed-refs`,
-  geannoteerde tags; geen SHA-256-repos, reftable, worktrees/submodules): annotatie van tag `v<versie>` zonder
-  `RELEASE_DATE:`/`DEPLOY_FILES:`, anders de commits sinds de vorige versietag (max. 50). Fixture `test/fixtures/git/`
-  komt van `npm run fixtures:git` (git CLI); niet met de hand wijzigen.
+- Releasedatum = `RELEASE_DATE` van tag `v<versie>` als die bestaat, anders de datum van het `.srec`-bestand
+  (`lastModified`); `DD/MM/YY` in het manifest. Changelog: tekst van die tag, anders ingetypt (één regel Engels) met de
+  commits sinds de vorige versietag ernaast. **`public/js/git.js`** (alleen lezen: loose + packs met OFS/REF-delta,
+  `packed-refs`, geannoteerde tags, bestanden van een commit, origin-URL en tracking branch; geen SHA-256-repos, reftable,
+  worktrees/submodules). Fixture `test/fixtures/git/` komt van `npm run fixtures:git` (git CLI); niet met de hand wijzigen.
+- **Vangnet**: de `publish-firmware.yml` van elke module-repo blijft (keuze 21-07). Na publiceren geeft de pagina per versie
+  de tag-annotatie in het CI-formaat (`release-helpers.js` `tagAnnotation`) en de commando's (`git tag -a … --cleanup=whitespace
+  -F … <commit>`, bij een afwijkende bestaande tag eerst verwijderen), zodat de CI-run hetzelfde schrijft. Vooraf
+  `safetyNetFindings`: workflow ontbreekt, `MODULE_NAME` ≠ manifestnaam, secrets, script ontbreekt of mist de versiecheck.
 - Log: `publish-firmware` met `previous_module_manifest` en `previous_master_manifest` (terugzetten = die terugschrijven);
   `firmware-log/<hw_id>/<versie>.json` (+ custom metadata) = wie publiceerde uit welke repo/commit; zonder = de CI.
 
@@ -135,7 +147,7 @@
 - **Geen eigen D1** (bij het bouwen op 21-10 zat het account aan de Free-plan-D1-limiet; R2 volstaat voor deze data,
   dus het blijft zo): app-state is JSON in R2 **`gocontroll-deploy-state`**
   (`STATE`, privé): `keys/`, `keys-retired/`, `folders/`, `log/`, `replaced/`, `deleted/`, `deleting/`, `downloads/`,
-  `firmware-log/`, `firmware-replaced/`, `images/releases/`, `images/uploads/` (zie README → *Data*).
+  `firmware-log/`, `images/releases/`, `images/uploads/` (zie README → *Data*).
 - **`gocontroll-firmware`** (`FIRMWARE_BUCKET`, publiek via `firmware.gocontroll.tech`/`.com`) en **`gocontroll-images`**
   (`IMAGES_BUCKET`, privé; alleen via `images.gocontroll.tech`): lezen en schrijven, zie de secties hierboven.
 - **`gocontroll-business`** (eigenaar Hours) en **`gocontroll-db`** (eigenaar GOcontroll-Database): **alleen lezen**,

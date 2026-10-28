@@ -119,6 +119,33 @@ describe('the fixture repository, against the git CLI', () => {
     expect(Object.keys(FILES)).toContain('.git/refs/tags/v0.4.0');
   });
 
+  it('reads the files of a commit as git show <commit>:<path> does (packed and loose trees and blobs)', async () => {
+    const repo = await open();
+    for (const tree of expected.trees as { name: string; commit: string; files: Record<string, string> }[]) {
+      for (const [path, b64] of Object.entries(tree.files)) {
+        expect(await repo.fileAt(tree.commit, path), `${tree.name}:${path}`).toEqual(unb64(b64));
+      }
+      expect(await repo.fileAt(tree.commit, 'no-such-file.txt')).toBeNull();
+      expect(await repo.fileAt(tree.commit, 'README.md/inside')).toBeNull();
+    }
+    expect(await repo.fileAt(named.c1, 'version.txt')).toBeNull(); // added later
+  });
+
+  it('reads the remote: its URL and how far its tracking branch is', async () => {
+    const repo = await open();
+    const remote = expected.remote as { url: string; main: string };
+    expect(await repo.remoteUrl()).toBe(remote.url);
+    expect(await repo.remoteUrl('upstream')).toBeNull();
+    expect(await repo.remoteBranch('main')).toBe(remote.main);
+    expect(await repo.remoteBranch('feature')).toBeNull();
+    expect(await repo.reaches(remote.main, named.c10)).toBe(false); // HEAD not pushed
+    expect(await repo.reaches(named.c10, remote.main)).toBe(true);
+    expect(await repo.reaches(named.c10, named.c3)).toBe(true); // through the merge
+    expect(await repo.reaches(named.c4, named.c3)).toBe(false);
+    expect(await repo.reaches(named.c10, named.c10)).toBe(true);
+    expect(await repo.reaches(named.c10, named.c1, 2)).toBeNull();
+  });
+
   it('reads HEAD: the branch and its commit', async () => {
     const repo = await open();
     expect(repo.head).toEqual(expected.head);

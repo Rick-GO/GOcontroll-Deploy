@@ -102,25 +102,57 @@ describe('publishing', () => {
     expect(again.body.field).toBe('replace');
     const replaced = await publish(m.file('1.0.0'), srec('a'), { changelog: 'New text', replace: 'true' });
     expect(replaced.status).toBe(200);
-    expect(replaced.body).toMatchObject({ objectWritten: false, replacedRelease: true, replacedFile: false });
+    expect(replaced.body).toMatchObject({ objectWritten: false, replacedRelease: true });
     const mod = await json(`modules/${m.id}/manifest.json`);
     expect(mod.releases).toHaveLength(1);
     expect(mod.releases[0].changelog).toBe('New text');
   });
 
-  test('other bytes under an existing name are archived before they are replaced', async () => {
+  test('a published .srec never changes: other bytes under its name are refused, also with Publish again', async () => {
     const m = freshHw();
     const key = `modules/${m.id}/${m.file('1.0.0')}`;
     await env.FIRMWARE_BUCKET.put(key, srec('old'));
-    const refused = await publish(m.file('1.0.0'), srec('new'), { module_name: 'Test module' });
-    expect(refused.status).toBe(409);
-    expect(refused.body.conflict).toBe('file');
-    const res = await publish(m.file('1.0.0'), srec('new'), { module_name: 'Test module', replace: 'true' });
+    for (const replace of ['false', 'true']) {
+      const refused = await publish(m.file('1.0.0'), srec('new'), { module_name: 'Test module', replace });
+      expect(refused.status).toBe(409);
+      expect(refused.body.conflict).toBe('file');
+    }
+    expect(await text(key)).toBe(new TextDecoder().decode(srec('old')));
+    expect(await text(`modules/${m.id}/manifest.json`)).toBeNull();
+  });
+
+  test('latest_firmware never goes down, also when the manifest of the module lacks the latest', async () => {
+    const m = freshHw();
+    await publish(m.file('1.0.0'), srec('o'), { module_name: 'Test module' });
+    const master = await json('modules/manifest.json');
+    master.modules.find((x: { id: string }) => x.id === m.id).latest_firmware = '9.0.0';
+    await env.FIRMWARE_BUCKET.put('modules/manifest.json', JSON.stringify(master, null, 2));
+    const res = await publish(m.file('1.1.0'), srec('p'));
+    expect(res.body).toMatchObject({ latest: '9.0.0', latestBefore: '9.0.0' });
+    expect((await json('modules/manifest.json')).modules.find((x: { id: string }) => x.id === m.id).latest_firmware).toBe('9.0.0');
+  });
+
+  test('the changelog is stored as the CI reads it from a tag annotation', async () => {
+    const m = freshHw();
+    const res = await publish(m.file('1.0.0'), srec('q'), { module_name: 'Test module', changelog: '  First line   \n\n\nSecond line\t\n\n' });
+    expect(res.body.changelog).toBe('First line\nSecond line');
+    expect((await json(`modules/${m.id}/manifest.json`)).releases[0].changelog).toBe('First line\nSecond line');
+    const refused = await publish(m.file('1.0.1'), srec('r'), { changelog: 'Fix\nRELEASE_DATE: 01/01/26' });
+    expect(refused.status).toBe(400);
+    expect(refused.body.field).toBe('changelog');
+  });
+
+  test('a dry run checks everything and writes nothing', async () => {
+    const m = freshHw();
+    const before = await text('modules/manifest.json');
+    const res = await publish(m.file('1.0.0'), srec('s'), { module_name: 'Test module', dry_run: 'true' });
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ objectWritten: true, replacedFile: true });
-    const archived = await env.STATE.list({ prefix: `firmware-replaced/${m.id}/` });
-    expect(archived.objects).toHaveLength(1);
-    expect(await (await env.STATE.get(archived.objects[0].key))!.text()).toBe(new TextDecoder().decode(srec('old')));
+    expect(res.body).toMatchObject({ dryRun: true, newModule: true, objectWritten: true, latest: '1.0.0', latestBefore: null, moduleName: 'Test module' });
+    expect(JSON.parse(res.body.moduleManifest).releases[0]).toMatchObject({ sw_version: '1.0.0', date: '28/10/26' });
+    expect(await text(`modules/${m.id}/manifest.json`)).toBeNull();
+    expect(await env.FIRMWARE_BUCKET.head(`modules/${m.id}/${m.file('1.0.0')}`)).toBeNull();
+    expect(await text('modules/manifest.json')).toBe(before);
+    expect((await publish(m.file('1.0.0'), srec('s'), { dry_run: 'true' })).body.field).toBe('module_name');
   });
 
   test('releases stay highest first and latest_firmware is the highest, also when an older version comes later', async () => {

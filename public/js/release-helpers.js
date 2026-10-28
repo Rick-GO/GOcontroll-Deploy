@@ -37,11 +37,85 @@ export function localDay(ms) {
 }
 
 /**
- * The changelog in a tag annotation as the module-firmware-deployment skill writes it: without
- * the RELEASE_DATE: and DEPLOY_FILES: lines. @param {string} message
+ * A changelog the way the CI reads it from a tag annotation (and src/firmware.ts stores it): every
+ * line without trailing white space, no blank lines, trimmed. @param {string} text
+ */
+export function normaliseChangelog(text) {
+  return text.split(/\r?\n/).map((l) => l.replace(/\s+$/, '')).filter((l) => l.trim()).join('\n').trim();
+}
+
+/**
+ * The changelog in a tag annotation as the CI reads it (publish-firmware.yml): every line but the
+ * RELEASE_DATE: and DEPLOY_FILES: ones, without blank lines. @param {string} message
  */
 export function changelogFromTag(message) {
-  return message.split('\n').filter((l) => !/^(RELEASE_DATE|DEPLOY_FILES):/.test(l)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return normaliseChangelog(message.split(/\r?\n/).filter((l) => !/^(RELEASE_DATE|DEPLOY_FILES):/.test(l)).join('\n'));
+}
+
+/** The RELEASE_DATE: of a tag annotation (DD/MM/YY) as YYYY-MM-DD, or null. @param {string} message */
+export function releaseDateFromTag(message) {
+  const m = /^RELEASE_DATE:\s*(\d{2})\/(\d{2})\/(\d{2})\s*$/m.exec(message);
+  return m ? `20${m[3]}-${m[2]}-${m[1]}` : null;
+}
+
+/** The DEPLOY_FILES: of a tag annotation, sorted, or null. @param {string} message */
+function deployFilesFromTag(message) {
+  const m = /^DEPLOY_FILES:\s*(.*)$/m.exec(message);
+  return m ? m[1].split(',').map((f) => f.trim()).filter(Boolean).sort() : null;
+}
+
+/** YYYY-MM-DD → DD/MM/YY. @param {string} iso */
+export const manifestDate = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(2, 4)}`;
+
+/**
+ * The annotation of tag v<version> for a publish, in the format the CI reads
+ * (module-firmware-deployment): with it, the CI run the tag starts writes what Deploy wrote.
+ * @param {string} released  YYYY-MM-DD @param {string[]} files @param {string} changelog
+ */
+export function tagAnnotation(released, files, changelog) {
+  return `RELEASE_DATE: ${manifestDate(released)}\nDEPLOY_FILES: ${[...files].sort().join(',')}\n\n${normaliseChangelog(changelog)}\n`;
+}
+
+/**
+ * Whether an existing tag annotation makes the CI write the same as this publish: same date, same
+ * files, same changelog. @param {string} message @param {string} released @param {string[]} files @param {string} changelog
+ */
+export function annotationMatches(message, released, files, changelog) {
+  return releaseDateFromTag(message) === released
+    && JSON.stringify(deployFilesFromTag(message)) === JSON.stringify([...files].sort())
+    && changelogFromTag(message) === normaliseChangelog(changelog);
+}
+
+/** The https URL of a GitHub repository from its remote URL (https or ssh), or null. @param {string | null} url */
+export function githubUrl(url) {
+  const m = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(url ?? '');
+  return m ? `https://github.com/${m[1]}/${m[2]}` : null;
+}
+
+/**
+ * What the safety net (the repository's own publish-firmware.yml, which a tag push starts) would do
+ * differently, as the deployment agent checks it before a publish.
+ * @param {{ workflow: string | null, script: string | null, scriptPath: string | null, names: string[] }} repo
+ *   workflow: .github/workflows/publish-firmware.yml; script: the script its run: line names; names:
+ *   the module names on firmware.gocontroll.tech of the files to publish
+ * @returns {string[]}  one sentence per finding; none when the safety net agrees
+ */
+export function safetyNetFindings({ workflow, script, scriptPath, names }) {
+  if (workflow === null) return ['This repository has no .github/workflows/publish-firmware.yml: pushing the tag publishes nothing, so there is no safety net (that is fine).'];
+  const out = [];
+  const moduleName = /^\s*MODULE_NAME:\s*"?([^"\n]*?)"?\s*$/m.exec(workflow)?.[1] ?? null;
+  for (const name of new Set(names.filter(Boolean))) {
+    if (moduleName !== null && moduleName !== name) {
+      out.push(`The workflow's MODULE_NAME is "${moduleName}", the manifests say "${name}": for a hardware version that is new on firmware.gocontroll.tech, the CI would use its own.`);
+    }
+  }
+  for (const secret of ['FIRM_R2_ACCESS_KEY_ID', 'FIRM_R2_SECRET_ACCESS_KEY', 'CF_ACCOUNT_ID']) {
+    if (!workflow.includes(`secrets.${secret}`)) out.push(`The workflow does not use the secret ${secret}: its run would fail.`);
+  }
+  if (!scriptPath) out.push('The workflow runs no publish_firmware.py.');
+  else if (script === null) out.push(`The workflow runs ${scriptPath}, which is not in the repository: its run would fail.`);
+  else if (!/_ver\(sw_ver\)\s*>\s*_ver\(/.test(script)) out.push(`${scriptPath} sets latest_firmware also for an older version: push tags of the same module in version order, lowest first.`);
+  return out;
 }
 
 /** The highest v<x.y.z> tag below `version`. @param {Tag[]} tags @param {string} version */

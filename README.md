@@ -17,7 +17,9 @@ there with their e-mail address and a one-time code ([`images/README.md`](images
 members of the Entra group **`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> The Worker, the API and the pages are deployed (0.4.0 on 2026-10-28, version `4876a23e`: the tabs **Firmware** and
+> The Worker, the API and the pages are deployed (0.4.1 on 2026-10-28, version `acbf96ba`: the Firmware tab follows the
+> rules of the retired firmware agent 08: the file as git holds it, review with a dry run, never a changed `.srec`,
+> `latest_firmware` never down, the tag for the safety net; 0.4.0 on 2026-10-28, version `4876a23e`: the tabs **Firmware** and
 > **Images**, and the Worker `gocontroll-images` on `images.gocontroll.tech` (version `9a2c1639`), which answers 503 until
 > its Access application exists ([`images/README.md`](images/README.md) → *One-time setup*); 0.3.1 on 2026-10-23: plain HTTP redirected to HTTPS and the
 > security headers on `/pub/` too; 0.3.0 on 2026-10-21: Linux releases for M1, L4 and HMI1 next to
@@ -38,7 +40,7 @@ Old links `#/publish` and `#/sign` (milestone 1) lead to the folder page with `?
 | **Status** (`#/`) | Totals, then every customer with its applications and the folders without a customer. Columns: App ID, Controller (S1, M1, L4, HMI1 or a derived type), latest, releases, signing key ("n/a" for Linux applications, which are not signed), last upload. Search and a filter (all / S1 / S1 without key / M1 / L4 / HMI1 / controller unknown) stay in the address. At the bottom, **New application…**: controller S1, M1, L4 or HMI1, then the App ID (S1: up to 32 characters, no spaces or "/"; Linux: lower case `^[a-z0-9][a-z0-9._-]*$`, up to 64), customer, and for S1 the distribution host. Creating it opens its folder page. |
 | **Folder, S1** (`#/folders/<APP_ID>`) | Customer and controller (**Change…** each). **New release** in three steps: **1 File** (`.bin` / S-record / GOCO container, version from the filename) → **2 Sign** (public key with Copy; Generate or Import a key there, or tick *publish unsigned*) → **3 Publish** (description, Replace… / latest-moves-back confirmations, binary URL with Copy), or **Download signed file instead**. Then the releases with header checks, the signing key card, controllers per version, downloads per day, other files, and the **Danger zone**. |
 | **Folder, Linux (M1, L4, HMI1)** | Customer and controller. **Package** card: the files in `files/` (name, destination, mode, owner, group) with Add / Edit / Remove; default owner and group; after install: Nothing, *Restart services* (comma list, nodered and go-simulink suggested, preview of the rendered `post-install.sh.tmpl`) or *A script of its own*. **Save package**; **Import r2-deploy.config.json…** (paste or file); **From the latest release** (files from its version manifest, `files/post-install.sh` from its tarball). **New release** in three steps: **1 Files**: one file per package file (choose per row, or drop several, matched by name), or *Upload a built package* (`update.tar.gz` + `manifest.json` from a CI `dist/`, sent as they are after a SHA-256 check here), plus the version (next patch of latest) and what changed. **2 Review**: not signed, and why (go-deploy checks SHA-256 only); size and SHA-256 of the tarball; the version manifest's files with destination, mode, owner and short SHA-256; the post-install script; `manifest.json` as it will be written; what happens to `latest_version`. **3 Publish**: Publish / Replace…, progress, result (keys written, SHA-256 with Copy, size, `latest_version`). Then the Versions table (with a Tarball download per version), controllers per version, downloads, other files, Danger zone. |
-| **Firmware** (`#/firmware`) | Module firmware on firmware.gocontroll.tech. **Publish firmware**: *Choose the source folder…* (the module's repository, e.g. `Module-Input`; `showDirectoryPicker`, or a folder field in browsers without it, or drop the folder) or *Choose .srec files…*. From a folder Deploy takes every `<…>-BOOT/<name>.srec`, as the CI does, and reads the repository's git history in the browser: the line above the files names the repository, branch, HEAD and the number of version tags. Per file: module (name, hardware ID, hardware version, from the file name), version, file date and status (**New**, **Published** with the same bytes, **Published, other bytes**, or why it **cannot be used**); new versions are ticked. Per version: the **release date** (the file's date), the **changelog** (suggested from the annotation of tag `v<version>`, or else the commits since the previous version tag, listed under it with *Use these as the changelog*), the name of a module that is new on firmware.gocontroll.tech, and for a version that is published already *Publish again* (replace). **Publish N files** sends them one by one and shows each result. Below: every module (name, hardware version and ID, latest, date, number of releases), unfolding into its releases: version (link to the file, *flashed* on the first), date, changelog, SHA-256 with Copy, and who published it from Deploy and from which repository and commit, or *CI of the module repository*. |
+| **Firmware** (`#/firmware`) | Module firmware on firmware.gocontroll.tech, the way the Moduline Module Firmware Deployer (agent 08) published it. **Publish firmware**: *Choose the source folder…* (the module's repository, e.g. `Module-Input`; `showDirectoryPicker`, or a folder field in browsers without it, or drop the folder) or *Choose .srec files…*. From a folder Deploy takes every `<…>-BOOT/<name>.srec`, as the CI does, and reads the repository's `.git` in the browser: the line above the files names the repository, branch, HEAD, the number of version tags and whether HEAD is on origin (as of the last fetch); a second notice lists what the repository's own publish workflow (the safety net) would do differently. Per file: module (name, hardware ID, hardware version, from the file name), version, file date and status: **New**, **Published** (the same bytes), **Published, other bytes** (cannot be published: a correction gets a new version number) or why it **cannot be used** (not committed, differs from the commit, not an S-record). Per version: the **release date** (the tag's `RELEASE_DATE` when tag `v<version>` exists, else the file's date), the **changelog** (the tag's text, else typed: one line in English, with the commits since the previous version tag beside it), the name of a module that is new on firmware.gocontroll.tech, and for a published version *Publish again* (its manifest entry, same file). **Review N files…** sends each file as a dry run and shows what will be written (new file or identical, entry added or written again, `latest_firmware` before → after, the module manifest); **Publish** writes them, lowest version first. Then per version **Set tag v<version>**: the annotation (Copy, Download), the commands (delete and recreate when the tag exists with other text; nothing when it matches) and the GitHub release link. Below: every module (name, hardware version and ID, latest, date, number of releases), unfolding into its releases: version (link to the file, *flashed* on the first), date, changelog, SHA-256 with Copy, and who published it from Deploy and from which repository and commit, or *CI of the module repository*. |
 | **Images** (`#/images`) | Linux images and tools for customers on images.gocontroll.tech. **New release…**: image (for L4, M1 and/or HMI1) or tool, product (e.g. `moduline-headless`), version, title, controllers, release date, notes. A release is a **draft** until **Publish**; per draft *Add files…* (role guessed from the name: root file system, kernel, bootloader, device tree, flash script, tool, documentation, other; and the computer it runs on), upload with progress per file (32 MiB parts, three at a time, retried), the SHA-256 of each file as stored; *Remove* a file, *Edit…*, *Delete draft…*. A published release can be edited (text only) or **Withdrawn** (back to a draft; the files stay). Unfinished uploads with *Abort*. **Downloads**: who downloaded which file when, this month and last month, as images.gocontroll.tech logs it. |
 | **Keys** (`#/keys`) | S1 applications with a key (App ID, customer, controller, short public key with Copy, made by and when, source) and without one (Generate / Import with the one-time backup). Plus: Linux packages (M1, L4, HMI1) are not signed; go-deploy checks the SHA-256 only. |
 
@@ -207,7 +209,10 @@ the CI pipeline of the skill `GOcontroll-Claude-Skills/r2-application-deploy-set
 
 ### Module firmware (firmware.gocontroll.tech)
 
-Contract: `GOcontroll-Architecture/cloudflare/firmware/spec.md`. Deploy is a **second producer**
+Contract: `GOcontroll-Architecture/cloudflare/firmware/spec.md`. Deploy took over from the
+**Moduline Module Firmware Deployer** (agent 08, `18-Agents/08 - Moduline Module Firmware Deployer`,
+retired 2026-10-28), which published locally with wrangler and `publish_firmware_r2.py`; its rules are
+Deploy's. Deploy is a **second producer**
 next to the CI of the module repositories (`Module-*/.github/scripts/publish_firmware.py`, run on a
 `v*` tag whose annotation holds `RELEASE_DATE:`, `DEPLOY_FILES:` and the changelog; skill
 `module-firmware-deployment`) and writes what that script writes, in its order (`src/firmware.ts`):
@@ -222,40 +227,62 @@ Both manifests as `json.dumps(indent=2, ensure_ascii=False)`, without a trailing
 name carries module and version: `20-10-1-6-2-0-3.srec` = hardware ID `20100106` (each of the first
 four parts zero-padded to two digits), hardware version `1.06`, firmware `2.0.3`. A new hardware ID
 takes the name its manifest will have from another hardware version of the same type in
-`modules/manifest.json`, else from the list in `src/firmware.ts` (`GOcontroll-Architecture/modules/naming.md`),
-else the colleague types it. `npm run fixtures:firmware` runs the real `publish_firmware.py` (boto3
+`modules/manifest.json`, else from the list in `src/firmware.ts` (the manifests' names, agent 08's
+table; for `202001` and `204001` they differ from `GOcontroll-Architecture/modules/naming.md`), else
+the colleague types it. The name of an existing module is never changed. `npm run fixtures:firmware` runs the real `publish_firmware.py` (boto3
 stubbed, `python -I`) and `test/firmware.test.ts` checks that Deploy writes the same objects in the
 same order, byte for byte (`modules/manifest.json` apart from `updated`, the script's clock).
 
 Where Deploy differs from the script, on purpose:
 
-- **Releases highest version first**, and `latest_firmware` is that version. go-modules flashes
-  `releases[0]`; the script puts the newest *upload* first, so an older version published after a
-  newer one would roll every controller back (the skill avoids it by pushing tags in order).
-- **No silent overwrite**: a version that is in the manifest, or a file name with other bytes in the
-  bucket, is a 409 unless *Publish again* (replace) is ticked; the replaced `.srec` goes to `STATE`
-  `firmware-replaced/<hw_id>/<file>/<timestamp>.srec` first. The script replaces the entry silently
-  and skips the upload of an existing file while writing the SHA-256 of its own copy.
+- **Releases highest version first**. go-modules flashes `releases[0]`; the script puts the newest
+  *upload* first, so an older version published after a newer one would roll every controller back
+  (the skill avoids it by pushing tags in order). **`latest_firmware` never goes down**: the higher of
+  what it was and the highest release.
+- **A published firmware never changes**: other bytes under an existing file name are always refused
+  (409, `conflict: "file"`); a correction gets a new version number. A version that is in the
+  manifest is refused (409, `conflict: "release"`) unless *Publish again* (`replace`) is ticked, which
+  writes its entry again with the same file (a corrected changelog or date). The script replaces the
+  entry silently and skips the upload of an existing file while writing the SHA-256 of its own copy.
+- **Review first**: `dry_run=true` checks everything and answers what would be written (the module
+  manifest as it would be, `latest_firmware` before and after) without writing; the page always shows
+  that before it publishes.
 - **Conditional writes** (R2 etag) on both manifests, retried on the newer version: a publish at the
   same time (Deploy or CI) is not lost.
-- **LF only**: the browser turns CRLF into LF before it hashes or sends anything, the Worker refuses
-  a CR. A Windows checkout (`core.autocrlf=true`) has CRLF; git and the CI have LF. So the bytes and
-  SHA-256 Deploy publishes are those of the file in git, and a version published from Deploy and
-  later tagged gives the CI the same file.
+- **The file as git holds it**: from a repository the page sends the blob at HEAD (`git.js`
+  `fileAt`), never the work tree's copy, and refuses a file that is not committed or differs from the
+  commit; the Worker refuses a CR. A Windows checkout (`core.autocrlf=true`) has CRLF; git and the CI
+  have LF (`20-20-2-7-2-3-1.srec`: 95,756 bytes in the work tree, 93,758 in git, only the second
+  matches the live SHA-256 `27e555f0…`). Loose files are converted from CRLF to LF.
+- **The changelog as the CI reads it**: every line without trailing white space, no blank lines,
+  trimmed (`normaliseChangelog`); a line may not start with `RELEASE_DATE:` or `DEPLOY_FILES:`.
 
 The browser checks every record of the `.srec` (`parseSrec`, `public/js/source.js`); the Worker only
 checks that every line is an S-record and computes the SHA-256. **Git in the browser**
 (`public/js/git.js`): from the chosen folder it reads `.git` (loose objects and packs, refs and
-`packed-refs`, annotated tags) without writing anything, and suggests the changelog: the annotation
-of tag `v<version>` without its `RELEASE_DATE:`/`DEPLOY_FILES:` lines, or else `- <subject>` per commit
-since the previous version tag (at most 50). A worktree or submodule (`.git` is a file) has no
-history to read; the changelog is then typed. The log entry and `firmware-log/<hw_id>/<version>.json`
-keep the repository, branch, HEAD commit and tag.
+`packed-refs`, annotated tags, the files of a commit, origin's URL and tracking branch) without
+writing anything. It suggests the release date and changelog of an existing tag `v<version>` (the
+annotation without its `RELEASE_DATE:`/`DEPLOY_FILES:` lines and blank lines, as the CI reads it), and
+lists the commits since the previous version tag (at most 50) to write a new one from. HEAD not on
+`origin/<branch>` (as of the last fetch) is said in the source line and the review. A worktree or
+submodule (`.git` is a file) cannot be read: choose the main repository. The log entry and
+`firmware-log/<hw_id>/<version>.json` keep the repository, branch, HEAD commit, path, tag and whether
+HEAD was pushed.
 
-**Publishing a version both ways**: a version published from Deploy and then also pushed as a tag
-`v<version>` runs the CI, which rewrites that manifest entry with the tag's date and changelog (the
-same file and SHA-256, thanks to LF). Harmless, but the tag's text then wins: give the tag the same
-changelog, or tag before publishing from Deploy and let Deploy suggest the tag's text.
+**The tag and the safety net.** Every module repository keeps its `publish-firmware.yml` (agent 08's
+choice, 2026-07-21): pushing a tag `v<version>` runs the CI, which rebuilds the manifest entry from the
+tag's annotation. After a publish the page gives, per version, the annotation in the CI's format
+(`RELEASE_DATE: DD/MM/YY`, `DEPLOY_FILES: <files>`, blank line, the changelog as stored), to copy or
+download, and the commands: `git tag -a v<version> --cleanup=whitespace -F "$HOME/Downloads/tag-v<version>.txt" <commit>`
+(the commit the files were read from) and `git push origin v<version>`; when the tag exists with other
+text, first `git tag -d` and `git push origin --delete`, as the agent did; nothing when it matches. With
+that annotation the CI run writes exactly what Deploy wrote. Then the GitHub release (link to
+`…/releases/new?tag=`). Before publishing the page also checks the safety net
+(`safetyNetFindings`): a missing workflow (no safety net), its `MODULE_NAME` against the manifests'
+name (it only matters for a new hardware ID: the CI uses it for a new manifest), the secrets
+`FIRM_R2_ACCESS_KEY_ID`/`FIRM_R2_SECRET_ACCESS_KEY`/`CF_ACCOUNT_ID`, its script being there and having
+the version check on `latest_firmware` (else: push tags of one module lowest first). Fixing what it
+finds is work in the module repository (skill `module-firmware-deployment`).
 
 ### Images and tools for customers (images.gocontroll.tech)
 
@@ -377,7 +404,6 @@ enough for this data, so it stays there.
 | `deleting/<APP_ID>.json` | A delete under way: archive timestamp, actor, reason, progress. Gone when it is done. |
 | `downloads/<yyyy-mm-dd>.json` | Download counts of a finished UTC day ([Download counts](#download-counts)). |
 | `firmware-log/<hw_id>/<version>.json` | Who published that module firmware from Deploy, when, its SHA-256, and the repository, branch, commit and tag it came from (also in the custom metadata, for the overview's one listing). None for a version the CI published. |
-| `firmware-replaced/<hw_id>/<file>/<timestamp>.srec` | An `.srec` a publish replaced (custom metadata: its SHA-256, who replaced it). |
 | `images/releases/<kind>/<product>/<version>.json` | A release for images.gocontroll.tech: kind, product, title, version, controllers, release date, notes, files (name, path, size, SHA-256, role, platform, who uploaded it when), `draft`/`published`, who made, changed and published it when. |
 | `images/uploads/<id>.json` | An upload to `gocontroll-images` under way: R2 upload ID, object key, size, part size and count, who started it. Gone once completed or aborted. |
 
@@ -527,7 +553,7 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
 | POST | `/api/sign` | multipart `appId`, `version`, and `payload` (zlib) + `rawSize`, or `container` → the signed container as a download `<APP_ID>-<version>.bin`; nothing goes into the bucket |
 | POST | `/api/releases` | multipart `appId`, `version`, `description`, `sign`, `replace`, `distributionUrl` (new folder only), and `payload` + `rawSize` or `container` → `{ binaryKey, binaryUrl, manifestKey, version, releaseDate, previousLatest, replaced, latestMovedBack, signed }` |
 | GET | `/api/firmware` | `{ updated, modules: [ { id, name, hardwareVersion, latest, releases: [ { version, file, date, sha256, changelog, publishedBy: { email, at, source } \| null } ], error? } ], manifestError?, firmwareUrl, moduleTypeNames }` |
-| POST | `/api/firmware` | multipart `file` (`<a>-<b>-<c>-<d>-<x>-<y>-<z>.srec`, LF, ≤ 4 MB), `released` (YYYY-MM-DD), `changelog` (≤ 2000), `module_name` (a new hardware ID), `replace` (`true`), `source` (JSON `{ repo, branch, commit, tag }`) → `{ hwId, version, file, url, sha256, date, latest, objectWritten, replacedRelease, replacedFile, newModule }`; 409 with `conflict: "release" \| "file"` |
+| POST | `/api/firmware` | multipart `file` (`<a>-<b>-<c>-<d>-<x>-<y>-<z>.srec`, LF, ≤ 4 MB), `released` (YYYY-MM-DD), `changelog` (≤ 2000), `module_name` (a new hardware ID), `replace` (`true`: write the entry of a published version again, same file), `dry_run` (`true`: write nothing), `source` (JSON `{ repo, branch, commit, tag, path, pushed }`) → `{ dryRun, hwId, version, file, url, sha256, date, changelog, moduleName, latest, latestBefore, objectWritten, replacedRelease, newModule, moduleManifest }`; 409 with `conflict: "release"` (published; *replace*) or `"file"` (other bytes: never) |
 | GET | `/api/images` | `{ releases: [ … + inCatalogue ], uploads, downloads: [ { at, email, path, kind, product, version, country } ], catalogueError?, publicUrl, limits: { partSize, maxFileSize } }` |
 | POST | `/api/images/releases` | `{ kind: "image" \| "tool", product, version, title, controllers: ["L4", "M1", "HMI1"], released, notes }` → 201, the draft; 409 when it exists |
 | PATCH | `/api/images/releases/:kind/:product/:version` | `{ title, controllers, released, notes }` → the release (a published one is updated in `manifest.json` too) |
@@ -613,14 +639,18 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
   manifest) and the root manifest before every publish is in its `publish-linux` log entry
   (`previous_manifest`); put them back with `npx wrangler r2 object put`, the root manifest last
   (`application/gzip` for the package, `application/json` for the manifests).
+- **0.4.1** (the Firmware tab by agent 08's rules, 2026-10-28; no data or binding changed): back to 0.4.0 with
+  `npx wrangler rollback 4876a23e-944b-4f73-b497-d978d321036b` (which allows replacing an `.srec` again and publishes
+  the work tree's copy: avoid).
 - **0.4.0** (Firmware and Images tabs, bindings `FIRMWARE_BUCKET` and `IMAGES_BUCKET`, 2026-10-28; no
   data changed): back to 0.3.1 with `npx wrangler rollback 8ccd2c42-fe88-459b-8b10-d2b37238797d`.
   The buckets and their contents stay; images.gocontroll.tech keeps serving what is published.
 - **A module firmware publish**: its `publish-firmware` log entry holds `previous_module_manifest` and
   `previous_master_manifest`; write them back (module manifest first, then `modules/manifest.json`)
   with `npx wrangler r2 object put gocontroll-firmware/<key> --remote --file=<file> --content-type application/json`
-  (`null` = there was none: delete the object instead). A replaced `.srec` is in
-  `firmware-replaced/…`. Leave a new `.srec` in place: without a manifest entry nobody downloads it.
+  (`null` = there was none: delete the object instead). Leave a new `.srec` in place: without a
+  manifest entry nobody downloads it. If its tag was pushed, the CI writes the entry again: delete the
+  tag too (`git push origin --delete v<version>`).
 - **An image release**: *Withdraw* takes it off images.gocontroll.tech at once; the files stay until the
   draft is deleted.
 - **A key**: the replaced one is in `keys-retired/<APP_ID>/`; copying it back to

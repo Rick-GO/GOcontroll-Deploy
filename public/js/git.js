@@ -8,6 +8,10 @@
 // folder):
 //   - refs: HEAD (a branch or a bare commit id), loose refs and packed-refs (with its ^ peel
 //     lines); tags under refs/tags, also with a "/" in their name;
+//   - files of a commit (fileAt): its tree, followed path by path, to the blob, so Publish sends
+//     the bytes git holds (LF) rather than a Windows work tree's copy (CRLF with core.autocrlf);
+//   - the remote: origin's URL in config and its tracking branch (refs/remotes/origin/<branch>),
+//     to tell whether HEAD has been pushed (reaches);
 //   - objects: loose (objects/xx/…, one zlib stream each) and packed (every objects/pack/*.idx,
 //     version 2 with the large-offset table, and its .pack), including OFS_DELTA and REF_DELTA
 //     entries whose base is in the same pack, in another pack or loose. Every object that is
@@ -423,7 +427,7 @@ const SIGNATURE = /^-----BEGIN (PGP SIGNATURE|PGP MESSAGE|SSH SIGNATURE|SIGNED M
 
 /**
  * @param {string} sha @param {Uint8Array} data
- * @returns {{ commit: Commit, time: number }}  time: the committer date in seconds, for ordering
+ * @returns {Entry}  time: the committer date in seconds, for ordering; tree: the id of its root tree
  */
 function parseCommit(sha, data) {
   const { headers, message } = decodeObject(data);
@@ -436,7 +440,27 @@ function parseCommit(sha, data) {
   return {
     commit: { sha, parents: [...parents], author: author.name, authorEmail: author.email, authorDate: author.date, committerDate: committer.date, ...splitMessage(message) },
     time: committer.time,
+    tree: /** @type {string[]} */ (headers.get('tree'))[0],
   };
+}
+
+/**
+ * One entry of a tree object (mode SP name NUL 20-byte id), or null.
+ * @param {Uint8Array} data @param {string} name
+ * @returns {{ mode: string, sha: string } | null}
+ */
+function treeEntry(data, name) {
+  let at = 0;
+  while (at < data.length) {
+    const sp = data.indexOf(32, at);
+    const nul = sp < 0 ? -1 : data.indexOf(0, sp);
+    if (sp < 0 || nul < 0 || nul + 21 > data.length) throw new GitError('The repository is damaged: a tree cannot be read.');
+    if (UTF8.decode(data.subarray(sp + 1, nul)) === name) {
+      return { mode: UTF8.decode(data.subarray(at, sp)), sha: toHex(data.subarray(nul + 1, nul + 21)) };
+    }
+    at = nul + 21;
+  }
+  return null;
 }
 
 /** @param {string} sha @param {Uint8Array} data */
@@ -484,7 +508,7 @@ class ObjectCache {
   }
 }
 
-/** @typedef {{ commit: Commit, time: number }} Entry */
+/** @typedef {{ commit: Commit, time: number, tree: string }} Entry */
 
 /** Commits by committer date, newest first; equal dates in the order they came in (as git). */
 class CommitQueue {
@@ -873,6 +897,90 @@ export class Repo {
     const obj = base ? { type: base.type, data: applyDelta(base.data, data) } : { type: TYPES[kind], data };
     this.bases.set(key, obj);
     return obj;
+  }
+
+  // ── Files and the remote ──
+
+  /**
+   * The bytes of a file in a commit, or null when that commit has no such file (or the path is
+   * a folder or a submodule).
+   * @param {string} commitSha
+   * @param {string} path  '/'-separated, from the root of the repository
+   * @returns {Promise<Uint8Array | null>}
+   */
+  async fileAt(commitSha, path) {
+    const parts = path.split('/').filter(Boolean);
+    let tree = (await this.entry(checkSha(commitSha))).tree;
+    for (const [i, part] of parts.entries()) {
+      const obj = await this.object(checkSha(tree), 0);
+      if (obj.type !== 'tree') throw new GitError(`The repository is damaged: ${short(tree)} is not a tree.`);
+      const found = treeEntry(obj.data, part);
+      if (!found) return null;
+      const folder = found.mode === '40000';
+      if (i < parts.length - 1) {
+        if (!folder) return null;
+        tree = found.sha;
+        continue;
+      }
+      if (folder || found.mode === '160000') return null;
+      const blob = await this.object(found.sha, 0);
+      return blob.type === 'blob' ? blob.data : null;
+    }
+    return null;
+  }
+
+  /**
+   * The URL of a remote in .git/config, or null.
+   * @param {string} [remote]
+   * @returns {Promise<string | null>}
+   */
+  async remoteUrl(remote = 'origin') {
+    let inRemote = false;
+    for (const raw of ((await this.text('config')) ?? '').split(/\r?\n/)) {
+      const line = raw.trim();
+      const header = /^\[\s*([A-Za-z0-9.-]+)(?:\s+"([^"]*)")?\s*\]/.exec(line);
+      if (header) {
+        inRemote = header[1].toLowerCase() === 'remote' && header[2] === remote;
+        continue;
+      }
+      const kv = /^url\s*=\s*"?([^"\s]+)"?/i.exec(line);
+      if (inRemote && kv) return kv[1];
+    }
+    return null;
+  }
+
+  /**
+   * The commit a remote-tracking branch points to (as of the last fetch), or null.
+   * @param {string} branch @param {string} [remote]
+   * @returns {Promise<string | null>}
+   */
+  async remoteBranch(branch, remote = 'origin') {
+    return this.resolveRef(`refs/remotes/${remote}/${branch}`);
+  }
+
+  /**
+   * Whether `target` is `from` or one of its ancestors; null when that was not settled within
+   * `limit` commits.
+   * @param {string} from @param {string} target @param {number} [limit]
+   * @returns {Promise<boolean | null>}
+   */
+  async reaches(from, target, limit = EXCLUDE_LIMIT) {
+    const goal = checkSha(target);
+    const start = checkSha(from);
+    if (start === goal) return true;
+    const seen = new Set([start]);
+    const queue = new CommitQueue();
+    queue.push(await this.entry(start));
+    while (queue.size) {
+      if (seen.size > limit) return null;
+      for (const p of this.parentsOf(queue.pop())) {
+        if (p === goal) return true;
+        if (seen.has(p)) continue;
+        seen.add(p);
+        queue.push(await this.entry(p));
+      }
+    }
+    return false;
   }
 
   // ── History ──

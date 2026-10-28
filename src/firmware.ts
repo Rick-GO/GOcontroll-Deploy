@@ -18,15 +18,21 @@
 //   - releases are sorted highest version first. go-modules takes releases[0] as the firmware to
 //     flash; the script puts the newest upload first, so publishing an older version after a newer
 //     one would make every controller go back. latest_firmware is that same highest version.
-//   - a version that is already in the module's manifest, or a file name that already holds other
-//     bytes, is refused (409) unless the colleague chose to replace it; the replaced .srec is kept
-//     in STATE (firmware-replaced/…) first. The script overwrites the entry silently and skips the
-//     upload of an existing file while still writing the SHA-256 of its own copy.
+//   - latest_firmware never goes down (the deployment agent's rule, agent 08): the higher of what
+//     it was and the highest release.
+//   - a published .srec never changes: other bytes under an existing name are refused (409), the
+//     correction gets a new version number. A version that is in the manifest already is refused
+//     unless the colleague ticks "Publish again", which writes its entry again (same file, e.g. a
+//     corrected changelog). The script overwrites the entry silently and skips the upload of an
+//     existing file while still writing the SHA-256 of its own copy.
+//   - the changelog is stored the way the CI reads it from a tag annotation (normaliseChangelog),
+//     so the tag Deploy suggests afterwards makes the CI write the same entry: pushing it is a no-op.
+//   - dry_run answers what would be written, without writing (the review before Publish).
 //   - the manifests are written only over the version that was read (R2 etag): a publish at the
 //     same moment (Deploy or CI) is not lost, this one is retried on the newer manifest.
-//   - an .srec must have LF line ends. The browser converts CRLF (a Windows checkout with
-//     core.autocrlf) to LF, so the bytes and SHA-256 are those of the file in git, which is what
-//     the CI publishes.
+//   - an .srec must have LF line ends. From a repository the browser sends the file as git holds
+//     it at HEAD (never the Windows work tree's CRLF copy), so the bytes and SHA-256 are those the
+//     CI publishes; loose files are converted from CRLF to LF.
 //
 // The audit log (STATE log/…) holds every publish with the manifests as they were before it, so a
 // publish can be undone by writing those back (README, "Module firmware"). firmware-log/<hw_id>/
@@ -48,8 +54,10 @@ const ATTEMPTS = 3;
 
 /**
  * Module names for a hardware type that has no manifest yet, by the first six digits of the
- * hardware ID (GOcontroll-Architecture/modules/naming.md). An existing manifest's name always
- * wins, then the name of another hardware version of the same type, then this list.
+ * hardware ID: the names the manifests use (the deployment agent's table, agent 08), which differ
+ * from GOcontroll-Architecture/modules/naming.md for 202001 and 204001. An existing manifest's
+ * name always wins and is never changed, then the name of another hardware version of the same
+ * type, then this list.
  */
 export const MODULE_TYPE_NAMES: Readonly<Record<string, string>> = {
   '201001': '6 Channel Input module',
@@ -57,11 +65,12 @@ export const MODULE_TYPE_NAMES: Readonly<Record<string, string>> = {
   '201003': '4-20mA Input module',
   '201004': 'RTD Input module',
   '201005': 'Loadcell Input module',
-  '202001': '2 Channel Power Bridge module',
+  '202001': '2 Channel Output module', // naming.md: "2 Channel Power Bridge Module"; the manifests' name kept (agent 08)
   '202002': '6 Channel Output module',
   '202003': '10 Channel Output module',
   '203003': 'IR Communication Module',
   '203004': 'Multibus module',
+  '204001': 'ANLEG RTC Control module', // not in naming.md (agent 08)
 };
 
 /** 20-10-1-6-2-0-3.srec: four hardware parts of one or two digits, three firmware parts. */
@@ -168,7 +177,7 @@ export interface FirmwareOverview {
   moduleTypeNames: Record<string, string>;
 }
 
-export interface FirmwareSource { repo: string; branch: string | null; commit: string | null; tag: string | null }
+export interface FirmwareSource { repo: string; branch: string | null; commit: string | null; tag: string | null; path?: string | null; pushed?: boolean | null }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : v === undefined || v === null ? '' : String(v));
 
@@ -235,22 +244,39 @@ export function firmwareBase(env: Env): string {
 // ── Publishing ───────────────────────────────────────────────────────────────
 
 export interface FirmwarePublishResult {
+  dryRun: boolean;          // true: nothing was written, this is what would be
   hwId: string;
   version: string;
   file: string;
   url: string;
   sha256: string;
   date: string;
-  latest: string;
+  changelog: string;        // as written: the way the CI reads it from a tag annotation
+  moduleName: string;
+  latest: string;           // latest_firmware after the publish
+  latestBefore: string | null;
   objectWritten: boolean;   // false: the identical file was already there
-  replacedRelease: boolean; // the version was in the manifest and was replaced
-  replacedFile: boolean;    // other bytes were under this name and were archived first
+  replacedRelease: boolean; // the version was in the manifest and its entry was replaced
   newModule: boolean;
+  moduleManifest: string;   // the module's manifest as it is (or would be) written
 }
 
 function field(form: FormData, name: string): string {
   const v = form.get(name);
   return typeof v === 'string' ? v : '';
+}
+
+/**
+ * The changelog as the CI reads it from a tag annotation: every line without trailing white space,
+ * no blank lines, trimmed. Written like this, the annotation Deploy suggests for the tag makes the
+ * CI write the same text, so pushing the tag changes nothing.
+ */
+export function normaliseChangelog(text: string): string {
+  const lines = text.split(/\r?\n/).map((l) => l.replace(/\s+$/, '')).filter((l) => l.trim());
+  if (lines.some((l) => /^(RELEASE_DATE|DEPLOY_FILES):/.test(l))) {
+    throw new HttpError(400, 'A changelog line cannot start with RELEASE_DATE: or DEPLOY_FILES: (the tag annotation uses those).', 'changelog');
+  }
+  return lines.join('\n').trim();
 }
 
 function sourceField(text: string): FirmwareSource | null {
@@ -265,14 +291,66 @@ function sourceField(text: string): FirmwareSource | null {
   const repo = s(v?.repo, 120);
   if (!repo) return null;
   const commit = s(v.commit, 40);
-  return { repo, branch: s(v.branch, 200), commit: commit && /^[0-9a-f]{40}$/.test(commit) ? commit : null, tag: s(v.tag, 200) };
+  return {
+    repo,
+    branch: s(v.branch, 200),
+    commit: commit && /^[0-9a-f]{40}$/.test(commit) ? commit : null,
+    tag: s(v.tag, 200),
+    path: s(v.path, 300),
+    pushed: typeof v.pushed === 'boolean' ? v.pushed : null,
+  };
+}
+
+const releasesOf = (doc: Record<string, unknown> | null | undefined): Record<string, unknown>[] =>
+  (Array.isArray(doc?.releases) ? doc!.releases as Record<string, unknown>[] : []);
+
+/** The module's manifest with this release in it (a new manifest when there is none). */
+function nextModuleDoc(mod: Doc | null, master: Doc | null, name: SrecName, entry: Record<string, unknown>, moduleName: string): Record<string, unknown> {
+  const doc: Record<string, unknown> = mod ? { ...mod.value } : {
+    id: name.hwId,
+    name: moduleName || typeName(master?.value, name.typeId) || MODULE_TYPE_NAMES[name.typeId] || '',
+    hardware_version: name.hardwareVersion,
+    releases: [],
+  };
+  if (!str(doc.name)) throw new HttpError(400, `Fill in the name of module ${name.hwId}: it is not on firmware.gocontroll.tech yet.`, 'module_name');
+  doc.releases = sortReleases([...releasesOf(doc).filter((r) => str(r.sw_version) !== name.version), entry]);
+  return doc;
+}
+
+/**
+ * modules/manifest.json with this module's latest_firmware: the highest release, never lower than
+ * it was (the deployment agent's rule; go-web-ui shows it).
+ */
+function nextMasterDoc(master: Doc | null, modDoc: Record<string, unknown>, name: SrecName, at: string): { doc: Record<string, unknown>; latest: string; latestBefore: string | null } {
+  const doc: Record<string, any> = master ? { ...master.value } : { updated: '', modules: [] };
+  doc.updated = at.slice(0, 10);
+  const modules: Record<string, unknown>[] = Array.isArray(doc.modules) ? doc.modules.map((m: Record<string, unknown>) => ({ ...m })) : [];
+  const existing = modules.find((m) => str(m.id) === name.hwId);
+  const highest = str(releasesOf(modDoc)[0]?.sw_version);
+  const latestBefore = existing ? str(existing.latest_firmware) || null : null;
+  const latest = latestBefore && /^\d+(\.\d+)*$/.test(latestBefore) && compareFirmwareVersions(latestBefore, highest) > 0 ? latestBefore : highest;
+  if (existing) {
+    existing.latest_firmware = latest;
+  } else {
+    modules.push({
+      id: name.hwId,
+      name: str(modDoc.name),
+      hardware_version: str(modDoc.hardware_version) || name.hardwareVersion,
+      latest_firmware: latest,
+      manifest: moduleManifestKey(name.hwId),
+    });
+  }
+  doc.modules = modules;
+  return { doc, latest, latestBefore };
 }
 
 /**
  * Publish one .srec: the file, then its module's manifest, then modules/manifest.json. Form
- * fields: file (the .srec, LF line ends), released (YYYY-MM-DD), changelog, module_name (only used
- * for a hardware ID without a manifest), replace ('true' to replace an existing version or file),
- * source (JSON { repo, branch, commit, tag } of the local repository, for the log).
+ * fields: file (the .srec as git holds it: LF), released (YYYY-MM-DD), changelog, module_name (only
+ * used for a hardware ID without a manifest), replace ('true': write the manifest entry of a
+ * version that is published already again, with the same file), source (JSON { repo, branch,
+ * commit, tag, path, pushed } of the local repository, for the log), dry_run ('true': check
+ * everything and answer what would be written, write nothing).
  */
 export async function publishFirmware(env: Env, user: User, form: FormData): Promise<FirmwarePublishResult> {
   const file = form.get('file');
@@ -281,11 +359,12 @@ export async function publishFirmware(env: Env, user: User, form: FormData): Pro
   if (!name) throw new HttpError(422, `${file.name} does not follow the naming of module firmware (e.g. 20-10-1-6-2-0-3.srec).`, 'file');
   if (file.size > MAX_SREC_SIZE) throw new HttpError(413, 'An .srec of a module is at most 4 MB.', 'file');
   const date = manifestDate(field(form, 'released'));
-  const changelog = field(form, 'changelog').trim();
+  const changelog = normaliseChangelog(field(form, 'changelog'));
   if (!changelog) throw new HttpError(400, 'Write what changed in this version.', 'changelog');
   if (changelog.length > MAX_CHANGELOG) throw new HttpError(400, `The changelog is at most ${MAX_CHANGELOG} characters.`, 'changelog');
   const moduleName = field(form, 'module_name').trim().slice(0, 80);
   const replace = field(form, 'replace') === 'true';
+  const dryRun = field(form, 'dry_run') === 'true';
   const source = sourceField(field(form, 'source'));
 
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -294,89 +373,71 @@ export async function publishFirmware(env: Env, user: User, form: FormData): Pro
   const objectKey = `${MODULES_PREFIX}${name.hwId}/${name.file}`;
   const modKey = moduleManifestKey(name.hwId);
   const bucket = env.FIRMWARE_BUCKET;
+  const inManifest = (doc: Doc | null) => releasesOf(doc?.value).some((r) => str(r.sw_version) === name.version);
 
   // Everything that could refuse the publish is checked before anything is written.
   let mod = await readDoc(bucket, modKey);
-  const inManifest = (doc: Doc | null) => (Array.isArray(doc?.value.releases) ? doc!.value.releases as Record<string, unknown>[] : [])
-    .some((r) => str(r.sw_version) === name.version);
+  let master = await readDoc(bucket, MASTER_MANIFEST_KEY);
   const replacedRelease = inManifest(mod);
   if (replacedRelease && !replace) {
-    throw new HttpError(409, `Firmware ${name.version} of ${name.hwId} is already published. Choose Replace to publish it again.`, 'replace', { conflict: 'release' });
+    throw new HttpError(409, `Firmware ${name.version} of ${name.hwId} is already published. Tick "Publish again" to write its manifest entry again (same file).`, 'replace', { conflict: 'release' });
   }
-  const storedObject = await bucket.get(objectKey);
-  const stored = storedObject ? new Uint8Array(await storedObject.arrayBuffer()) : null;
-  const storedDigest = stored ? toHex(await sha256(stored)) : null;
-  const replacedFile = storedDigest !== null && storedDigest !== digest;
-  if (replacedFile && !replace) {
-    throw new HttpError(409, `firmware.gocontroll.tech already has a different ${name.file}. Choose Replace to overwrite it (the old file is kept in the archive).`, 'replace', { conflict: 'file' });
+  const stored = await bucket.get(objectKey);
+  const storedDigest = stored ? toHex(await sha256(new Uint8Array(await stored.arrayBuffer()))) : null;
+  if (storedDigest !== null && storedDigest !== digest) {
+    throw new HttpError(409, `firmware.gocontroll.tech already has a different ${name.file}. A published firmware never changes: give the correction a new version number.`, 'file', { conflict: 'file' });
+  }
+  const objectWritten = storedDigest === null;
+  const at = new Date().toISOString();
+  const entry = { sw_version: name.version, file: objectKey, date, sha256: digest, changelog };
+
+  if (dryRun) {
+    const modDoc = nextModuleDoc(mod, master, name, entry, moduleName);
+    const { latest, latestBefore } = nextMasterDoc(master, modDoc, name, at);
+    return {
+      dryRun: true, hwId: name.hwId, version: name.version, file: objectKey, url: `${firmwareBase(env)}/${objectKey}`, sha256: digest,
+      date, changelog, moduleName: str(modDoc.name), latest, latestBefore, objectWritten, replacedRelease, newModule: !mod,
+      moduleManifest: firmwareManifestText(modDoc),
+    };
   }
 
-  const at = new Date().toISOString();
-  if (replacedFile) {
-    await env.STATE.put(`firmware-replaced/${name.hwId}/${name.file}/${at.replace(/[:.]/g, '-')}.srec`, stored!, {
-      httpMetadata: { contentType: 'application/octet-stream' },
-      customMetadata: { sha256: storedDigest!, replaced_by: user.email },
-    });
-  }
-  const objectWritten = storedDigest !== digest;
   if (objectWritten) {
-    await bucket.put(objectKey, bytes, { httpMetadata: { contentType: 'application/octet-stream' } });
+    // Only where nothing is: a file that appeared meanwhile is never overwritten.
+    const put = await bucket.put(objectKey, bytes, { httpMetadata: { contentType: 'application/octet-stream' }, onlyIf: new Headers({ 'if-none-match': '*' }) });
+    if (!put) throw new HttpError(409, `${name.file} was published a moment ago by someone else. Reload the page.`, 'file', { conflict: 'file' });
   }
 
   // The module's manifest, over the version that was read.
-  const entry = { sw_version: name.version, file: objectKey, date, sha256: digest, changelog };
+  let modDoc: Record<string, unknown> = {};
   let previousModule: string | null = null;
-  let releases: Record<string, unknown>[] = [];
   let newModule = false;
-  let master: Doc | null = null;
   for (let attempt = 0; ; attempt++) {
-    if (attempt) mod = await readDoc(bucket, modKey);
-    if (attempt && inManifest(mod) && !replace) {
-      throw new HttpError(409, `Firmware ${name.version} of ${name.hwId} was published a moment ago by someone else.`, 'replace', { conflict: 'release' });
+    if (attempt) {
+      mod = await readDoc(bucket, modKey);
+      master = await readDoc(bucket, MASTER_MANIFEST_KEY);
+      if (inManifest(mod) && !replace) {
+        throw new HttpError(409, `Firmware ${name.version} of ${name.hwId} was published a moment ago by someone else.`, 'replace', { conflict: 'release' });
+      }
     }
-    if (!mod) master = await readDoc(bucket, MASTER_MANIFEST_KEY);
-    const doc: Record<string, any> = mod ? { ...mod.value } : {
-      id: name.hwId,
-      name: moduleName || typeName(master?.value, name.typeId) || MODULE_TYPE_NAMES[name.typeId] || '',
-      hardware_version: name.hardwareVersion,
-      releases: [],
-    };
-    if (!str(doc.name)) throw new HttpError(400, `Fill in the name of module ${name.hwId}: it is not on firmware.gocontroll.tech yet.`, 'module_name');
-    releases = (Array.isArray(doc.releases) ? doc.releases as Record<string, unknown>[] : []).filter((r) => str(r.sw_version) !== name.version);
-    releases.push(entry);
-    releases = sortReleases(releases);
-    doc.releases = releases;
-    if (await writeDoc(bucket, modKey, doc, mod?.etag ?? null)) {
+    modDoc = nextModuleDoc(mod, master, name, entry, moduleName);
+    if (await writeDoc(bucket, modKey, modDoc, mod?.etag ?? null)) {
       previousModule = mod?.text ?? null;
       newModule = !mod;
       break;
     }
     if (attempt + 1 >= ATTEMPTS) throw new HttpError(409, 'The manifest of this module changed while publishing. Try again.');
   }
-  const latest = str(releases[0]?.sw_version);
 
   // modules/manifest.json, the same way.
   let previousMaster: string | null = null;
+  let latest = '';
+  let latestBefore: string | null = null;
   for (let attempt = 0; ; attempt++) {
-    master = await readDoc(bucket, MASTER_MANIFEST_KEY);
-    const doc: Record<string, any> = master ? { ...master.value } : { updated: '', modules: [] };
-    doc.updated = at.slice(0, 10);
-    const modules: Record<string, unknown>[] = Array.isArray(doc.modules) ? doc.modules.map((m: Record<string, unknown>) => ({ ...m })) : [];
-    const existing = modules.find((m) => str(m.id) === name.hwId);
-    if (existing) {
-      existing.latest_firmware = latest;
-    } else {
-      const modDoc = await readDoc(bucket, modKey);
-      modules.push({
-        id: name.hwId,
-        name: str(modDoc?.value.name) || moduleName || MODULE_TYPE_NAMES[name.typeId] || '',
-        hardware_version: str(modDoc?.value.hardware_version) || name.hardwareVersion,
-        latest_firmware: latest,
-        manifest: modKey,
-      });
-    }
-    doc.modules = modules;
-    if (await writeDoc(bucket, MASTER_MANIFEST_KEY, doc, master?.etag ?? null)) {
+    if (attempt) master = await readDoc(bucket, MASTER_MANIFEST_KEY);
+    const next = nextMasterDoc(master, modDoc, name, at);
+    latest = next.latest;
+    latestBefore = next.latestBefore;
+    if (await writeDoc(bucket, MASTER_MANIFEST_KEY, next.doc, master?.etag ?? null)) {
       previousMaster = master?.text ?? null;
       break;
     }
@@ -395,7 +456,7 @@ export async function publishFirmware(env: Env, user: User, form: FormData): Pro
     actor: user.email,
     sha256: digest,
     size: bytes.length,
-    replaced: replacedRelease || replacedFile,
+    replaced: replacedRelease,
     description: changelog,
     release_date: date,
     file: objectKey,
@@ -405,17 +466,9 @@ export async function publishFirmware(env: Env, user: User, form: FormData): Pro
   });
 
   return {
-    hwId: name.hwId,
-    version: name.version,
-    file: objectKey,
-    url: `${firmwareBase(env)}/${objectKey}`,
-    sha256: digest,
-    date,
-    latest,
-    objectWritten,
-    replacedRelease,
-    replacedFile,
-    newModule,
+    dryRun: false, hwId: name.hwId, version: name.version, file: objectKey, url: `${firmwareBase(env)}/${objectKey}`, sha256: digest,
+    date, changelog, moduleName: str(modDoc.name), latest, latestBefore, objectWritten, replacedRelease, newModule,
+    moduleManifest: firmwareManifestText(modDoc),
   };
 }
 

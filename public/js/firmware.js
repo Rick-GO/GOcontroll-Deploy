@@ -2,24 +2,39 @@
 // Firmware (#/firmware): module firmware on firmware.gocontroll.tech, which go-modules flashes into
 // the plug-in modules of an L4, M1 or HMI1. The modules with their releases, and Publish firmware.
 //
-// Publish starts from the module's source folder (the Module-* repository, preferred) or from
-// loose .srec files. From a folder the page finds every <...>-BOOT/<name>.srec, as the CI of the
-// module repos does, and reads the repository's git history in the browser (git.js; nothing is
-// uploaded but the .srec): the annotation of the version's tag if it exists, otherwise the
-// commits since the previous version's tag, as the suggested changelog. Module and version come
-// from the file name (20-10-1-6-2-0-3.srec = 20100106, 2.0.3), the release date from the file's
-// date. The Worker writes the file and both manifests (src/firmware.ts).
-//
-// CRLF is turned into LF before anything else: a Windows checkout (core.autocrlf) has CRLF, git
-// and the CI have LF, and the published bytes must be those of the file in git.
+// This page does what the Moduline Module Firmware Deployer (agent 08) did by hand, with its rules:
+//   1. Source: the module's repository folder (preferred) or loose .srec files. From a folder the
+//      page finds every <...>-BOOT/<name>.srec (as the CI does) and reads .git in the browser
+//      (git.js, read only). Module and version come from the file name (20-10-1-6-2-0-3.srec =
+//      20100106, 2.0.3).
+//   2. The file published is the one git holds at HEAD, never the work tree's copy: a Windows
+//      checkout (core.autocrlf) has CRLF where git and the CI have LF, so its SHA-256 would differ.
+//      A file that is not committed, or differs from the commit, cannot be published: commit it
+//      first. HEAD not on origin (as of the last fetch) is said loudly. Loose files are converted
+//      to LF.
+//   3. Release date: the tag's RELEASE_DATE when tag v<version> exists (the safety net uses it),
+//      otherwise the date of the .srec file. Changelog: the tag's text, otherwise typed, with the
+//      commits since the previous version tag beside it.
+//   4. A published firmware never changes; a version that is published already only gets its
+//      manifest entry written again (Publish again), with the same bytes.
+//   5. Review before writing: every file is sent as a dry run first (the Worker checks it and
+//      answers what it would write); only after the colleague confirms is it published, lowest
+//      version first.
+//   6. Afterwards: the tag v<version> with exactly the annotation the CI reads (RELEASE_DATE,
+//      DEPLOY_FILES, the changelog as stored), so the CI run that pushing it starts writes the same
+//      entry; the commands, the annotation to copy or download, and the GitHub release link.
+//   7. The safety net (the repository's own publish-firmware.yml): what it would do differently.
 
 import { api, errorText, postForm } from './api.js';
 import { fmtDateTime, plural, shortHash } from './format.js';
 import { dirFromFiles, dirFromHandle, GitError, openRepo } from './git.js';
-import { act, copyButton, esc, hydrateIcons, toast, uniqueId } from './lib.js';
-import { changelogFromTag, compareVersions, localDay, parseSrecName, previousTag, toLf } from './release-helpers.js';
+import { act, copyButton, esc, hydrateIcons, saveBlob, toast, uniqueId } from './lib.js';
+import {
+  annotationMatches, changelogFromTag, compareVersions, githubUrl, localDay, parseSrecName, previousTag, releaseDateFromTag,
+  safetyNetFindings, tagAnnotation, toLf,
+} from './release-helpers.js';
 import { parseSrec } from './source.js';
-import { badge, setHero, stale } from './ui.js';
+import { badge, formDialog, setHero, stale } from './ui.js';
 
 /**
  * @typedef {import('./ui.js').Ctx} Ctx
@@ -27,18 +42,26 @@ import { badge, setHero, stale } from './ui.js';
  *   publishedBy: { email: string, at: string, source: Source | null } | null }} FwRelease
  * @typedef {{ id: string, name: string, hardwareVersion: string, latest: string | null, releases: FwRelease[], error?: string }} FwModule
  * @typedef {{ updated: string | null, modules: FwModule[], manifestError?: string, firmwareUrl: string, moduleTypeNames: Record<string, string> }} FwOverview
- * @typedef {{ repo: string, branch: string | null, commit: string | null, tag: string | null }} Source
- * @typedef {{ file: string, hwId: string, typeId: string, version: string, hardwareVersion: string }} SrecName
- * @typedef {{ path: string, name: SrecName | null, original: File, bytes: Uint8Array | null, sha256: string | null,
+ * @typedef {{ repo: string, branch: string | null, commit: string | null, tag: string | null, path?: string | null, pushed?: boolean | null }} Source
+ * @typedef {import('./release-helpers.js').SrecName} SrecName
+ * @typedef {import('./release-helpers.js').Tag} Tag
+ * @typedef {{ path: string, name: SrecName | null, original: File, bytes: Uint8Array | null, sha256: string | null, fromGit: boolean,
  *   modified: number, error: string | null, status: 'new' | 'same' | 'differs' | 'bad', selected: boolean }} Candidate
  * @typedef {{ commit: string, branch: string | null }} Head
- * @typedef {{ name: string, commit: string, annotated: boolean, message: string | null, date: string | null }} Tag
  * @typedef {{ sha: string, subject: string, authorDate: string }} Commit
  * @typedef {{ repo: string, head: Head | null, tags: Tag[], gitError: string | null,
- *   log: (opts: { from: string, exclude?: string, max?: number }) => Promise<Commit[]> }} RepoInfo
+ *   log: (opts: { from: string, exclude?: string, max?: number }) => Promise<Commit[]>,
+ *   fileAt: ((commit: string, path: string) => Promise<Uint8Array | null>) | null,
+ *   pushed: boolean | null, github: string | null, findings: string[] }} RepoInfo
+ *   pushed: HEAD is on origin/<branch> (true), is not (false), or that cannot be told (null)
+ * @typedef {{ released: string, changelog: string, replace: boolean, names: Record<string, string> }} GroupValues
+ * @typedef {{ dryRun: boolean, hwId: string, version: string, file: string, url: string, sha256: string, date: string, changelog: string,
+ *   moduleName: string, latest: string, latestBefore: string | null, objectWritten: boolean, replacedRelease: boolean,
+ *   newModule: boolean, moduleManifest: string }} PublishAnswer
  */
 
 const hex = (/** @type {ArrayBuffer} */ b) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
+const CHANGELOG_HINT = 'One line in English: what changes for the user of the module (go-modules shows it).';
 
 // ── The page ─────────────────────────────────────────────────────────────────
 
@@ -57,7 +80,7 @@ export async function renderFirmware(ctx) {
     ${kpis(data)}
     <section class="panel" id="fw-publish">
       <div class="panel-head"><h2>Publish firmware</h2></div>
-      <p class="text">Choose the module's source folder (its repository, e.g. Module-Input): Deploy finds the .srec files in its -BOOT folders and suggests the changelog from git. Loose .srec files work too, without that history. Nothing in the folder is changed or uploaded except the .srec you publish.</p>
+      <p class="text">Choose the module's source folder (its repository, e.g. Module-Input). Deploy finds the .srec files in its -BOOT folders and publishes them as git holds them at HEAD, so commit and push the firmware first. Loose .srec files work too, without those checks. Nothing in the folder is changed.</p>
       <div class="btn-row">
         <button type="button" class="btn primary" data-pick-folder data-icon="document">Choose the source folder…</button>
         <label class="btn" data-icon="arrow-up-tray"><span>Choose .srec files…</span><input type="file" class="sr-only" accept=".srec" multiple data-pick-files></label>
@@ -185,8 +208,15 @@ function wirePublish(ctx, data) {
   });
 }
 
+/** The text of a file in the chosen folder, or null. @param {import('./git.js').DirReader} dir @param {string} path */
+async function textOf(dir, path) {
+  const blob = await dir.file(path).catch(() => null);
+  return blob ? blob.text() : null;
+}
+
 /**
- * The .srec files in the folder's <...>-BOOT folders (as the CI: *-BOOT/*.srec) and its git history.
+ * The .srec files in the folder's <...>-BOOT folders (as the CI: *-BOOT/*.srec), its git state and
+ * its safety net.
  * @param {string} name @param {import('./git.js').DirReader} dir
  * @returns {Promise<{ repo: RepoInfo, files: { path: string, file: File }[] }>}
  */
@@ -202,40 +232,60 @@ async function fromDir(name, dir) {
       if (blob) found.push({ path: `${boot.name}/${f.name}`, file: blob instanceof File ? blob : new File([blob], f.name) });
     }
   }
+  if (!found.length) throw new Error(`${name} has no .srec files in a -BOOT folder. Choose the module's repository, or the .srec files themselves.`);
   /** @type {RepoInfo} */
-  const repo = { repo: name, head: null, tags: [], gitError: null, log: async () => [] };
+  const repo = { repo: name, head: null, tags: [], gitError: null, log: async () => [], fileAt: null, pushed: null, github: null, findings: [] };
   try {
     const r = await openRepo(dir);
     if (!r) {
-      repo.gitError = 'This folder is not a git repository, so there is no history to suggest a changelog from.';
+      repo.gitError = 'This folder is not a git repository: Deploy cannot check that the files are committed, and suggests no changelog.';
     } else {
       repo.head = r.head;
       repo.tags = await r.tags();
       repo.log = (opts) => r.log(opts);
+      repo.fileAt = (commit, path) => r.fileAt(commit, path);
+      repo.github = githubUrl(await r.remoteUrl());
+      if (r.head.branch) {
+        const remote = await r.remoteBranch(r.head.branch).catch(() => null);
+        repo.pushed = remote ? await r.reaches(remote, r.head.commit) : null;
+      }
     }
   } catch (err) {
     repo.gitError = err instanceof GitError ? err.message : `The git history could not be read: ${errorText(err)}`;
   }
-  if (!found.length) throw new Error(`${name} has no .srec files in a -BOOT folder. Choose the module's repository, or the .srec files themselves.`);
+  // The safety net, read from the work tree (what a tag push would run).
+  const workflow = await textOf(dir, '.github/workflows/publish-firmware.yml');
+  const scriptPath = workflow ? /run:\s*python3?\s+(\S+\.py)/.exec(workflow)?.[1] ?? null : null;
+  const script = scriptPath ? await textOf(dir, scriptPath) : null;
+  /** @type {any} */ (repo).safetyNet = { workflow, script, scriptPath };
   return { repo, files: found };
 }
 
 /**
- * Read, check and compare every file with what firmware.gocontroll.tech has.
- * @param {FwOverview} data @param {{ path: string, file: File }[]} found
+ * Read, check and compare every file with what firmware.gocontroll.tech has. From a repository the
+ * bytes are those of HEAD; the work tree's copy only has to agree with them.
+ * @param {FwOverview} data @param {{ path: string, file: File }[]} found @param {RepoInfo | null} repo
  * @returns {Promise<Candidate[]>}
  */
-async function readCandidates(data, found) {
+async function readCandidates(data, found, repo) {
   const byId = new Map(data.modules.map((m) => [m.id, m]));
   return Promise.all(found.map(async ({ path, file }) => {
     const name = parseSrecName(file.name);
     /** @type {Candidate} */
-    const c = { path, name, original: file, bytes: null, sha256: null, modified: file.lastModified, error: null, status: 'bad', selected: false };
+    const c = { path, name, original: file, bytes: null, sha256: null, fromGit: false, modified: file.lastModified, error: null, status: 'bad', selected: false };
     if (!name) { c.error = 'The name does not follow the convention (e.g. 20-10-1-6-2-0-3.srec).'; return c; }
     try {
-      const text = toLf(await file.text());
-      parseSrec(text);
-      c.bytes = new TextEncoder().encode(text);
+      const work = toLf(await file.text());
+      if (repo?.head && repo.fileAt) {
+        const committed = await repo.fileAt(repo.head.commit, path);
+        if (!committed) throw new Error('Not committed. Commit and push it first: Deploy publishes the file as git holds it at HEAD.');
+        if (new TextDecoder().decode(committed) !== work) throw new Error('Differs from the committed file. Commit it first: Deploy publishes what git holds at HEAD.');
+        c.bytes = committed;
+        c.fromGit = true;
+      } else {
+        c.bytes = new TextEncoder().encode(work);
+      }
+      parseSrec(new TextDecoder().decode(c.bytes));
       c.sha256 = hex(await crypto.subtle.digest('SHA-256', /** @type {Uint8Array<ArrayBuffer>} */ (c.bytes)));
     } catch (err) {
       c.error = errorText(err);
@@ -243,6 +293,7 @@ async function readCandidates(data, found) {
     }
     const published = byId.get(name.hwId)?.releases.find((r) => r.version === name.version);
     c.status = !published ? 'new' : published.sha256 === c.sha256 ? 'same' : 'differs';
+    if (c.status === 'differs') c.error = 'firmware.gocontroll.tech has other bytes for this version. A published firmware never changes: give the correction a new version number.';
     c.selected = c.status === 'new';
     return c;
   }));
@@ -255,39 +306,49 @@ async function readCandidates(data, found) {
  * @param {RepoInfo | null} repo @param {{ path: string, file: File }[]} found
  */
 async function drawCandidates(ctx, out, data, repo, found) {
-  const candidates = (await readCandidates(data, found)).sort((a, b) =>
+  const candidates = (await readCandidates(data, found, repo)).sort((a, b) =>
     (a.name && b.name ? compareVersions(b.name.version, a.name.version) || a.name.hwId.localeCompare(b.name.hwId) : a.name ? -1 : 1));
   const versions = [...new Set(candidates.filter((c) => c.name).map((c) => /** @type {SrecName} */ (c.name).version))];
   const suggestions = new Map(await Promise.all(versions.map(async (v) => /** @type {const} */ ([v, await suggest(repo, v)]))));
   const statusBadge = (/** @type {Candidate} */ c) => ({
     new: badge('New', 'info'),
     same: badge('Published', 'ok', 'This version is on firmware.gocontroll.tech with these exact bytes'),
-    differs: badge('Published, other bytes', 'warn', 'This version is on firmware.gocontroll.tech, but the file differs'),
+    differs: badge('Published, other bytes', 'err', 'This version is on firmware.gocontroll.tech, but the file differs'),
     bad: badge('Cannot be used', 'err'),
   })[c.status];
+  const safety = /** @type {any} */ (repo)?.safetyNet;
+  if (repo && safety) {
+    repo.findings = safetyNetFindings({ ...safety, names: candidates.filter((c) => c.name).map((c) => moduleName(data, /** @type {SrecName} */ (c.name).hwId)) });
+  }
 
   out.innerHTML = `
-    ${repo ? `<div class="notice${repo.gitError ? ' warn' : ''}">${repoLine(repo)}</div>` : '<div class="notice">Files chosen without their repository: write the changelog yourself.</div>'}
+    ${repo ? `<div class="notice${repo.gitError || repo.pushed === false ? ' warn' : ''}">${repoLine(repo)}</div>` : '<div class="notice warn">Files chosen without their repository: Deploy cannot check that they are the committed files (it converts CRLF to LF), and you write the changelog yourself.</div>'}
+    ${repo?.findings.length ? `<div class="notice warn"><strong>The safety net</strong> (this repository's publish-firmware.yml, which pushing the tag starts):
+      <ul class="plain-list">${repo.findings.map((f) => `<li>${esc(f)}</li>`).join('')}</ul></div>` : ''}
     <div class="section-label">Files found</div>
     <div class="table-wrap"><table class="data cards fw-files">
       <thead><tr><th><span class="sr-only">Publish</span></th><th>File</th><th>Module</th><th>Version</th><th>File date</th><th>Status</th></tr></thead>
-      <tbody>${candidates.map((c, i) => `<tr${c.status === 'bad' ? ' class="inactive"' : ''}>
-        <td data-label="Publish"><input type="checkbox" data-pick="${i}"${c.selected ? ' checked' : ''}${c.status === 'bad' ? ' disabled' : ''} aria-label="Publish ${esc(c.original.name)}"></td>
-        <td data-label="File" class="mono">${esc(c.path)}${c.error ? `<div class="cell-sub error">${esc(c.error)}</div>` : ''}</td>
+      <tbody>${candidates.map((c, i) => {
+        const usable = c.status === 'new' || c.status === 'same';
+        return `<tr${usable ? '' : ' class="inactive"'}>
+        <td data-label="Publish"><input type="checkbox" data-pick="${i}"${c.selected ? ' checked' : ''}${usable ? '' : ' disabled'} aria-label="Publish ${esc(c.original.name)}"></td>
+        <td data-label="File" class="mono">${esc(c.path)}${c.error ? `<div class="cell-sub error">${esc(c.error)}</div>` : ''}${
+          c.fromGit ? '<div class="cell-sub">as committed at HEAD</div>' : ''}</td>
         <td data-label="Module">${c.name ? `${esc(moduleName(data, c.name.hwId) || '—')}<div class="cell-sub mono">${esc(c.name.hwId)} · HW ${esc(c.name.hardwareVersion)}</div>` : '—'}</td>
         <td data-label="Version" class="mono">${esc(c.name?.version ?? '—')}</td>
         <td data-label="File date">${esc(fmtDateTime(new Date(c.modified).toISOString()))}</td>
         <td data-label="Status">${statusBadge(c)}</td>
-      </tr>`).join('')}</tbody>
+      </tr>`;
+      }).join('')}</tbody>
     </table></div>
     <div data-groups></div>
-    <div class="btn-row"><button type="button" class="btn primary" data-publish data-icon="cloud-arrow-up">Publish</button></div>
+    <div class="btn-row"><button type="button" class="btn primary" data-publish data-icon="cloud-arrow-up">Review…</button></div>
     <div data-results></div>`;
   hydrateIcons(out);
 
   const groupsEl = /** @type {HTMLElement} */ (out.querySelector('[data-groups]'));
   const publishBtn = /** @type {HTMLButtonElement} */ (out.querySelector('[data-publish]'));
-  /** @type {Map<string, { released: string, changelog: string, replace: boolean, names: Record<string, string> }>} */
+  /** @type {Map<string, GroupValues>} */
   const values = new Map();
 
   const drawGroups = () => {
@@ -302,24 +363,25 @@ async function drawCandidates(ctx, out, data, repo, found) {
       g.querySelectorAll('[data-name-for]').forEach((n) => { val.names[/** @type {HTMLElement} */ (n).dataset.nameFor ?? ''] = /** @type {HTMLInputElement} */ (n).value; });
     });
     const chosen = candidates.filter((c) => c.selected && c.name);
+    /** @type {Map<string, Candidate[]>} */
     const byVersion = new Map();
     for (const c of chosen) byVersion.set(/** @type {SrecName} */ (c.name).version, [...(byVersion.get(/** @type {SrecName} */ (c.name).version) ?? []), c]);
     groupsEl.innerHTML = [...byVersion.entries()].map(([version, list]) => {
       const s = suggestions.get(version);
       if (!values.has(version)) {
-        values.set(version, { released: localDay(Math.max(...list.map((/** @type {Candidate} */ c) => c.modified))), changelog: s?.text ?? '', replace: false, names: {} });
+        values.set(version, { released: s?.released ?? localDay(Math.max(...list.map((c) => c.modified))), changelog: s?.text ?? '', replace: false, names: {} });
       }
-      const val = /** @type {{ released: string, changelog: string, replace: boolean, names: Record<string, string> }} */ (values.get(version));
-      const unnamed = list.filter((/** @type {Candidate} */ c) => !moduleName(data, /** @type {SrecName} */ (c.name).hwId));
-      const again = list.some((/** @type {Candidate} */ c) => c.status !== 'new');
+      const val = /** @type {GroupValues} */ (values.get(version));
+      const unnamed = list.filter((c) => !moduleName(data, /** @type {SrecName} */ (c.name).hwId));
+      const again = list.some((c) => c.status === 'same');
       const idDate = uniqueId('fw-date');
       const idLog = uniqueId('fw-log');
       return `<div class="fw-group" data-group="${esc(version)}">
-        <h3>Version ${esc(version)} <span class="muted">· ${plural(list.length, 'file')}: ${list.map((/** @type {Candidate} */ c) => esc(/** @type {SrecName} */ (c.name).hwId)).join(', ')}</span></h3>
+        <h3>Version ${esc(version)} <span class="muted">· ${plural(list.length, 'file')}: ${list.map((c) => esc(/** @type {SrecName} */ (c.name).hwId)).join(', ')}</span></h3>
         <div class="form-grid two">
           <div class="field"><label for="${idDate}">Release date</label><input type="date" id="${idDate}" name="released" value="${esc(val.released)}" required>
-            <div class="hint">The date of the .srec file; in the manifest as DD/MM/YY.</div></div>
-          ${unnamed.map((/** @type {Candidate} */ c) => {
+            <div class="hint">${esc(s?.released ? `From tag ${s.tag}, which the safety net uses too.` : 'The date of the .srec file.')} In the manifest as DD/MM/YY.</div></div>
+          ${unnamed.map((c) => {
             const n = /** @type {SrecName} */ (c.name);
             const id = uniqueId('fw-name');
             return `<div class="field"><label for="${id}">Name of module ${esc(n.hwId)}</label>
@@ -327,23 +389,23 @@ async function drawCandidates(ctx, out, data, repo, found) {
               <div class="hint">New on firmware.gocontroll.tech: go-modules shows this name.</div></div>`;
           }).join('')}
           <div class="field span-2"><label for="${idLog}">Changelog</label>
-            <textarea id="${idLog}" name="changelog" rows="4" maxlength="2000" required>${esc(val.changelog)}</textarea>
-            <div class="hint">${esc(s?.hint ?? 'Short: what changed for the user of the module. go-modules shows it.')}</div></div>
+            <textarea id="${idLog}" name="changelog" rows="3" maxlength="2000" required placeholder="e.g. Improvement on supply rail precharge mechanism">${esc(val.changelog)}</textarea>
+            <div class="hint">${esc(s?.hint ?? CHANGELOG_HINT)}</div></div>
         </div>
-        ${s?.commits.length ? `<details class="fw-commits"><summary>${esc(s.commitsLabel)}</summary>
+        ${s?.commits.length ? `<details class="fw-commits"${s.text ? '' : ' open'}><summary>${esc(s.commitsLabel)}</summary>
           <ul class="plain-list mono">${s.commits.map((c) => `<li><span class="muted">${esc(c.sha.slice(0, 7))}</span> ${esc(c.subject)}</li>`).join('')}</ul>
-          <button type="button" class="btn sm" data-use-commits="${esc(version)}">Use these as the changelog</button></details>` : ''}
-        ${again ? `<label class="check"><input type="checkbox" name="replace"${val.replace ? ' checked' : ''}> Publish again: replace the version that is on firmware.gocontroll.tech (the old file is archived)</label>` : ''}
+          <button type="button" class="btn sm" data-use-commits="${esc(version)}">Use the commit subjects</button></details>` : ''}
+        ${again ? `<label class="check"><input type="checkbox" name="replace"${val.replace ? ' checked' : ''}> Publish again: write the manifest entry of this version again (the same file), e.g. with a corrected changelog or date</label>` : ''}
       </div>`;
     }).join('');
     groupsEl.querySelectorAll('[data-use-commits]').forEach((b) => b.addEventListener('click', () => {
       const v = /** @type {HTMLElement} */ (b).dataset.useCommits ?? '';
       const s = suggestions.get(v);
       const area = /** @type {HTMLTextAreaElement | null} */ (b.closest('[data-group]')?.querySelector('[name=changelog]') ?? null);
-      if (s && area) area.value = s.commits.map((c) => `- ${c.subject}`).join('\n');
+      if (s && area) area.value = s.commits.map((c) => c.subject).join('\n');
     }));
     publishBtn.disabled = !chosen.length;
-    publishBtn.textContent = chosen.length ? `Publish ${plural(chosen.length, 'file')}` : 'Publish';
+    publishBtn.textContent = chosen.length ? `Review ${plural(chosen.length, 'file')}…` : 'Review…';
   };
 
   out.querySelectorAll('[data-pick]').forEach((box) => box.addEventListener('change', () => {
@@ -355,26 +417,29 @@ async function drawCandidates(ctx, out, data, repo, found) {
 
   publishBtn.addEventListener('click', () => act(publishBtn, async () => {
     drawGroups(); // reads the fields into `values`
-    const chosen = candidates.filter((c) => c.selected && c.name && c.bytes);
+    // Lowest version first (the order the agent pushed tags in), then hardware ID.
+    const chosen = candidates.filter((c) => c.selected && c.name && c.bytes).sort((a, b) =>
+      compareVersions(/** @type {SrecName} */ (a.name).version, /** @type {SrecName} */ (b.name).version) || a.path.localeCompare(b.path));
     for (const c of chosen) {
       const v = values.get(/** @type {SrecName} */ (c.name).version);
       if (!v?.released || !v.changelog.trim()) throw new Error(`Fill in the release date and the changelog of version ${c.name?.version}.`);
+      if (c.status === 'same' && !v.replace) throw new Error(`Version ${c.name?.version} is published already: tick "Publish again", or leave ${c.original.name} out.`);
       if (!moduleName(data, /** @type {SrecName} */ (c.name).hwId) && !v.names[/** @type {SrecName} */ (c.name).hwId]?.trim()) {
         throw new Error(`Fill in the name of module ${c.name?.hwId}.`);
       }
     }
     // Done: choosing again starts over, so nothing is sent twice by accident.
-    if (await publishAll(ctx, out, chosen, values, repo)) publishBtn.hidden = true;
+    if (await reviewAndPublish(ctx, out, chosen, values, repo)) publishBtn.hidden = true;
   }));
 }
 
 /**
- * The changelog to suggest for a version: the annotation of its tag, or the commits since the
- * previous version's tag. @param {RepoInfo | null} repo @param {string} version
- * @returns {Promise<{ text: string, hint: string, commits: Commit[], commitsLabel: string, tag: string | null }>}
+ * What to suggest for a version: the tag's release date and changelog when tag v<version> exists,
+ * and the commits since the previous version tag. @param {RepoInfo | null} repo @param {string} version
+ * @returns {Promise<{ text: string, released: string | null, hint: string, commits: Commit[], commitsLabel: string, tag: string | null }>}
  */
 async function suggest(repo, version) {
-  const none = { text: '', hint: 'Short: what changed for the user of the module. go-modules shows it.', commits: [], commitsLabel: '', tag: null };
+  const none = { text: '', released: null, hint: CHANGELOG_HINT, commits: [], commitsLabel: '', tag: null };
   if (!repo?.head) return none;
   const own = repo.tags.find((t) => t.name === `v${version}`);
   const prev = previousTag(repo.tags, version);
@@ -383,16 +448,14 @@ async function suggest(repo, version) {
   try {
     commits = await repo.log({ from: own?.commit ?? repo.head.commit, exclude: prev?.commit, max: 50 });
   } catch (err) {
-    return { ...none, hint: `The git history could not be read: ${errorText(err)}` };
+    return { ...none, hint: `${CHANGELOG_HINT} The git history could not be read: ${errorText(err)}` };
   }
   const commitsLabel = prev ? `${plural(commits.length, 'commit')} since ${prev.name}` : `The last ${plural(commits.length, 'commit')} (no earlier version tag)`;
-  if (own?.message) {
-    const text = changelogFromTag(own.message);
-    if (text) return { text, hint: `From the annotation of tag ${own.name}.`, commits, commitsLabel, tag: own.name };
-  }
+  const text = own?.message ? changelogFromTag(own.message) : '';
   return {
-    text: commits.length ? commits.map((c) => `- ${c.subject}`).join('\n') : '',
-    hint: commits.length ? `${commitsLabel}: shorten it to what matters for the user of the module.` : none.hint,
+    text,
+    released: own?.message ? releaseDateFromTag(own.message) : null,
+    hint: text ? `From the annotation of tag ${own?.name}.` : CHANGELOG_HINT,
     commits,
     commitsLabel,
     tag: own?.name ?? null,
@@ -404,7 +467,11 @@ function repoLine(repo) {
   if (repo.gitError) return `<strong>${esc(repo.repo)}</strong>: ${esc(repo.gitError)}`;
   const head = /** @type {Head} */ (repo.head);
   const versionTags = repo.tags.filter((t) => /^v\d+\.\d+\.\d+$/.test(t.name)).length;
-  return `<strong>${esc(repo.repo)}</strong> · ${head.branch ? `branch <span class="mono">${esc(head.branch)}</span>` : 'detached HEAD'} at <span class="mono">${esc(head.commit.slice(0, 7))}</span> · ${plural(versionTags, 'version tag')}`;
+  const pushed = !head.branch ? ' · detached HEAD: check yourself that this commit is on origin.'
+    : repo.pushed === false ? ` · <strong>HEAD is not on origin/${esc(head.branch)}</strong> (as of the last fetch): push it before you publish, so the tag points to a commit everyone has.`
+    : repo.pushed === null ? ` · there is no origin/${esc(head.branch)} in this clone: check yourself that HEAD is pushed.`
+    : ` · pushed to origin/${esc(head.branch)}`;
+  return `<strong>${esc(repo.repo)}</strong> · ${head.branch ? `branch <span class="mono">${esc(head.branch)}</span>` : 'detached HEAD'} at <span class="mono">${esc(head.commit.slice(0, 7))}</span> · ${plural(versionTags, 'version tag')}${pushed}`;
 }
 
 /** The module's name on firmware.gocontroll.tech, or that of its type. @param {FwOverview} d @param {string} hwId */
@@ -415,52 +482,150 @@ function moduleName(d, hwId) {
     || '';
 }
 
-// ── Publishing ───────────────────────────────────────────────────────────────
+// ── Review, publish, tag ─────────────────────────────────────────────────────
 
 /**
- * One request per file, one after the other (they may share manifests).
- * @param {Ctx} ctx @param {HTMLElement} out @param {Candidate[]} chosen
- * @param {Map<string, { released: string, changelog: string, replace: boolean, names: Record<string, string> }>} values
- * @param {RepoInfo | null} repo
+ * The form of one file. @param {Candidate} c @param {GroupValues} v @param {RepoInfo | null} repo @param {boolean} dryRun
+ */
+function publishForm(c, v, repo, dryRun) {
+  const name = /** @type {SrecName} */ (c.name);
+  const form = new FormData();
+  form.append('file', new File([/** @type {Uint8Array<ArrayBuffer>} */ (c.bytes)], c.original.name, { type: 'application/octet-stream' }));
+  form.append('released', v.released);
+  form.append('changelog', v.changelog);
+  if (v.names[name.hwId]?.trim()) form.append('module_name', v.names[name.hwId].trim());
+  if (v.replace) form.append('replace', 'true');
+  if (dryRun) form.append('dry_run', 'true');
+  if (repo?.head) {
+    const tag = repo.tags.find((t) => t.name === `v${name.version}`);
+    form.append('source', JSON.stringify({ repo: repo.repo, branch: repo.head.branch, commit: repo.head.commit, tag: tag?.name ?? null, path: c.path, pushed: repo.pushed }));
+  }
+  return form;
+}
+
+/**
+ * Dry run of every file, the review, then the publish (one request per file, lowest version
+ * first: they may share manifests), then the tags to set.
+ * @param {Ctx} ctx @param {HTMLElement} out @param {Candidate[]} chosen @param {Map<string, GroupValues>} values @param {RepoInfo | null} repo
  * @returns {Promise<boolean>} true when every file was published
  */
-async function publishAll(ctx, out, chosen, values, repo) {
+async function reviewAndPublish(ctx, out, chosen, values, repo) {
   const results = /** @type {HTMLElement} */ (out.querySelector('[data-results]'));
-  results.innerHTML = `<ul class="plain-list fw-results">${chosen.map((c, i) => `<li data-result="${i}"><span class="mono">${esc(c.original.name)}</span> <span class="muted" data-state>waiting</span></li>`).join('')}</ul>`;
+  results.innerHTML = '';
+  const valuesOf = (/** @type {Candidate} */ c) => /** @type {GroupValues} */ (values.get(/** @type {SrecName} */ (c.name).version));
+
+  /** @type {PublishAnswer[]} */
+  const plans = [];
+  for (const c of chosen) {
+    try {
+      plans.push(await postForm('/firmware', publishForm(c, valuesOf(c), repo, true)));
+    } catch (err) {
+      throw new Error(`${c.original.name}: ${errorText(err)}`);
+    }
+  }
+  const confirmed = await formDialog({
+    title: 'Publish to firmware.gocontroll.tech?',
+    submitLabel: `Publish ${plural(plans.length, 'file')}`,
+    body: reviewBody(plans, repo),
+    submit: async () => {},
+  });
+  if (!confirmed) return false;
+
+  results.innerHTML = `<div class="section-label">Published</div><ul class="plain-list fw-results">${chosen.map((c, i) =>
+    `<li data-result="${i}"><span class="mono">${esc(c.original.name)}</span> <span class="muted" data-state>waiting</span></li>`).join('')}</ul><div data-tags></div>`;
+  /** @type {PublishAnswer[]} */
+  const done = [];
   let failed = 0;
   for (const [i, c] of chosen.entries()) {
     const li = /** @type {HTMLElement} */ (results.querySelector(`[data-result="${i}"] [data-state]`));
-    const name = /** @type {SrecName} */ (c.name);
-    const v = /** @type {{ released: string, changelog: string, replace: boolean, names: Record<string, string> }} */ (values.get(name.version));
-    const form = new FormData();
-    form.append('file', new File([/** @type {Uint8Array<ArrayBuffer>} */ (c.bytes)], c.original.name, { type: 'application/octet-stream' }));
-    form.append('released', v.released);
-    form.append('changelog', v.changelog.trim());
-    if (v.names[name.hwId]?.trim()) form.append('module_name', v.names[name.hwId].trim());
-    if (v.replace) form.append('replace', 'true');
-    if (repo?.head) {
-      const tag = repo.tags.find((t) => t.name === `v${name.version}`);
-      form.append('source', JSON.stringify({ repo: repo.repo, branch: repo.head.branch, commit: repo.head.commit, tag: tag?.name ?? null }));
-    }
     li.textContent = 'publishing…';
     try {
-      const r = await postForm('/firmware', form);
-      li.innerHTML = `${badge(r.objectWritten ? 'Published' : 'Manifest updated', 'ok')} <a href="${esc(r.url)}" rel="noopener">${esc(r.file)}</a> · latest of ${esc(r.hwId)} is now ${esc(r.latest)}`;
+      /** @type {PublishAnswer} */
+      const r = await postForm('/firmware', publishForm(c, valuesOf(c), repo, false));
+      done.push(r);
+      li.innerHTML = `${badge(r.objectWritten ? 'Published' : 'Manifest entry written again', 'ok')} <a href="${esc(r.url)}" rel="noopener">${esc(r.file)}</a> · latest of ${esc(r.hwId)}: ${esc(r.latest)}`;
     } catch (err) {
       failed++;
       li.innerHTML = `${badge('Failed', 'err')} ${esc(errorText(err))}`;
     }
   }
+  const tags = /** @type {HTMLElement} */ (results.querySelector('[data-tags]'));
+  tags.innerHTML = tagPanels(done, repo);
+  hydrateIcons(tags);
+  tags.querySelectorAll('[data-save-annotation]').forEach((b) => b.addEventListener('click', () => {
+    const el = document.getElementById(/** @type {HTMLElement} */ (b).dataset.saveAnnotation ?? '');
+    if (el) saveBlob(new Blob([el.textContent ?? ''], { type: 'text/plain' }), /** @type {HTMLElement} */ (b).dataset.filename ?? 'tag.txt');
+  }));
   if (failed) {
     toast(`${plural(failed, 'file')} not published.`, 'err');
     return false;
   }
-  toast(`${plural(chosen.length, 'file')} published.`);
-  // Draw the modules again; the results stay above them.
+  toast(`${plural(chosen.length, 'file')} published. Now set the tag.`);
+  // Draw the modules again; the results and the tags stay above them.
   const nav = ctx.nav;
   const data = /** @type {FwOverview} */ (await api('GET', '/firmware'));
   if (stale(ctx, nav)) return true;
   const panel = ctx.view.querySelector('#fw-modules');
   if (panel instanceof HTMLElement) { panel.innerHTML = modulesPanel(data); hydrateIcons(panel); }
   return true;
+}
+
+/** What the dry runs say will be written. @param {PublishAnswer[]} plans @param {RepoInfo | null} repo */
+function reviewBody(plans, repo) {
+  const byVersion = new Map();
+  for (const p of plans) byVersion.set(p.version, [...(byVersion.get(p.version) ?? []), p]);
+  return `${repo?.pushed === false ? '<div class="notice warn">HEAD is not on origin yet: push it before you set the tag.</div>' : ''}
+    ${[...byVersion.entries()].map(([version, list]) => `<div class="fw-group">
+      <h3>Version ${esc(version)} <span class="muted">· ${esc(list[0].date)}</span></h3>
+      <p class="pre">${esc(list[0].changelog)}</p>
+      <ul class="plain-list">${list.map((/** @type {PublishAnswer} */ p) => `<li><span class="mono">${esc(p.file)}</span> · ${esc(p.moduleName)} (${esc(p.hwId)})
+        · ${p.objectWritten ? 'new file' : 'the identical file is there already'}
+        · ${p.newModule ? 'new module manifest' : p.replacedRelease ? 'its entry is written again' : 'entry added'}
+        · latest_firmware ${esc(p.latestBefore ?? 'none')} → ${esc(p.latest)}
+        <details><summary>The module manifest as it will be</summary><pre class="keytext">${esc(p.moduleManifest)}</pre></details></li>`).join('')}</ul>
+    </div>`).join('')}
+    <p class="hint">Then modules/manifest.json. A published firmware never changes afterwards.</p>`;
+}
+
+/**
+ * Per version: the tag that keeps the safety net in step, with the commands.
+ * @param {PublishAnswer[]} done @param {RepoInfo | null} repo
+ */
+function tagPanels(done, repo) {
+  const byVersion = new Map();
+  for (const r of done) byVersion.set(r.version, [...(byVersion.get(r.version) ?? []), r]);
+  return [...byVersion.entries()].map(([version, list]) => {
+    const tag = `v${version}`;
+    const files = list.map((/** @type {PublishAnswer} */ r) => r.file.split('/').pop() ?? r.file);
+    const released = `20${list[0].date.slice(6, 8)}-${list[0].date.slice(3, 5)}-${list[0].date.slice(0, 2)}`;
+    const annotation = tagAnnotation(released, files, list[0].changelog);
+    const existing = repo?.tags.find((t) => t.name === tag) ?? null;
+    const commit = repo?.head?.commit ?? '';
+    const file = `tag-${tag}.txt`;
+    const idText = uniqueId('fw-tag');
+    const idCmd = uniqueId('fw-cmd');
+    const matches = existing?.message ? annotationMatches(existing.message, released, files, list[0].changelog) : false;
+    const commands = [
+      ...(existing ? [`git tag -d ${tag}`, `git push origin --delete ${tag}`] : []),
+      `git tag -a ${tag} --cleanup=whitespace -F "$HOME/Downloads/${file}"${commit ? ` ${commit}` : ''}`,
+      `git push origin ${tag}`,
+    ].join('\n');
+    const release = repo?.github ? `<a href="${esc(`${repo.github}/releases/new?tag=${encodeURIComponent(tag)}`)}" rel="noopener">Create the GitHub release of ${esc(tag)}</a>` : '';
+    if (matches) {
+      return `<div class="fw-group"><h3>Tag ${esc(tag)}</h3><div class="notice ok">Tag ${esc(tag)} exists with exactly this date, these files and this changelog: nothing to do.${release ? ` ${release}.` : ''}</div></div>`;
+    }
+    return `<div class="fw-group"><h3>Set tag ${esc(tag)}</h3>
+      <p class="text">${existing
+        ? `Tag ${esc(tag)} exists with another date, files or changelog. Replace it, as the deployment agent did, so the safety net agrees with what was published:`
+        : `In ${esc(repo?.repo ?? 'the repository')}, so the history says what was published. Pushing it starts the repository's publish workflow (the safety net), which then writes exactly the same entry:`}</p>
+      <div class="key-box"><div class="key-head"><span class="section-label">Annotation</span>${copyButton(idText, 'annotation')}
+        <button type="button" class="btn sm" data-save-annotation="${idText}" data-filename="${esc(file)}" data-icon="arrow-down-tray">Download ${esc(file)}</button></div>
+        <pre class="keytext" id="${idText}">${esc(annotation)}</pre></div>
+      <div class="key-box"><div class="key-head"><span class="section-label">Commands (PowerShell or Git Bash, in the repository)</span>${copyButton(idCmd, 'commands')}</div>
+        <pre class="keytext" id="${idCmd}">${esc(commands)}</pre></div>
+      <p class="hint">The command reads the annotation from your Downloads folder; change the path if the browser saved it elsewhere.</p>
+      ${commit ? `<p class="hint">The tag points to ${esc(commit.slice(0, 7))}, the commit the files were read from.</p>` : `<p class="hint">Without the repository Deploy does not know the commit: tag the one that holds ${esc(files.join(', '))}.</p>`}
+      ${release ? `<p>${release}.</p>` : ''}
+    </div>`;
+  }).join('');
 }
