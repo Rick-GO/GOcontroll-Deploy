@@ -37,7 +37,7 @@ export default defineConfig(async () => {
       setupFiles: ['./test/setup.ts'],
       testTimeout: 30_000,
       // Git worktrees of this repo (.claude/worktrees) hold their own copy of test/.
-      exclude: [...configDefaults.exclude, '.claude/**'],
+      exclude: [...configDefaults.exclude, '.claude/**', 'images/**'], // images/ (images.gocontroll.tech) has its own suite: npm run test:images
     },
   };
 });

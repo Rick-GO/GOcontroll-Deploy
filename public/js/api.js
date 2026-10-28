@@ -130,6 +130,36 @@ function dispositionName(header) {
 }
 
 /**
+ * PUT raw bytes (a part of an image upload), with upload progress. JSON answer.
+ * @param {string} path  under /api
+ * @param {Blob} blob
+ * @param {{ onProgress?: (loaded: number) => void }} [opts]  loaded: bytes of this blob sent so far
+ * @returns {Promise<any>}
+ */
+export function putBlob(path, blob, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', `/api${path}`);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('content-type', 'application/octet-stream');
+    xhr.setRequestHeader('accept', 'application/json');
+    xhr.upload.addEventListener('progress', (e) => opts.onProgress?.(e.loaded));
+    xhr.addEventListener('error', () => reject(new ApiError(NO_CONNECTION, 0)));
+    xhr.addEventListener('abort', () => reject(new ApiError('The upload was stopped.', 0)));
+    xhr.addEventListener('load', () => {
+      const type = xhr.getResponseHeader('content-type') || '';
+      const landed = xhr.responseURL ? new URL(xhr.responseURL).pathname : `/api${path}`;
+      if (type.includes('text/html') || landed !== `/api${path}`) { reject(new ApiError(SESSION_EXPIRED, 401)); return; }
+      let data = {};
+      try { data = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } catch { /* the status says enough */ }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(failure(xhr.status, data));
+    });
+    xhr.send(blob);
+  });
+}
+
+/**
  * POST a multipart form (FormData: files and fields). An XMLHttpRequest and not a fetch,
  * for its upload progress. `binary` takes the answer as a file (Sign: the signed
  * container); otherwise it is JSON.

@@ -1,0 +1,52 @@
+name = "gocontroll-images"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# The download site for customers: Linux images (rootfs, kernel, bootloader, …) for the Moduline
+# L4, M1 and HMI1 and the tools to flash them, from the bucket gocontroll-images. The intranet
+# Worker of this repo (gocontroll-deploy-intranet, the Images tab) is the only writer of that
+# bucket's releases and manifest.json; this Worker only reads them, and appends the download log.
+# The contract between the two: ../src/images-format.ts.
+#
+# A device-traffic hostname (gocontroll.tech), not the intranet (gocontroll.tools): the people
+# signing in are customers, with a one-time PIN, never Entra. Only reachable via the custom
+# domain, which sits behind its own Cloudflare Access application. workers.dev and preview URLs
+# would bypass Access; the Worker rejects them anyway (no valid token), but there is no reason to
+# expose them.
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "images.gocontroll.tech", custom_domain = true }]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+# Every request, the page, /styles.css and /app.js included, goes through the token check first:
+# there is no /pub bypass here, and nothing is served before the Worker has verified who asks.
+run_worker_first = true
+
+[observability]
+enabled = true
+
+# The images bucket: manifest.json (the published catalogue), images/…, tools/… and the download
+# log downloads/… (layout in ../src/images-format.ts). This Worker serves only the files that
+# manifest.json names (never a draft, never the log) and writes one empty object per download.
+# The only binding besides the assets: no state bucket, no D1, no secret
+# (images/test/config.test.ts keeps it that way).
+[[r2_buckets]]
+binding = "IMAGES_BUCKET"
+bucket_name = "gocontroll-images"
+
+[vars]
+# Cloudflare Access team domain: token issuer and source of /cdn-cgi/access/certs.
+TEAM_DOMAIN = "https://gocontroll.cloudflareaccess.com"
+# Application Audience (AUD) tag of the Access application on images.gocontroll.tech
+# (Zero Trust → Access → Applications → GOcontroll Images → Overview). Not a secret.
+# Empty means every request gets 503 "Downloads are being set up" (fail closed): the owner
+# creates the Access application first (images/README.md, "One-time setup"), then fills this in.
+IMAGES_AUD = ""
+
+[dev]
+# Keep request.url on localhost during `wrangler dev` (it would otherwise take the route's host),
+# so the DEV_USER_EMAIL bypass of src/auth.ts can recognise local runs.
+host = "localhost"

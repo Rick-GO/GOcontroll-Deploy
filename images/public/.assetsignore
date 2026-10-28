@@ -1,0 +1,2 @@
+# Not part of the site: the type-check config of the page (npm run typecheck).
+tsconfig.json

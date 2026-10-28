@@ -16,6 +16,11 @@
 //   deleted/<APP_ID>/<timestamp>/<original key>            every object of a deleted folder (src/delete.ts),
 //                                           plus folder-settings.json
 //   deleting/<APP_ID>.json                  an unfinished delete: its archive timestamp, actor, reason
+//   firmware-log/<hw_id>/<version>.json      who published that module firmware from Deploy, from which commit
+//                                           (src/firmware.ts); none for a version the module repo's CI published
+//   firmware-replaced/<hw_id>/<file>/<timestamp>.srec   an .srec that a publish replaced (src/firmware.ts)
+//   images/releases/<kind>/<product>/<version>.json      a release of images.gocontroll.tech (src/images.ts)
+//   images/uploads/<id>.json                an upload to the images bucket that is under way (src/images.ts)
 //
 // Writes that must not overwrite each other are conditional (an R2 etag): a key is created
 // only where none is, replaced only when it is still the one that was read.
@@ -179,7 +184,9 @@ export async function deleteFolderSettings(env: Env, appId: string): Promise<voi
 // ── Audit log ────────────────────────────────────────────────────────────────
 
 export interface AuditEntry {
-  action: 'publish' | 'publish-linux' | 'sign' | 'key-generate' | 'key-import' | 'key-replace' | 'settings' | 'package' | 'create-folder' | 'delete-folder';
+  action: 'publish' | 'publish-linux' | 'sign' | 'key-generate' | 'key-import' | 'key-replace' | 'settings' | 'package' | 'create-folder' | 'delete-folder'
+    | 'publish-firmware'
+    | 'images-create' | 'images-update' | 'images-delete' | 'images-publish' | 'images-withdraw' | 'images-upload' | 'images-abort' | 'images-remove-file';
   app_id: string;
   version?: string;
   actor: string;

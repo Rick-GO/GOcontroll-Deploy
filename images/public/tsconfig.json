@@ -1,0 +1,17 @@
+{
+  // The page of images.gocontroll.tech: plain ES modules served as-is (no build step),
+  // type-checked via JSDoc. Not served itself: .assetsignore.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "strict": true,
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true,
+    "skipLibCheck": true
+  },
+  "include": ["./**/*.js"]
+}

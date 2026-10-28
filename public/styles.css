@@ -633,3 +633,30 @@ table.folders td:first-child .cell-main { overflow-wrap: anywhere; }
   table.data td.desc { min-width: 0; }
   table.cards td.mono[data-label]::before { font-family: var(--font); }
 }
+
+/* ── Firmware (#/firmware) and Images (#/images) ── */
+.pre { white-space: pre-line; word-break: break-word; }
+.fw-drop { min-height: 96px; margin-top: 12px; cursor: default; }
+.fw-modules { display: grid; gap: 8px; }
+.fw-module { border: 1px solid var(--border); border-radius: var(--radius-lg); background: #fff; }
+.fw-module > summary {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; min-height: var(--tap);
+  padding: 10px 14px; cursor: pointer; list-style-position: inside;
+}
+.fw-module > summary:hover { background: var(--brand-light); }
+.fw-module[open] > summary { border-bottom: 1px solid var(--border); }
+.fw-module > .table-wrap, .fw-module > .notice, .fw-module > p { margin: 12px 14px; }
+.fw-title { flex: 1 1 220px; min-width: 0; }
+.fw-meta { font-size: 13px; }
+.fw-group { margin-top: 16px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: #fcfcfc; }
+.fw-group h3 { margin: 0 0 10px; font-size: 15px; }
+.fw-commits { margin: 8px 0; font-size: 13px; }
+.fw-commits summary { cursor: pointer; min-height: var(--tap); display: flex; align-items: center; }
+.fw-commits ul { max-height: 240px; overflow: auto; margin: 6px 0 10px; word-break: break-word; }
+.fw-results li { padding: 6px 0; word-break: break-word; }
+.img-release { margin: 12px 0; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.img-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.img-head h3 { margin: 0; font-size: 16px; word-break: break-word; }
+.img-add { margin: 12px 0; }
+.img-add select { min-width: 0; width: 100%; }
+[data-state].error { color: var(--danger); }

@@ -9,10 +9,17 @@ as a download). One **signing key per App ID** lives here, sealed. And the **sta
 deployment: customers → their applications (App ID folders) → controller type, releases, file
 and header checks, the controllers on that App ID and the download counts. New applications (S1
 and Linux) are made here; an application folder can be deleted, strongly protected and always archived
-first. For the members of the Entra group **`CF_Deploy`** only.
+first. Next to that, **module firmware** (the `.srec` files go-modules flashes into the plug-in
+modules of an L4, M1 or HMI1) is published to **firmware.gocontroll.tech** (R2
+`gocontroll-firmware`), and **Linux images and tools** for customers go to R2 `gocontroll-images`,
+which the second Worker of this repo serves on **images.gocontroll.tech** to anyone who signs in
+there with their e-mail address and a one-time code ([`images/README.md`](images/README.md)). For the
+members of the Entra group **`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> The Worker, the API and the pages are deployed (0.3.1 on 2026-10-23: plain HTTP redirected to HTTPS and the
+> The Worker, the API and the pages are deployed (0.4.0 on 2026-10-28, version `4876a23e`: the tabs **Firmware** and
+> **Images**, and the Worker `gocontroll-images` on `images.gocontroll.tech` (version `9a2c1639`), which answers 503 until
+> its Access application exists ([`images/README.md`](images/README.md) → *One-time setup*); 0.3.1 on 2026-10-23: plain HTTP redirected to HTTPS and the
 > security headers on `/pub/` too; 0.3.0 on 2026-10-21: Linux releases for M1, L4 and HMI1 next to
 > S1; 0.2.0: Status and Keys tabs, new applications, releases from the folder page, protected
 > folder delete); the Access application
@@ -22,7 +29,7 @@ first. For the members of the Entra group **`CF_Deploy`** only.
 
 ## Pages
 
-The tab bar holds **Status** and **Keys**; an application (folder) has a page of its own. Plain ES
+The tab bar holds **Status**, **Keys**, **Firmware** and **Images**; an application (folder) has a page of its own. Plain ES
 modules in `public/js/` (`app.js` routes, one module per page), no framework, no build step.
 Old links `#/publish` and `#/sign` (milestone 1) lead to the folder page with `?app=`, else to Status.
 
@@ -31,6 +38,8 @@ Old links `#/publish` and `#/sign` (milestone 1) lead to the folder page with `?
 | **Status** (`#/`) | Totals, then every customer with its applications and the folders without a customer. Columns: App ID, Controller (S1, M1, L4, HMI1 or a derived type), latest, releases, signing key ("n/a" for Linux applications, which are not signed), last upload. Search and a filter (all / S1 / S1 without key / M1 / L4 / HMI1 / controller unknown) stay in the address. At the bottom, **New application…**: controller S1, M1, L4 or HMI1, then the App ID (S1: up to 32 characters, no spaces or "/"; Linux: lower case `^[a-z0-9][a-z0-9._-]*$`, up to 64), customer, and for S1 the distribution host. Creating it opens its folder page. |
 | **Folder, S1** (`#/folders/<APP_ID>`) | Customer and controller (**Change…** each). **New release** in three steps: **1 File** (`.bin` / S-record / GOCO container, version from the filename) → **2 Sign** (public key with Copy; Generate or Import a key there, or tick *publish unsigned*) → **3 Publish** (description, Replace… / latest-moves-back confirmations, binary URL with Copy), or **Download signed file instead**. Then the releases with header checks, the signing key card, controllers per version, downloads per day, other files, and the **Danger zone**. |
 | **Folder, Linux (M1, L4, HMI1)** | Customer and controller. **Package** card: the files in `files/` (name, destination, mode, owner, group) with Add / Edit / Remove; default owner and group; after install: Nothing, *Restart services* (comma list, nodered and go-simulink suggested, preview of the rendered `post-install.sh.tmpl`) or *A script of its own*. **Save package**; **Import r2-deploy.config.json…** (paste or file); **From the latest release** (files from its version manifest, `files/post-install.sh` from its tarball). **New release** in three steps: **1 Files**: one file per package file (choose per row, or drop several, matched by name), or *Upload a built package* (`update.tar.gz` + `manifest.json` from a CI `dist/`, sent as they are after a SHA-256 check here), plus the version (next patch of latest) and what changed. **2 Review**: not signed, and why (go-deploy checks SHA-256 only); size and SHA-256 of the tarball; the version manifest's files with destination, mode, owner and short SHA-256; the post-install script; `manifest.json` as it will be written; what happens to `latest_version`. **3 Publish**: Publish / Replace…, progress, result (keys written, SHA-256 with Copy, size, `latest_version`). Then the Versions table (with a Tarball download per version), controllers per version, downloads, other files, Danger zone. |
+| **Firmware** (`#/firmware`) | Module firmware on firmware.gocontroll.tech. **Publish firmware**: *Choose the source folder…* (the module's repository, e.g. `Module-Input`; `showDirectoryPicker`, or a folder field in browsers without it, or drop the folder) or *Choose .srec files…*. From a folder Deploy takes every `<…>-BOOT/<name>.srec`, as the CI does, and reads the repository's git history in the browser: the line above the files names the repository, branch, HEAD and the number of version tags. Per file: module (name, hardware ID, hardware version, from the file name), version, file date and status (**New**, **Published** with the same bytes, **Published, other bytes**, or why it **cannot be used**); new versions are ticked. Per version: the **release date** (the file's date), the **changelog** (suggested from the annotation of tag `v<version>`, or else the commits since the previous version tag, listed under it with *Use these as the changelog*), the name of a module that is new on firmware.gocontroll.tech, and for a version that is published already *Publish again* (replace). **Publish N files** sends them one by one and shows each result. Below: every module (name, hardware version and ID, latest, date, number of releases), unfolding into its releases: version (link to the file, *flashed* on the first), date, changelog, SHA-256 with Copy, and who published it from Deploy and from which repository and commit, or *CI of the module repository*. |
+| **Images** (`#/images`) | Linux images and tools for customers on images.gocontroll.tech. **New release…**: image (for L4, M1 and/or HMI1) or tool, product (e.g. `moduline-headless`), version, title, controllers, release date, notes. A release is a **draft** until **Publish**; per draft *Add files…* (role guessed from the name: root file system, kernel, bootloader, device tree, flash script, tool, documentation, other; and the computer it runs on), upload with progress per file (32 MiB parts, three at a time, retried), the SHA-256 of each file as stored; *Remove* a file, *Edit…*, *Delete draft…*. A published release can be edited (text only) or **Withdrawn** (back to a draft; the files stay). Unfinished uploads with *Abort*. **Downloads**: who downloaded which file when, this month and last month, as images.gocontroll.tech logs it. |
 | **Keys** (`#/keys`) | S1 applications with a key (App ID, customer, controller, short public key with Copy, made by and when, source) and without one (Generate / Import with the one-time backup). Plus: Linux packages (M1, L4, HMI1) are not signed; go-deploy checks the SHA-256 only. |
 
 ## How it works
@@ -40,7 +49,9 @@ browser ──► Cloudflare Access (Entra ID, group CF_Deploy) ──► Worker
    │ reads .bin/.srec, compresses (zlib)                         │  verifies Cf-Access-Jwt-Assertion
    │ and sends payload + raw size,                               │  and an object ID in DEPLOY_GROUPS
    │ or a ready-made GOCO container                              ├─► R2 gocontroll-deploy        (the distribution bucket: read + publish)
-                                                                 ├─► R2 gocontroll-deploy-state  (keys, folder settings, log, download days)
+                                                                 ├─► R2 gocontroll-deploy-state  (keys, folder settings, log, download days, image releases)
+                                                                 ├─► R2 gocontroll-firmware      (module firmware: .srec + manifests)
+                                                                 ├─► R2 gocontroll-images        (images and tools, manifest.json; reads downloads/)
                                                                  ├─► D1 gocontroll-business      (customers, projects: read only)
                                                                  ├─► D1 gocontroll-db            (controllers, project_provisioning: read only)
                                                                  ├─► Secrets Store               (DEPLOY_SIGNING_KEYS_KEY; DEPLOY_CF_API_TOKEN later)
@@ -49,6 +60,12 @@ cron 17 2 * * * ─────────────────────�
 
 controllers ──► https://deploy.gocontroll.tech (Worker gocontroll-deploy) ┐
             ──► https://deploy.gocontroll.com  (R2 custom domain)         ┴─► the same bucket, byte for byte
+
+go-modules  ──► https://firmware.gocontroll.tech (Worker gocontroll-firmware) ┐
+            ──► https://firmware.gocontroll.com  (R2 custom domain)           ┴─► gocontroll-firmware
+
+customers   ──► Cloudflare Access (one-time PIN by e-mail) ──► Worker gocontroll-images (images/, images.gocontroll.tech)
+                                                                 └─► R2 gocontroll-images (only what manifest.json names; writes downloads/)
 ```
 
 - **One Worker with static assets** (`public/`), like Logistic, Finance, the CRM and Hours:
@@ -188,6 +205,89 @@ the CI pipeline of the skill `GOcontroll-Claude-Skills/r2-application-deploy-set
 - Uploads are multipart; a whole request is at most about 100 MB at Cloudflare's edge, and the
   Worker holds the package in memory once (128 MB per isolate), so stay well below that.
 
+### Module firmware (firmware.gocontroll.tech)
+
+Contract: `GOcontroll-Architecture/cloudflare/firmware/spec.md`. Deploy is a **second producer**
+next to the CI of the module repositories (`Module-*/.github/scripts/publish_firmware.py`, run on a
+`v*` tag whose annotation holds `RELEASE_DATE:`, `DEPLOY_FILES:` and the changelog; skill
+`module-firmware-deployment`) and writes what that script writes, in its order (`src/firmware.ts`):
+
+1. `modules/<hw_id>/<file>.srec` (`application/octet-stream`);
+2. `modules/<hw_id>/manifest.json`: `{ id, name, hardware_version, releases: [ { sw_version, file,
+   date (DD/MM/YY), sha256, changelog } ] }`;
+3. `modules/manifest.json`: `{ updated (YYYY-MM-DD, UTC), modules: [ { id, name, hardware_version,
+   latest_firmware, manifest } ] }`.
+
+Both manifests as `json.dumps(indent=2, ensure_ascii=False)`, without a trailing newline. The file
+name carries module and version: `20-10-1-6-2-0-3.srec` = hardware ID `20100106` (each of the first
+four parts zero-padded to two digits), hardware version `1.06`, firmware `2.0.3`. A new hardware ID
+takes the name its manifest will have from another hardware version of the same type in
+`modules/manifest.json`, else from the list in `src/firmware.ts` (`GOcontroll-Architecture/modules/naming.md`),
+else the colleague types it. `npm run fixtures:firmware` runs the real `publish_firmware.py` (boto3
+stubbed, `python -I`) and `test/firmware.test.ts` checks that Deploy writes the same objects in the
+same order, byte for byte (`modules/manifest.json` apart from `updated`, the script's clock).
+
+Where Deploy differs from the script, on purpose:
+
+- **Releases highest version first**, and `latest_firmware` is that version. go-modules flashes
+  `releases[0]`; the script puts the newest *upload* first, so an older version published after a
+  newer one would roll every controller back (the skill avoids it by pushing tags in order).
+- **No silent overwrite**: a version that is in the manifest, or a file name with other bytes in the
+  bucket, is a 409 unless *Publish again* (replace) is ticked; the replaced `.srec` goes to `STATE`
+  `firmware-replaced/<hw_id>/<file>/<timestamp>.srec` first. The script replaces the entry silently
+  and skips the upload of an existing file while writing the SHA-256 of its own copy.
+- **Conditional writes** (R2 etag) on both manifests, retried on the newer version: a publish at the
+  same time (Deploy or CI) is not lost.
+- **LF only**: the browser turns CRLF into LF before it hashes or sends anything, the Worker refuses
+  a CR. A Windows checkout (`core.autocrlf=true`) has CRLF; git and the CI have LF. So the bytes and
+  SHA-256 Deploy publishes are those of the file in git, and a version published from Deploy and
+  later tagged gives the CI the same file.
+
+The browser checks every record of the `.srec` (`parseSrec`, `public/js/source.js`); the Worker only
+checks that every line is an S-record and computes the SHA-256. **Git in the browser**
+(`public/js/git.js`): from the chosen folder it reads `.git` (loose objects and packs, refs and
+`packed-refs`, annotated tags) without writing anything, and suggests the changelog: the annotation
+of tag `v<version>` without its `RELEASE_DATE:`/`DEPLOY_FILES:` lines, or else `- <subject>` per commit
+since the previous version tag (at most 50). A worktree or submodule (`.git` is a file) has no
+history to read; the changelog is then typed. The log entry and `firmware-log/<hw_id>/<version>.json`
+keep the repository, branch, HEAD commit and tag.
+
+**Publishing a version both ways**: a version published from Deploy and then also pushed as a tag
+`v<version>` runs the CI, which rewrites that manifest entry with the tag's date and changelog (the
+same file and SHA-256, thanks to LF). Harmless, but the tag's text then wins: give the tag the same
+changelog, or tag before publishing from Deploy and let Deploy suggest the tag's text.
+
+### Images and tools for customers (images.gocontroll.tech)
+
+The bucket **`gocontroll-images`** holds releases of two kinds, laid out and described in
+`src/images-format.ts` (contract `GOcontroll-Architecture/cloudflare/images/spec.md`):
+`images/<product>/<version>/<file>` (an image for L4/M1/HMI1: root file system, kernel, bootloader…)
+and `tools/<product>/<version>/<file>` (what installs it: flash scripts, `imx-usb-loader`, `fastboot`…),
+plus **`manifest.json`**, the catalogue customers see. Deploy (`src/images.ts`) is its only writer.
+
+- **Draft → published**: a release's record is in `STATE` `images/releases/<kind>/<product>/<version>.json`
+  (metadata, files with size and SHA-256, who and when). Its files go into the bucket as they are
+  uploaded, but images.gocontroll.tech serves nothing that `manifest.json` does not name. **Publish**
+  writes the release into `manifest.json` (etag-conditional, retried); **Withdraw** takes it out (files
+  stay). `manifest.json` holds no e-mail address and no draft. Only a draft can lose files or be deleted
+  (then its files are deleted from the bucket, no archive: images are rebuilt from their source).
+- **Upload in parts**: one request carries at most ~100 MB, images are GBs. The browser starts an R2
+  multipart upload (`POST …/files`, size, role, platform), sends parts of exactly `PART_SIZE` (32 MiB;
+  the last one the rest) as raw bytes (`PUT /api/images/uploads/<id>/parts/<n>`, streamed into R2,
+  three at a time, each retried), then completes. On completion the Worker checks the size and reads
+  the stored object once through `crypto.DigestStream`: the SHA-256 customers see is that of what they
+  download. An unfinished upload is in `STATE` `images/uploads/<id>.json` until it is aborted (R2 drops
+  its parts after 7 days).
+- **Downloads**: images.gocontroll.tech writes an empty object per download under `downloads/<yyyy>/<mm>/`
+  with who (the verified e-mail address), what and the country in its custom metadata; the Images tab
+  lists this month's and last month's (one listing per month, no reads). They are kept 13 months: an R2
+  lifecycle rule on `downloads/` ([`images/README.md`](images/README.md)).
+
+The download site is the Worker **`gocontroll-images`** in [`images/`](images/README.md): Cloudflare
+Access with the **one-time PIN** login method (e-mail address → code by mail) and a managed challenge
+in front of it, its own JWT check (AUD `IMAGES_AUD`; empty = 503 for everything), and only reads of
+`manifest.json` and the files it names. It binds nothing but this bucket.
+
 ### Applications, settings and the controller type
 
 An application is a folder: what the bucket holds under `<APP_ID>/`, a signing key, or settings
@@ -270,12 +370,16 @@ enough for this data, so it stays there.
 | `keys/<APP_ID>.json` | The active signing key of a folder: `app_id`, `public_key` (130 hex), `sealed_private_key` (`v1.<iv>.<ciphertext+tag>`), `source` (generated / imported), `created_at`, `created_by`. Kept when the folder is deleted. |
 | `keys-retired/<APP_ID>/<timestamp>.json` | A key that was replaced, with who replaced it when. Never deleted. |
 | `folders/<APP_ID>.json` | Folder settings: `customer_id` and `controller` set by hand, `distribution_url` (an S1 application made here, for its first release), `package` (a Linux application's package definition), `created_at` / `created_by`, `updated_at` / `updated_by`. Customer, controller and URL are also in the object's custom metadata (marked `index`), so the overview needs one listing. |
-| `log/<yyyy>/<mm>/<timestamp>-<APP_ID>-<version or action>.json` | One entry per publish, sign, key action (generate, import, replace), `publish-linux`, `create-folder`, `settings`, `package` and `delete-folder`: action, App ID, version, actor, time, signed, replaced, payload SHA-256, size, description; a publish also its URL, the previous `latest`, the previous manifest and where a replaced binary went; a delete its reason, objects, bytes, controllers and archive. |
+| `log/<yyyy>/<mm>/<timestamp>-<APP_ID>-<version or action>.json` | One entry per publish, sign, key action (generate, import, replace), `publish-linux`, `create-folder`, `settings`, `package`, `delete-folder`, `publish-firmware` (App ID `module-<hw_id>`: the file, date, changelog, source, and both manifests as they were before) and `images-*` (App ID `<kind>-<product>`: create, update, upload, abort, remove-file, publish, withdraw, delete): action, App ID, version, actor, time, signed, replaced, payload SHA-256, size, description; a publish also its URL, the previous `latest`, the previous manifest and where a replaced binary went; a delete its reason, objects, bytes, controllers and archive. |
 | `replaced/<APP_ID>/<APP_ID>-<version>/<timestamp>.bin` | A binary a publish overwrote. |
 | `replaced/<APP_ID>/v<version>/<timestamp>/update.tar.gz`, `…/manifest.json` | A Linux release a publish replaced. |
 | `deleted/<APP_ID>/<timestamp>/<original key>` | Every object of a deleted folder, plus its `folder-settings.json` ([Deleting a folder](#deleting-a-folder)). |
 | `deleting/<APP_ID>.json` | A delete under way: archive timestamp, actor, reason, progress. Gone when it is done. |
 | `downloads/<yyyy-mm-dd>.json` | Download counts of a finished UTC day ([Download counts](#download-counts)). |
+| `firmware-log/<hw_id>/<version>.json` | Who published that module firmware from Deploy, when, its SHA-256, and the repository, branch, commit and tag it came from (also in the custom metadata, for the overview's one listing). None for a version the CI published. |
+| `firmware-replaced/<hw_id>/<file>/<timestamp>.srec` | An `.srec` a publish replaced (custom metadata: its SHA-256, who replaced it). |
+| `images/releases/<kind>/<product>/<version>.json` | A release for images.gocontroll.tech: kind, product, title, version, controllers, release date, notes, files (name, path, size, SHA-256, role, platform, who uploaded it when), `draft`/`published`, who made, changed and published it when. |
+| `images/uploads/<id>.json` | An upload to `gocontroll-images` under way: R2 upload ID, object key, size, part size and count, who started it. Gone once completed or aborted. |
 
 Read it with `npx wrangler r2 object get gocontroll-deploy-state/<key> --remote --file=-`.
 
@@ -382,6 +486,9 @@ npm run typecheck                # strict TS for the Worker, JSDoc-checked JS fo
 npm run fixtures:goco            # only when the container format changes (needs Python + cryptography)
 npm run fixtures:linux           # only when upload-r2.py changes (the skill next to GOcontroll-Team)
 npm run fixtures:tar             # only when build-package.py or public/js/package.js changes
+npm run fixtures:firmware        # only when publish_firmware.py changes (the module repos next to GOcontroll-Team)
+npm run fixtures:git             # only when public/js/git.js needs other repository shapes (needs git)
+npm run test:images              # the tests of images.gocontroll.tech (part of npm test)
 ```
 
 `.dev.vars` needs `DEPLOY_GROUPS` and `DEV_USER_GROUPS` with the same value (or every request
@@ -419,6 +526,18 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
 | POST | `/api/folders/:appId/key` | `{ action: "generate" }` or `{ action: "import", privateKey }`, with `{ replace: true, confirm: "<APP_ID>" }` when a key exists (else 409) → key info, plus `backup` on generate only |
 | POST | `/api/sign` | multipart `appId`, `version`, and `payload` (zlib) + `rawSize`, or `container` → the signed container as a download `<APP_ID>-<version>.bin`; nothing goes into the bucket |
 | POST | `/api/releases` | multipart `appId`, `version`, `description`, `sign`, `replace`, `distributionUrl` (new folder only), and `payload` + `rawSize` or `container` → `{ binaryKey, binaryUrl, manifestKey, version, releaseDate, previousLatest, replaced, latestMovedBack, signed }` |
+| GET | `/api/firmware` | `{ updated, modules: [ { id, name, hardwareVersion, latest, releases: [ { version, file, date, sha256, changelog, publishedBy: { email, at, source } \| null } ], error? } ], manifestError?, firmwareUrl, moduleTypeNames }` |
+| POST | `/api/firmware` | multipart `file` (`<a>-<b>-<c>-<d>-<x>-<y>-<z>.srec`, LF, ≤ 4 MB), `released` (YYYY-MM-DD), `changelog` (≤ 2000), `module_name` (a new hardware ID), `replace` (`true`), `source` (JSON `{ repo, branch, commit, tag }`) → `{ hwId, version, file, url, sha256, date, latest, objectWritten, replacedRelease, replacedFile, newModule }`; 409 with `conflict: "release" \| "file"` |
+| GET | `/api/images` | `{ releases: [ … + inCatalogue ], uploads, downloads: [ { at, email, path, kind, product, version, country } ], catalogueError?, publicUrl, limits: { partSize, maxFileSize } }` |
+| POST | `/api/images/releases` | `{ kind: "image" \| "tool", product, version, title, controllers: ["L4", "M1", "HMI1"], released, notes }` → 201, the draft; 409 when it exists |
+| PATCH | `/api/images/releases/:kind/:product/:version` | `{ title, controllers, released, notes }` → the release (a published one is updated in `manifest.json` too) |
+| DELETE | `/api/images/releases/:kind/:product/:version` | A draft, with its files and unfinished uploads |
+| POST | `/api/images/releases/:kind/:product/:version/publish` · `/withdraw` | Into / out of `manifest.json` |
+| POST | `/api/images/releases/:kind/:product/:version/files` | `{ name, size, role, platform }` → 201 `{ id, partSize, parts }` (a draft only) |
+| DELETE | `/api/images/releases/:kind/:product/:version/files/:name` | A file of a draft, from the bucket too |
+| PUT | `/api/images/uploads/:id/parts/:n` | `application/octet-stream`, exactly the part's size, same origin → `{ partNumber, etag }` |
+| POST | `/api/images/uploads/:id/complete` | `{ parts: [ { partNumber, etag } ] }` → the file `{ name, path, size, sha256, role, platform, uploaded_at, uploaded_by }` |
+| DELETE | `/api/images/uploads/:id` | Abort an upload |
 | GET | `/api/downloads?appId=&days=30` | `{ configured, days: [ { day, downloads, headerReads, manifestReads } ] }`, every day of the window (1–90; a day without counts has `null`s and `unavailable` or `pending`); without `appId` every folder |
 
 ## Deployment
@@ -431,9 +550,12 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
 | Hostname | `deploy.gocontroll.tools` (custom domain, the only route; `workers_dev` and preview URLs off) |
 | R2 (read + write) | `DEPLOY_BUCKET` → `gocontroll-deploy`, public as `deploy.gocontroll.com` and `deploy.gocontroll.tech` |
 | R2 (private) | `STATE` → `gocontroll-deploy-state` (created 2026-10-21) |
+| R2 (read + write) | `FIRMWARE_BUCKET` → `gocontroll-firmware` (module firmware; `brcm/` is never touched), public as `firmware.gocontroll.tech` and `firmware.gocontroll.com` |
+| R2 (read + write) | `IMAGES_BUCKET` → `gocontroll-images` (created 2026-10-28; no public access, no custom domain: only the Worker `gocontroll-images` serves it) |
 | D1 (read only) | `BUSINESS_DB` → `gocontroll-business`, `MODULINE_DB` → `gocontroll-db` |
 | Secrets Store | `SIGNING_KEYS_KEY` → `DEPLOY_SIGNING_KEYS_KEY` (exists); `CF_API_TOKEN` → `DEPLOY_CF_API_TOKEN` (to be made, [Download counts](#download-counts)) |
-| Vars | `TEAM_DOMAIN`, `POLICY_AUD`, `DEPLOY_GROUPS`, `DISTRIBUTION_URLS`, `DOWNLOAD_HOSTS` |
+| Vars | `TEAM_DOMAIN`, `POLICY_AUD`, `DEPLOY_GROUPS`, `DISTRIBUTION_URLS`, `DOWNLOAD_HOSTS`, `FIRMWARE_URLS`, `IMAGES_URL` |
+| Second Worker | `gocontroll-images` on `images.gocontroll.tech` ([`images/`](images/README.md), `npm run deploy:images`) |
 | Cron | `17 2 * * *`: stores the download counts of finished days ([Download counts](#download-counts)) |
 
 ### One-time setup
@@ -456,6 +578,9 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
    shown to the object ID of `CF_Deploy` (since 2026-10-21). Hiding a tile is not access
    control: the Access application and `DEPLOY_GROUPS` are.
 4. Optionally the API token for [download counts](#download-counts).
+5. **images.gocontroll.tech** (2026-10-28): the bucket `gocontroll-images` (made by the session), then
+   the owner's Access application with the one-time PIN and the managed challenge, in the order of
+   [`images/README.md`](images/README.md) → *One-time setup*.
 
 ### Worker
 
@@ -488,6 +613,16 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
   manifest) and the root manifest before every publish is in its `publish-linux` log entry
   (`previous_manifest`); put them back with `npx wrangler r2 object put`, the root manifest last
   (`application/gzip` for the package, `application/json` for the manifests).
+- **0.4.0** (Firmware and Images tabs, bindings `FIRMWARE_BUCKET` and `IMAGES_BUCKET`, 2026-10-28; no
+  data changed): back to 0.3.1 with `npx wrangler rollback 8ccd2c42-fe88-459b-8b10-d2b37238797d`.
+  The buckets and their contents stay; images.gocontroll.tech keeps serving what is published.
+- **A module firmware publish**: its `publish-firmware` log entry holds `previous_module_manifest` and
+  `previous_master_manifest`; write them back (module manifest first, then `modules/manifest.json`)
+  with `npx wrangler r2 object put gocontroll-firmware/<key> --remote --file=<file> --content-type application/json`
+  (`null` = there was none: delete the object instead). A replaced `.srec` is in
+  `firmware-replaced/…`. Leave a new `.srec` in place: without a manifest entry nobody downloads it.
+- **An image release**: *Withdraw* takes it off images.gocontroll.tech at once; the files stay until the
+  draft is deleted.
 - **A key**: the replaced one is in `keys-retired/<APP_ID>/`; copying it back to
   `keys/<APP_ID>.json` makes it active again (it stays sealed for that App ID).
 - **A deleted folder**: put it back from `deleted/…`, the manifest last
@@ -497,6 +632,12 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
   state bucket (the sealed keys, the log).
 
 ## Relation to the Deployment Tool, the CI pipeline and the specs
+
+Module firmware follows `GOcontroll-Architecture/cloudflare/firmware/spec.md`; its other producer is
+the CI of each module repository (`publish_firmware.py`, skill `module-firmware-deployment`), its
+consumers go-modules (`check`/`update`), the Modules page of go-web-ui and the iOS app. Images and tools
+follow `GOcontroll-Architecture/cloudflare/images/spec.md`; Deploy is their only producer, the Worker
+`gocontroll-images` (this repo, `images/`) their only reader.
 
 Linux applications follow `GOcontroll-Architecture/cloudflare/linux-application/spec.md`; their
 other producer is the CI pipeline of the skill `r2-application-deploy-setup` (Deploy writes what

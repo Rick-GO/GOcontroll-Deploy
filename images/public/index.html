@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Downloads · GOcontroll</title>
+<meta name="description" content="Linux images and tools for the GOcontroll Moduline L4, M1 and HMI1.">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#ffffff">
+<link rel="icon" type="image/png" media="(prefers-color-scheme: light)" href="/favicon-light.png">
+<link rel="icon" type="image/png" media="(prefers-color-scheme: dark)" href="/favicon-dark.png">
+<link rel="apple-touch-icon" href="/favicon-large.png">
+<link rel="stylesheet" href="/styles.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/" aria-label="Downloads home">
+    <img src="/logo.svg" alt="GOcontroll" height="36">
+  </a>
+  <span class="divider" aria-hidden="true"></span>
+  <a class="app-title" href="/">Downloads</a>
+  <span class="spacer"></span>
+  <span class="who" id="who" hidden></span>
+  <a class="logout" href="/cdn-cgi/access/logout" aria-label="Sign out">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9"/></svg>
+    <span>Sign out</span>
+  </a>
+</header>
+
+<section class="hero">
+  <div class="hero-inner">
+    <p class="eyebrow">GOcontroll Moduline</p>
+    <h1>Linux images and tools for the Moduline L4, M1 and HMI1</h1>
+    <p class="lede">The images to install on your controller and the tools to flash them. Check every file against its SHA-256 checksum before you install it.</p>
+    <p class="hero-meta">
+      <span id="hero-who" hidden></span>
+      <span id="hero-updated" hidden></span>
+    </p>
+  </div>
+</section>
+
+<main>
+  <noscript><p class="notice err">This page needs JavaScript to list the downloads.</p></noscript>
+  <div class="notice err" id="notice" role="alert" hidden>
+    <span id="notice-text"></span>
+    <button type="button" class="btn sm" id="notice-retry">Reload</button>
+  </div>
+
+  <section class="panel" aria-labelledby="images-title">
+    <div class="panel-head">
+      <h2 id="images-title">Controller images</h2>
+      <div class="filter" role="group" aria-label="Show images for">
+        <span class="filter-label" aria-hidden="true">Show</span>
+        <div class="seg">
+          <button type="button" data-controller="" aria-pressed="true">All</button>
+          <button type="button" data-controller="L4" aria-pressed="false">L4</button>
+          <button type="button" data-controller="M1" aria-pressed="false">M1</button>
+          <button type="button" data-controller="HMI1" aria-pressed="false">HMI1</button>
+        </div>
+      </div>
+    </div>
+    <div class="products" id="images" aria-live="polite">
+      <div class="loading"><span class="spinner"></span> Loading…</div>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="tools-title">
+    <div class="panel-head">
+      <h2 id="tools-title">Tools</h2>
+      <p class="sub">To install an image on a controller.</p>
+    </div>
+    <div class="products" id="tools" aria-live="polite">
+      <div class="loading"><span class="spinner"></span> Loading…</div>
+    </div>
+  </section>
+
+  <section class="panel verify" aria-labelledby="verify-title">
+    <div class="panel-head">
+      <svg class="panel-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z"/></svg>
+      <h2 id="verify-title">Verify your download</h2>
+    </div>
+    <p class="text">Compute the SHA-256 checksum of the file you downloaded and compare it with the one shown next to the file. If they differ, the file is incomplete or damaged: download it again and do not install it.</p>
+    <dl class="verify-list">
+      <div>
+        <dt>Linux</dt>
+        <dd><code>sha256sum rootfs.ext4.zst</code></dd>
+      </div>
+      <div>
+        <dt>macOS</dt>
+        <dd><code>shasum -a 256 rootfs.ext4.zst</code></dd>
+      </div>
+      <div>
+        <dt>Windows (PowerShell)</dt>
+        <dd><code>Get-FileHash -Algorithm SHA256 .\rootfs.ext4.zst</code></dd>
+      </div>
+    </dl>
+    <p class="hint">Use the name of your file. Windows shows the checksum in capitals; upper and lower case are the same checksum.</p>
+  </section>
+
+</main>
+
+<footer>&copy; GOcontroll B.V. · <a href="https://gocontroll.com">gocontroll.com</a></footer>
+</body>
+</html>

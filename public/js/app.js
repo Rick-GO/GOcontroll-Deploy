@@ -1,15 +1,19 @@
 // @ts-check
 // Deploy — page shell and router.
 //
-// Two tabs in the hero band:
+// Four tabs in the hero band:
 //   Status   #/                        the applications: totals, customers → folders (?q=, ?show=), New application
 //            #/folders/<APP_ID>        one application: New release, releases, key, customer, controller, delete
 //   Keys     #/keys                    every application's signing key: generate or import the missing ones
+//   Firmware #/firmware                module firmware on firmware.gocontroll.tech: modules, Publish firmware
+//   Images   #/images                  Linux images and tools for customers on images.gocontroll.tech
 // The App ID in a hash is URL-encoded. The former #/publish and #/sign pages lead to the
 // folder page of their ?app=, or else to Status.
 
 import { api, errorText } from './api.js';
+import { renderFirmware } from './firmware.js';
 import { renderFolder } from './folder.js';
+import { renderImages } from './images.js';
 import { renderKeys } from './keys.js';
 import { $, copyText, esc, hydrateIcons, showUser, toast } from './lib.js';
 import { renderStatus } from './status.js';
@@ -18,7 +22,7 @@ import { renderStatus } from './status.js';
 
 /** Mark the tab the page belongs to. @param {string} path */
 function showTab(path) {
-  const tab = path === '/keys' ? 'keys' : 'status';
+  const tab = path === '/keys' ? 'keys' : path === '/firmware' ? 'firmware' : path === '/images' ? 'images' : 'status';
   document.querySelectorAll('.app-tabs [data-tab]').forEach((a) => {
     if (a.getAttribute('data-tab') === tab) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
@@ -47,6 +51,8 @@ async function route(ctx) {
   try {
     if ((m = path.match(/^\/folders\/(.+)$/))) await renderFolder(ctx, decodeURIComponent(m[1]));
     else if (path === '/keys') await renderKeys(ctx);
+    else if (path === '/firmware') await renderFirmware(ctx);
+    else if (path === '/images') await renderImages(ctx);
     else await renderStatus(ctx, params);
   } catch (err) {
     if (nav !== ctx.nav) return;

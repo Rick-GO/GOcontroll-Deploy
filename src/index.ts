@@ -19,7 +19,10 @@ import { collectMissingDays } from './downloads';
 import { withSecurityHeaders, SECURITY_HEADERS } from './lib/headers';
 import { HttpError } from './lib/http';
 import { httpsRedirect } from './lib/https';
+import { PART_SIZE } from './images';
+import { firmware } from './routes/firmware';
 import { folders } from './routes/folders';
+import { images } from './routes/images';
 import { meta } from './routes/meta';
 import { releases } from './routes/releases';
 
@@ -33,7 +36,10 @@ const MULTIPART_PATHS = new Map([
   ['/api/sign', 4 * 1024 * 1024],
   ['/api/releases', 4 * 1024 * 1024],
   ['/api/linux-releases', 102 * 1024 * 1024],
+  ['/api/firmware', 5 * 1024 * 1024],
 ]);
+/** One part of a file for images.gocontroll.tech: its raw bytes (src/images.ts), at most PART_SIZE. */
+const PART_PATH = /^\/api\/images\/uploads\/[0-9a-f]{32}\/parts\/\d{1,5}$/;
 
 export const app = new Hono<AppEnv>();
 
@@ -77,11 +83,18 @@ api.use('*', async (c, next) => {
     const origin = c.req.header('origin');
     if (origin && origin !== self) return c.json({ error: 'Invalid origin.' }, 403);
     const type = c.req.header('content-type') || '';
-    if (MULTIPART_PATHS.has(c.req.path)) {
+    if (PART_PATH.test(c.req.path)) {
+      // Raw bytes, which a cross-site form cannot send with this method and type; still only from here.
+      if (!origin || (c.req.header('sec-fetch-site') ?? 'same-origin') !== 'same-origin') return c.json({ error: 'Invalid origin.' }, 403);
+      if (c.req.method !== 'PUT' || !type.startsWith('application/octet-stream')) return c.json({ error: 'Expected the bytes of a part (application/octet-stream).' }, 415);
+      if (Number(c.req.header('content-length') || 0) > PART_SIZE) return c.json({ error: 'A part is larger than it can be.' }, 413);
+    } else if (MULTIPART_PATHS.has(c.req.path)) {
       if (!origin || (c.req.header('sec-fetch-site') ?? 'same-origin') !== 'same-origin') return c.json({ error: 'Invalid origin.' }, 403);
       if (!type.startsWith('multipart/form-data')) return c.json({ error: 'Expected an upload (multipart/form-data).' }, 415);
       if (Number(c.req.header('content-length') || 0) > MULTIPART_PATHS.get(c.req.path)!) {
-        return c.json({ error: c.req.path === '/api/linux-releases' ? 'A package is at most 100 MB.' : 'The upload is larger than an S1 image can be.' }, 413);
+        const error = c.req.path === '/api/linux-releases' ? 'A package is at most 100 MB.'
+          : c.req.path === '/api/firmware' ? 'An .srec of a module is at most 4 MB.' : 'The upload is larger than an S1 image can be.';
+        return c.json({ error }, 413);
       }
     } else if (!type.startsWith('application/json')) {
       return c.json({ error: 'Expected JSON.' }, 415);
@@ -94,6 +107,8 @@ api.use('*', async (c, next) => {
 api.route('/', meta);
 api.route('/', folders);
 api.route('/', releases);
+api.route('/', firmware);
+api.route('/', images);
 api.all('*', (c) => c.json({ error: 'Not found.' }, 404));
 
 app.route('/api', api);

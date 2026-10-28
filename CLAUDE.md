@@ -4,6 +4,12 @@
 - Live op `deploy.gocontroll.tools` sinds 2026-10-21 (eerste versie `211d969d-5468-45eb-b102-57746d737af5`). Access-app
   met `/pub`-bypass bestaat; de AUD staat in `POLICY_AUD`. `DEPLOY_GROUPS` en de hubtegel staan op het object-ID van
   `CF_Deploy` (`b5877d29-e509-40b2-9784-17e649996f1f`). Downloadtellingen wachten op `DEPLOY_CF_API_TOKEN`.
+- **0.4.0 (2026-10-28, versie `4876a23e-944b-4f73-b497-d978d321036b`; `gocontroll-images` versie
+  `9a2c1639-79b6-4057-9c8e-b5b98b4483cd`)**: tabs *Firmware* (module-firmware naar `firmware.gocontroll.tech`, bucket `gocontroll-firmware`)
+  en *Images* (images en tools voor klanten, bucket `gocontroll-images`), plus de tweede Worker `gocontroll-images` op
+  `images.gocontroll.tech` (map `images/`). Die geeft 503 tot de eigenaar de Access-app met one-time PIN heeft gemaakt
+  en de AUD in `images/wrangler.toml` staat (`images/README.md` → *One-time setup*). Terug naar 0.3.1:
+  `npx wrangler rollback 8ccd2c42-fe88-459b-8b10-d2b37238797d` (de buckets en hun inhoud blijven).
 
 ## Architectuur
 - **Worker met static assets** (geen Pages), zelfde opzet als GOcontroll-Logistic: `run_worker_first = true`,
@@ -49,6 +55,46 @@
   Publiceren verwijdert nooit: een overschreven binary gaat eerst naar `replaced/…`, het manifest van vóór een
   publish staat in de logregel (`previous_manifest`). Terugzetten: README → *Deleting a folder* (manifest als laatste).
 
+## Module-firmware (`src/firmware.ts`, tab Firmware)
+- Contract `GOcontroll-Architecture/cloudflare/firmware/spec.md` (≥ 1.2.0). Deploy is **tweede producent** naast de CI van
+  de `Module-*`-repos (`.github/scripts/publish_firmware.py`, skill `module-firmware-deployment`) en schrijft wat dat script
+  schrijft, in die volgorde: `modules/<hw_id>/<file>.srec`, `modules/<hw_id>/manifest.json`, `modules/manifest.json`
+  (`JSON.stringify(…, 2)` zonder newline = `json.dumps(indent=2, ensure_ascii=False)`). `npm run fixtures:firmware` draait
+  het echte script (boto3 gestubd, `python -I`); `test/firmware.test.ts` eist dezelfde bytes (op `updated` na). Fixtures
+  niet met de hand wijzigen.
+- Bewust anders dan het script: `releases` **aflopend op versie** (go-modules flasht `releases[0]`), `latest_firmware` = de
+  hoogste; bestaande versie of andere bytes onder dezelfde naam = 409 tenzij `replace` (oud `.srec` eerst naar `STATE`
+  `firmware-replaced/…`); manifests etag-conditioneel met retry; **alleen LF** (browser zet CRLF om, Worker weigert CR):
+  een Windows-checkout met `core.autocrlf` heeft CRLF, git en de CI LF, dus anders klopt de SHA-256 niet met de CI.
+- Bestandsnaam = alles: `20-10-1-6-2-0-3.srec` → `20100106`, `2.0.3`, HW `1.06` (`parseSrecName`, in `src/` én
+  `public/js/release-helpers.js`, `test/pages.test.ts` houdt ze gelijk). Naam van een nieuwe hardware-ID: andere HW-versie van
+  hetzelfde type → `MODULE_TYPE_NAMES` → door de collega ingetypt. Nooit iets onder `brcm/`.
+- Releasedatum = datum van het `.srec`-bestand (`lastModified`), als `DD/MM/YY` in het manifest. Changelog voorgesteld door
+  **`public/js/git.js`** (git lezen in de browser, alleen lezen: loose + packs met OFS/REF-delta, `packed-refs`,
+  geannoteerde tags; geen SHA-256-repos, reftable, worktrees/submodules): annotatie van tag `v<versie>` zonder
+  `RELEASE_DATE:`/`DEPLOY_FILES:`, anders de commits sinds de vorige versietag (max. 50). Fixture `test/fixtures/git/`
+  komt van `npm run fixtures:git` (git CLI); niet met de hand wijzigen.
+- Log: `publish-firmware` met `previous_module_manifest` en `previous_master_manifest` (terugzetten = die terugschrijven);
+  `firmware-log/<hw_id>/<versie>.json` (+ custom metadata) = wie publiceerde uit welke repo/commit; zonder = de CI.
+
+## Images voor klanten (`src/images.ts`, tab Images, `images/`)
+- Formaat en bucketindeling: **`src/images-format.ts`** (geen imports; door beide Workers gebundeld). Contract
+  `GOcontroll-Architecture/cloudflare/images/spec.md`. Deploy is de **enige schrijver** van releases en `manifest.json`;
+  `images.gocontroll.tech` (Worker `gocontroll-images`, `images/`) is de enige lezer en schrijft alleen `downloads/`.
+- Release = concept in `STATE` `images/releases/<kind>/<product>/<versie>.json`; bestanden staan al in de bucket, maar de
+  download-Worker serveert alleen wat `manifest.json` noemt. Publiceren/terugtrekken = `manifest.json` etag-conditioneel
+  herschrijven. In `manifest.json` nooit e-mailadressen of concepten (`catalogueEntry`). Alleen een concept verliest
+  bestanden of wordt verwijderd (geen archief: images worden opnieuw gebouwd).
+- Upload: R2-multipart, delen van precies `PART_SIZE` (32 MiB, laatste de rest), ruwe bytes via
+  `PUT /api/images/uploads/<id>/parts/<n>` (`application/octet-stream`, same-origin, gestreamd naar R2; `src/index.ts`
+  `PART_PATH`), daarna `complete`: grootte gecontroleerd en SHA-256 uit het opgeslagen object (`crypto.DigestStream`).
+- Downloadlog: lege objecten `downloads/<yyyy>/<mm>/<iso>-<rand>.json` met custom metadata (`DownloadMeta`); Deploy leest
+  alleen de listing van deze en vorige maand.
+- `images/` heeft eigen `wrangler.toml`, tests (`npm run test:images`, deel van `npm test`) en deploy
+  (`npm run deploy:images`). Bindt **alleen** `IMAGES_BUCKET`; JWT-check met `IMAGES_AUD` (leeg = 503 op alles), geen
+  groepscheck (one-time PIN: elk geverifieerd e-mailadres). Access-app, one-time PIN en WAF-challenge zet de eigenaar in het
+  dashboard (de wrangler-login heeft geen Access- of WAF-rechten).
+
 ## Applicaties
 - Een applicatie = map: objecten onder `<APP_ID>/`, een sleutel, of settings (`folders/<APP_ID>.json`). Elk van de
   drie laat hem zien op Status en geeft hem een pagina.
@@ -88,8 +134,10 @@
 ## Opslag en databases
 - **Geen eigen D1** (bij het bouwen op 21-10 zat het account aan de Free-plan-D1-limiet; R2 volstaat voor deze data,
   dus het blijft zo): app-state is JSON in R2 **`gocontroll-deploy-state`**
-  (`STATE`, privé): `keys/`, `keys-retired/`, `folders/`, `log/`, `replaced/`, `deleted/`, `deleting/`, `downloads/`
-  (zie README → *Data*).
+  (`STATE`, privé): `keys/`, `keys-retired/`, `folders/`, `log/`, `replaced/`, `deleted/`, `deleting/`, `downloads/`,
+  `firmware-log/`, `firmware-replaced/`, `images/releases/`, `images/uploads/` (zie README → *Data*).
+- **`gocontroll-firmware`** (`FIRMWARE_BUCKET`, publiek via `firmware.gocontroll.tech`/`.com`) en **`gocontroll-images`**
+  (`IMAGES_BUCKET`, privé; alleen via `images.gocontroll.tech`): lezen en schrijven, zie de secties hierboven.
 - **`gocontroll-business`** (eigenaar Hours) en **`gocontroll-db`** (eigenaar GOcontroll-Database): **alleen lezen**,
   `migrations_dir = "no-migrations-here"`. Uit `gocontroll-db` alleen `controllers` (client_id, project_id, app_id,
   app_version, app_uptodate, distribution_url, online, last_online, controller_series_id, `COUNT(*)`),
@@ -116,4 +164,6 @@
   `curl -sI http://deploy.gocontroll.tools/pub/logo.svg` → 301 naar `https://`, en via https 200 met
   `content-security-policy` en `strict-transport-security`.
   Terug: `npx wrangler deployments list` → `npx wrangler rollback <versie-id>`.
+- `images.gocontroll.tech` na deploy (`npm run deploy:images`): zonder AUD `curl -sI https://images.gocontroll.tech/` → 503;
+  met Access-app → 302 naar `gocontroll.cloudflareaccess.com`.
 - `npm install` vraagt `legacy-peer-deps` (staat in `.npmrc`).

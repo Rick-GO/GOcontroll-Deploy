@@ -40,6 +40,24 @@ crons = ["17 2 * * *"]
 binding = "DEPLOY_BUCKET"
 bucket_name = "gocontroll-deploy"
 
+# Module firmware (.srec) for go-modules on the Linux controllers: modules/<hw_id>/<file>.srec,
+# modules/<hw_id>/manifest.json and modules/manifest.json, public on https://firmware.gocontroll.tech
+# (Worker gocontroll-firmware, moduline-firmware/worker) and https://firmware.gocontroll.com (R2
+# custom domain). The module repos' CI (publish_firmware.py) writes the same objects; Deploy writes
+# what that script writes (src/firmware.ts). Deploy never deletes here and never touches brcm/; a
+# replaced .srec is archived to STATE first (firmware-replaced/…).
+[[r2_buckets]]
+binding = "FIRMWARE_BUCKET"
+bucket_name = "gocontroll-firmware"
+
+# Linux images and tools for customers, served by images.gocontroll.tech (Worker gocontroll-images,
+# images/ in this repo) to whoever signed in there with their e-mail address. Deploy is the only
+# writer of releases and manifest.json (src/images.ts, format src/images-format.ts); the download
+# log under downloads/ is written by images.gocontroll.tech and only read here.
+[[r2_buckets]]
+binding = "IMAGES_BUCKET"
+bucket_name = "gocontroll-images"
+
 # Private state of this app (no public access, no custom domain): sealed signing keys,
 # folder settings, the audit log, the download counts of finished days, and the archives of
 # replaced binaries and deleted folders (src/state.ts).
@@ -113,6 +131,11 @@ DEPLOY_GROUPS = "b5877d29-e509-40b2-9784-17e649996f1f" # Entra group "CF_Deploy"
 DISTRIBUTION_URLS = "https://deploy.gocontroll.tech,https://deploy.gocontroll.com"
 # The hostnames whose requests count as downloads (Cloudflare GraphQL Analytics).
 DOWNLOAD_HOSTS = "deploy.gocontroll.com,deploy.gocontroll.tech"
+# The hosts of the firmware bucket (manifests hold paths relative to the host); the first one is
+# what links on the Firmware tab use.
+FIRMWARE_URLS = "https://firmware.gocontroll.tech,https://firmware.gocontroll.com"
+# Where customers download the images and tools (the Images tab links to it).
+IMAGES_URL = "https://images.gocontroll.tech"
 
 [dev]
 # Keep request.url on localhost during `wrangler dev` (it would otherwise take the

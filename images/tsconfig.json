@@ -1,0 +1,20 @@
+{
+  // gocontroll-images: the Worker (src/), its tests and vitest.config.ts, with the modules it
+  // shares with the intranet Worker (../src/access.ts, ../src/lib/https.ts, ../src/images-format.ts),
+  // which tsc follows through the imports. The page in public/ has its own config (DOM types).
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types", "vite/client"],
+    "strict": true,
+    "noEmit": true,
+    "noUncheckedIndexedAccess": false,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "allowJs": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*", "test/**/*", "vitest.config.ts"]
+}

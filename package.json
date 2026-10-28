@@ -1,19 +1,23 @@
 {
   "name": "gocontroll-deploy-intranet",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "GOcontroll Deploy at deploy.gocontroll.tools: sign and publish S1 firmware to the gocontroll-deploy bucket",
+  "description": "GOcontroll Deploy at deploy.gocontroll.tools: publish S1 firmware, Linux applications, module firmware (firmware.gocontroll.tech) and images for customers (images.gocontroll.tech)",
   "scripts": {
     "dev": "wrangler dev",
     "predeploy": "npm run typecheck && npm test",
     "deploy": "wrangler deploy",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p public/js",
+    "test": "vitest run && npm run test:images",
+    "test:images": "vitest run --config images/vitest.config.ts",
+    "deploy:images": "npm run typecheck && npm test && wrangler deploy -c images/wrangler.toml",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p public/js && tsc --noEmit -p images && tsc --noEmit -p images/public",
     "db:setup:local": "node scripts/setup-local-db.mjs",
     "fixtures:goco": "node scripts/goco-fixtures.mjs",
     "fixtures:linux": "python -I scripts/linux-root-fixtures.py ../../GOcontroll-Claude-Skills/r2-application-deploy-setup test/fixtures/linux/root-manifests.json",
-    "fixtures:tar": "python -I scripts/tar-fixture.py"
+    "fixtures:tar": "python -I scripts/tar-fixture.py",
+    "fixtures:firmware": "python -I scripts/firmware-fixtures.py ../../Module-4-20mA/.github/scripts/publish_firmware.py test/fixtures/firmware/ci-manifests.json",
+    "fixtures:git": "node scripts/git-fixture.mjs"
   },
   "dependencies": {
     "hono": "^4.13.13",

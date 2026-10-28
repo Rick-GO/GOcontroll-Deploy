@@ -1,0 +1,100 @@
+{
+  "script": "publish_firmware.py",
+  "cases": [
+    {
+      "name": "a new hardware version of a known module type",
+      "boot_dir": "V20100106-BOOT",
+      "srec_name": "20-10-1-6-2-0-4.srec",
+      "version": "2.0.4",
+      "release_date": "27/10/26",
+      "changelog": "Faster sampling\nFixes the offset at 0 mA",
+      "module_name": "6 Channel Input module",
+      "before": {
+        "modules/manifest.json": "{\n  \"updated\": \"2026-08-17\",\n  \"modules\": [\n    {\n      \"id\": \"20200207\",\n      \"name\": \"6 Channel Output module\",\n      \"hardware_version\": \"1.07\",\n      \"latest_firmware\": \"2.3.1\",\n      \"manifest\": \"modules/20200207/manifest.json\"\n    },\n    {\n      \"id\": \"20100105\",\n      \"name\": \"6 Channel Input module\",\n      \"hardware_version\": \"1.05\",\n      \"latest_firmware\": \"2.0.3\",\n      \"manifest\": \"modules/20100105/manifest.json\"\n    }\n  ]\n}"
+      },
+      "srec_b64": "UzAxNzAwMDAzMjMwMkQzMTMwMkQzMTJEMzYyRDMyMkQzMDJEMzQyRTczNzI2NTYzM0YKUzMxNTA4MDA0MDAwMzIzMDJEMzEzMDJEMzEyRDM2MkQzMjJEMzAyRDM0MkVBNgpTMzE1MDgwMDQwMTA3MzcyNjU2MzMyMzAyRDMxMzAyRDMxMkQzNjJEMzIyREE4ClMzMTUwODAwNDAyMDMwMkQzNDJFNzM3MjY1NjMzMjMwMkQzMTMwMkQzMTJEOUIKUzMxNTA4MDA0MDMwMzYyRDMyMkQzMDJEMzQyRTczNzI2NTYzMzIzMDJEMzE4NApTMzE1MDgwMDQwNDAzMDJEMzEyRDM2MkQzMjJEMzAyRDM0MkU3MzcyNjU2Mzc5ClMzMTUwODAwNDA1MDMyMzAyRDMxMzAyRDMxMkQzNjJEMzIyRDMwMkQzNDJFNTYKUzMxNTA4MDA0MDYwNzM3MjY1NjMzMjMwMkQzMTMwMkQzMTJEMzYyRDMyMkQ1OApTMzE1MDgwMDQwNzAzMDJEMzQyRTczNzI2NTYzMzIzMDJEMzEzMDJEMzEyRDRCClMzMTUwODAwNDA4MDM2MkQzMjJEMzAyRDM0MkU3MzcyNjU2MzMyMzAyRDMxMzQKUzMxNTA4MDA0MDkwMzAyRDMxMkQzNjJEMzIyRDMwMkQzNDJFNzM3MjY1NjMyOQpTNzA1MDgwMDQwMDBCMgo=",
+      "writes": [
+        {
+          "key": "modules/20100106/20-10-1-6-2-0-4.srec",
+          "content_type": "application/octet-stream"
+        },
+        {
+          "key": "modules/20100106/manifest.json",
+          "content_type": "application/json"
+        },
+        {
+          "key": "modules/manifest.json",
+          "content_type": "application/json"
+        }
+      ],
+      "after": {
+        "modules/20100106/20-10-1-6-2-0-4.srec": "UzAxNzAwMDAzMjMwMkQzMTMwMkQzMTJEMzYyRDMyMkQzMDJEMzQyRTczNzI2NTYzM0YKUzMxNTA4MDA0MDAwMzIzMDJEMzEzMDJEMzEyRDM2MkQzMjJEMzAyRDM0MkVBNgpTMzE1MDgwMDQwMTA3MzcyNjU2MzMyMzAyRDMxMzAyRDMxMkQzNjJEMzIyREE4ClMzMTUwODAwNDAyMDMwMkQzNDJFNzM3MjY1NjMzMjMwMkQzMTMwMkQzMTJEOUIKUzMxNTA4MDA0MDMwMzYyRDMyMkQzMDJEMzQyRTczNzI2NTYzMzIzMDJEMzE4NApTMzE1MDgwMDQwNDAzMDJEMzEyRDM2MkQzMjJEMzAyRDM0MkU3MzcyNjU2Mzc5ClMzMTUwODAwNDA1MDMyMzAyRDMxMzAyRDMxMkQzNjJEMzIyRDMwMkQzNDJFNTYKUzMxNTA4MDA0MDYwNzM3MjY1NjMzMjMwMkQzMTMwMkQzMTJEMzYyRDMyMkQ1OApTMzE1MDgwMDQwNzAzMDJEMzQyRTczNzI2NTYzMzIzMDJEMzEzMDJEMzEyRDRCClMzMTUwODAwNDA4MDM2MkQzMjJEMzAyRDM0MkU3MzcyNjU2MzMyMzAyRDMxMzQKUzMxNTA4MDA0MDkwMzAyRDMxMkQzNjJEMzIyRDMwMkQzNDJFNzM3MjY1NjMyOQpTNzA1MDgwMDQwMDBCMgo=",
+        "modules/20100106/manifest.json": "{\n  \"id\": \"20100106\",\n  \"name\": \"6 Channel Input module\",\n  \"hardware_version\": \"1.06\",\n  \"releases\": [\n    {\n      \"sw_version\": \"2.0.4\",\n      \"file\": \"modules/20100106/20-10-1-6-2-0-4.srec\",\n      \"date\": \"27/10/26\",\n      \"sha256\": \"59416b4a4e62e4582129eafaca57b119a74d6a73130f8af8c11b4ef46b352fbc\",\n      \"changelog\": \"Faster sampling\\nFixes the offset at 0 mA\"\n    }\n  ]\n}",
+        "modules/manifest.json": "{\n  \"updated\": \"2026-10-28\",\n  \"modules\": [\n    {\n      \"id\": \"20200207\",\n      \"name\": \"6 Channel Output module\",\n      \"hardware_version\": \"1.07\",\n      \"latest_firmware\": \"2.3.1\",\n      \"manifest\": \"modules/20200207/manifest.json\"\n    },\n    {\n      \"id\": \"20100105\",\n      \"name\": \"6 Channel Input module\",\n      \"hardware_version\": \"1.05\",\n      \"latest_firmware\": \"2.0.3\",\n      \"manifest\": \"modules/20100105/manifest.json\"\n    },\n    {\n      \"id\": \"20100106\",\n      \"name\": \"6 Channel Input module\",\n      \"hardware_version\": \"1.06\",\n      \"latest_firmware\": \"2.0.4\",\n      \"manifest\": \"modules/20100106/manifest.json\"\n    }\n  ]\n}"
+      }
+    },
+    {
+      "name": "a newer release of an existing module",
+      "boot_dir": "V20200207-BOOT",
+      "srec_name": "20-20-2-7-2-3-2.srec",
+      "version": "2.3.2",
+      "release_date": "28/10/26",
+      "changelog": "Groundshift détection tuned",
+      "module_name": "6 Channel Output module",
+      "before": {
+        "modules/manifest.json": "{\n  \"updated\": \"2026-08-17\",\n  \"modules\": [\n    {\n      \"id\": \"20200207\",\n      \"name\": \"6 Channel Output module\",\n      \"hardware_version\": \"1.07\",\n      \"latest_firmware\": \"2.3.1\",\n      \"manifest\": \"modules/20200207/manifest.json\"\n    },\n    {\n      \"id\": \"20100105\",\n      \"name\": \"6 Channel Input module\",\n      \"hardware_version\": \"1.05\",\n      \"latest_firmware\": \"2.0.3\",\n      \"manifest\": \"modules/20100105/manifest.json\"\n    }\n  ]\n}",
+        "modules/20200207/manifest.json": "{\n  \"id\": \"20200207\",\n  \"name\": \"6 Channel Output module\",\n  \"hardware_version\": \"1.07\",\n  \"releases\": [\n    {\n      \"sw_version\": \"2.3.1\",\n      \"file\": \"modules/20200207/20-20-2-7-2-3-1.srec\",\n      \"date\": \"27/04/26\",\n      \"sha256\": \"abababababababababababababababababababababababababababababababab\",\n      \"changelog\": \"Precharge — improvement\"\n    }\n  ]\n}"
+      },
+      "srec_b64": "UzAxNzAwMDAzMjMwMkQzMjMwMkQzMjJEMzcyRDMyMkQzMzJEMzIyRTczNzI2NTYzM0IKUzMxNTA4MDA0MDAwMzIzMDJEMzIzMDJEMzIyRDM3MkQzMjJEMzMyRDMyMkVBMgpTMzE1MDgwMDQwMTA3MzcyNjU2MzMyMzAyRDMyMzAyRDMyMkQzNzJEMzIyREE1ClMzMTUwODAwNDAyMDMzMkQzMjJFNzM3MjY1NjMzMjMwMkQzMjMwMkQzMjJEOTgKUzMxNTA4MDA0MDMwMzcyRDMyMkQzMzJEMzIyRTczNzI2NTYzMzIzMDJEMzI4MQpTMzE1MDgwMDQwNDAzMDJEMzIyRDM3MkQzMjJEMzMyRDMyMkU3MzcyNjU2Mzc2ClMzMTUwODAwNDA1MDMyMzAyRDMyMzAyRDMyMkQzNzJEMzIyRDMzMkQzMjJFNTIKUzMxNTA4MDA0MDYwNzM3MjY1NjMzMjMwMkQzMjMwMkQzMjJEMzcyRDMyMkQ1NQpTMzE1MDgwMDQwNzAzMzJEMzIyRTczNzI2NTYzMzIzMDJEMzIzMDJEMzIyRDQ4ClMzMTUwODAwNDA4MDM3MkQzMjJEMzMyRDMyMkU3MzcyNjU2MzMyMzAyRDMyMzEKUzMxNTA4MDA0MDkwMzAyRDMyMkQzNzJEMzIyRDMzMkQzMjJFNzM3MjY1NjMyNgpTNzA1MDgwMDQwMDBCMgo=",
+      "writes": [
+        {
+          "key": "modules/20200207/20-20-2-7-2-3-2.srec",
+          "content_type": "application/octet-stream"
+        },
+        {
+          "key": "modules/20200207/manifest.json",
+          "content_type": "application/json"
+        },
+        {
+          "key": "modules/manifest.json",
+          "content_type": "application/json"
+        }
+      ],
+      "after": {
+        "modules/20200207/20-20-2-7-2-3-2.srec": "UzAxNzAwMDAzMjMwMkQzMjMwMkQzMjJEMzcyRDMyMkQzMzJEMzIyRTczNzI2NTYzM0IKUzMxNTA4MDA0MDAwMzIzMDJEMzIzMDJEMzIyRDM3MkQzMjJEMzMyRDMyMkVBMgpTMzE1MDgwMDQwMTA3MzcyNjU2MzMyMzAyRDMyMzAyRDMyMkQzNzJEMzIyREE1ClMzMTUwODAwNDAyMDMzMkQzMjJFNzM3MjY1NjMzMjMwMkQzMjMwMkQzMjJEOTgKUzMxNTA4MDA0MDMwMzcyRDMyMkQzMzJEMzIyRTczNzI2NTYzMzIzMDJEMzI4MQpTMzE1MDgwMDQwNDAzMDJEMzIyRDM3MkQzMjJEMzMyRDMyMkU3MzcyNjU2Mzc2ClMzMTUwODAwNDA1MDMyMzAyRDMyMzAyRDMyMkQzNzJEMzIyRDMzMkQzMjJFNTIKUzMxNTA4MDA0MDYwNzM3MjY1NjMzMjMwMkQzMjMwMkQzMjJEMzcyRDMyMkQ1NQpTMzE1MDgwMDQwNzAzMzJEMzIyRTczNzI2NTYzMzIzMDJEMzIzMDJEMzIyRDQ4ClMzMTUwODAwNDA4MDM3MkQzMjJEMzMyRDMyMkU3MzcyNjU2MzMyMzAyRDMyMzEKUzMxNTA4MDA0MDkwMzAyRDMyMkQzNzJEMzIyRDMzMkQzMjJFNzM3MjY1NjMyNgpTNzA1MDgwMDQwMDBCMgo=",
+        "modules/20200207/manifest.json": "{\n  \"id\": \"20200207\",\n  \"name\": \"6 Channel Output module\",\n  \"hardware_version\": \"1.07\",\n  \"releases\": [\n    {\n      \"sw_version\": \"2.3.2\",\n      \"file\": \"modules/20200207/20-20-2-7-2-3-2.srec\",\n      \"date\": \"28/10/26\",\n      \"sha256\": \"cd84fffe1916c586af09b51aa4a9721cd376aa0135c3f0658b00639e72033452\",\n      \"changelog\": \"Groundshift détection tuned\"\n    },\n    {\n      \"sw_version\": \"2.3.1\",\n      \"file\": \"modules/20200207/20-20-2-7-2-3-1.srec\",\n      \"date\": \"27/04/26\",\n      \"sha256\": \"abababababababababababababababababababababababababababababababab\",\n      \"changelog\": \"Precharge — improvement\"\n    }\n  ]\n}",
+        "modules/manifest.json": "{\n  \"updated\": \"2026-10-28\",\n  \"modules\": [\n    {\n      \"id\": \"20200207\",\n      \"name\": \"6 Channel Output module\",\n      \"hardware_version\": \"1.07\",\n      \"latest_firmware\": \"2.3.2\",\n      \"manifest\": \"modules/20200207/manifest.json\"\n    },\n    {\n      \"id\": \"20100105\",\n      \"name\": \"6 Channel Input module\",\n      \"hardware_version\": \"1.05\",\n      \"latest_firmware\": \"2.0.3\",\n      \"manifest\": \"modules/20100105/manifest.json\"\n    }\n  ]\n}"
+      }
+    },
+    {
+      "name": "the first module in an empty bucket",
+      "boot_dir": "20100303-BOOT",
+      "srec_name": "20-10-3-3-1-2-0.srec",
+      "version": "1.2.0",
+      "release_date": "01/11/26",
+      "changelog": "Calibration per channel",
+      "module_name": "4-20mA Input module",
+      "before": {},
+      "srec_b64": "UzAxNzAwMDAzMjMwMkQzMTMwMkQzMzJEMzMyRDMxMkQzMjJEMzAyRTczNzI2NTYzNDMKUzMxNTA4MDA0MDAwMzIzMDJEMzEzMDJEMzMyRDMzMkQzMTJEMzIyRDMwMkVBQQpTMzE1MDgwMDQwMTA3MzcyNjU2MzMyMzAyRDMxMzAyRDMzMkQzMzJEMzEyREFBClMzMTUwODAwNDAyMDMyMkQzMDJFNzM3MjY1NjMzMjMwMkQzMTMwMkQzMzJEOUIKUzMxNTA4MDA0MDMwMzMyRDMxMkQzMjJEMzAyRTczNzI2NTYzMzIzMDJEMzE4QQpTMzE1MDgwMDQwNDAzMDJEMzMyRDMzMkQzMTJEMzIyRDMwMkU3MzcyNjU2MzdEClMzMTUwODAwNDA1MDMyMzAyRDMxMzAyRDMzMkQzMzJEMzEyRDMyMkQzMDJFNUEKUzMxNTA4MDA0MDYwNzM3MjY1NjMzMjMwMkQzMTMwMkQzMzJEMzMyRDMxMkQ1QQpTMzE1MDgwMDQwNzAzMjJEMzAyRTczNzI2NTYzMzIzMDJEMzEzMDJEMzMyRDRCClMzMTUwODAwNDA4MDMzMkQzMTJEMzIyRDMwMkU3MzcyNjU2MzMyMzAyRDMxM0EKUzMxNTA4MDA0MDkwMzAyRDMzMkQzMzJEMzEyRDMyMkQzMDJFNzM3MjY1NjMyRApTNzA1MDgwMDQwMDBCMgo=",
+      "writes": [
+        {
+          "key": "modules/20100303/20-10-3-3-1-2-0.srec",
+          "content_type": "application/octet-stream"
+        },
+        {
+          "key": "modules/20100303/manifest.json",
+          "content_type": "application/json"
+        },
+        {
+          "key": "modules/manifest.json",
+          "content_type": "application/json"
+        }
+      ],
+      "after": {
+        "modules/20100303/20-10-3-3-1-2-0.srec": "UzAxNzAwMDAzMjMwMkQzMTMwMkQzMzJEMzMyRDMxMkQzMjJEMzAyRTczNzI2NTYzNDMKUzMxNTA4MDA0MDAwMzIzMDJEMzEzMDJEMzMyRDMzMkQzMTJEMzIyRDMwMkVBQQpTMzE1MDgwMDQwMTA3MzcyNjU2MzMyMzAyRDMxMzAyRDMzMkQzMzJEMzEyREFBClMzMTUwODAwNDAyMDMyMkQzMDJFNzM3MjY1NjMzMjMwMkQzMTMwMkQzMzJEOUIKUzMxNTA4MDA0MDMwMzMyRDMxMkQzMjJEMzAyRTczNzI2NTYzMzIzMDJEMzE4QQpTMzE1MDgwMDQwNDAzMDJEMzMyRDMzMkQzMTJEMzIyRDMwMkU3MzcyNjU2MzdEClMzMTUwODAwNDA1MDMyMzAyRDMxMzAyRDMzMkQzMzJEMzEyRDMyMkQzMDJFNUEKUzMxNTA4MDA0MDYwNzM3MjY1NjMzMjMwMkQzMTMwMkQzMzJEMzMyRDMxMkQ1QQpTMzE1MDgwMDQwNzAzMjJEMzAyRTczNzI2NTYzMzIzMDJEMzEzMDJEMzMyRDRCClMzMTUwODAwNDA4MDMzMkQzMTJEMzIyRDMwMkU3MzcyNjU2MzMyMzAyRDMxM0EKUzMxNTA4MDA0MDkwMzAyRDMzMkQzMzJEMzEyRDMyMkQzMDJFNzM3MjY1NjMyRApTNzA1MDgwMDQwMDBCMgo=",
+        "modules/20100303/manifest.json": "{\n  \"id\": \"20100303\",\n  \"name\": \"4-20mA Input module\",\n  \"hardware_version\": \"1.03\",\n  \"releases\": [\n    {\n      \"sw_version\": \"1.2.0\",\n      \"file\": \"modules/20100303/20-10-3-3-1-2-0.srec\",\n      \"date\": \"01/11/26\",\n      \"sha256\": \"6257b5f28663a17687794671e47d7e1ed1167e9c0edabbcb8ff2156cd953e4ff\",\n      \"changelog\": \"Calibration per channel\"\n    }\n  ]\n}",
+        "modules/manifest.json": "{\n  \"updated\": \"2026-10-28\",\n  \"modules\": [\n    {\n      \"id\": \"20100303\",\n      \"name\": \"4-20mA Input module\",\n      \"hardware_version\": \"1.03\",\n      \"latest_firmware\": \"1.2.0\",\n      \"manifest\": \"modules/20100303/manifest.json\"\n    }\n  ]\n}"
+      }
+    }
+  ]
+}
