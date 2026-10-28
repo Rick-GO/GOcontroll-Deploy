@@ -3,8 +3,9 @@
 // POST /api/access, which mails a link (images/src/access.ts). Opening that link sets the session
 // and goes on to the downloads, or to the one file the customer came for (?next=/download/<path>).
 //
-// Turnstile: Cloudflare's api.js, rendered explicitly into #turnstile with the site key the Worker
-// put into its data-sitekey (images/src/index.ts). It cannot be self-hosted; the CSP of this page
+// Turnstile: Cloudflare's api.js, rendered explicitly into #human-check with the site key the Worker
+// put into its data-sitekey (images/src/index.ts). Never give an element the id "turnstile": the
+// browser exposes it as window.turnstile, which then looks like the loaded API (it did, 2026-10-28). It cannot be self-hosted; the CSP of this page
 // alone allows it (SIGN_IN_CSP in images/src/headers.ts). A token is single use, so the widget is
 // reset after every request. Texts go into the page as text only (images/test/page.test.ts).
 
@@ -42,25 +43,35 @@ function checkText(text) {
   el.hidden = !text;
 }
 
+/** Cloudflare's window.turnstile once api.js has run; null before (or for anything else by that name). */
+function turnstileApi() {
+  const t = /** @type {any} */ (window).turnstile;
+  return t && typeof t.render === 'function' ? t : null;
+}
+
 function loadTurnstile() {
   return new Promise((resolve, reject) => {
-    const w = /** @type {any} */ (window);
-    if (w.turnstile) {
-      resolve(w.turnstile);
+    const loaded = turnstileApi();
+    if (loaded) {
+      resolve(loaded);
       return;
     }
     const s = document.createElement('script');
     s.src = TURNSTILE_SRC;
     s.async = true;
     s.setAttribute('data-cfasync', 'false');
-    s.addEventListener('load', () => (w.turnstile ? resolve(w.turnstile) : reject(new Error('Turnstile did not start.'))));
+    s.addEventListener('load', () => {
+      const api = turnstileApi();
+      if (api) resolve(api);
+      else reject(new Error('Turnstile did not start.'));
+    });
     s.addEventListener('error', () => reject(new Error('Turnstile could not be loaded.')));
     document.head.append(s);
   });
 }
 
 async function startCheck() {
-  const box = byId('turnstile');
+  const box = byId('human-check');
   const siteKey = box.getAttribute('data-sitekey') ?? '';
   if (!siteKey) {
     checkText('The sign-in is not available right now. Please try again later.');
@@ -72,21 +83,25 @@ async function startCheck() {
     checkText('The check could not be loaded: check your connection or any content blocker (it needs challenges.cloudflare.com), then reload the page.');
     return;
   }
-  widgetId = turnstile.render(box, {
-    sitekey: siteKey,
-    action: ACTION,
-    theme: 'light',
-    language: 'en',
-    size: box.clientWidth > 0 && box.clientWidth < 300 ? 'compact' : 'flexible',
-    'response-field': false,
-    'refresh-expired': 'auto',
-    'refresh-timeout': 'auto',
-    callback: (/** @type {string} */ t) => { token = t; checkText(''); },
-    'expired-callback': () => { token = ''; },
-    'timeout-callback': () => { token = ''; },
-    'error-callback': () => { token = ''; checkText('The check could not be completed. Reload the page and try again.'); return true; },
-    'unsupported-callback': () => { checkText('Your browser cannot run the check. Please use a recent browser.'); },
-  });
+  try {
+    widgetId = turnstile.render(box, {
+      sitekey: siteKey,
+      action: ACTION,
+      theme: 'light',
+      language: 'en',
+      size: box.clientWidth > 0 && box.clientWidth < 300 ? 'compact' : 'flexible',
+      'response-field': false,
+      'refresh-expired': 'auto',
+      'refresh-timeout': 'auto',
+      callback: (/** @type {string} */ t) => { token = t; checkText(''); },
+      'expired-callback': () => { token = ''; },
+      'timeout-callback': () => { token = ''; },
+      'error-callback': () => { token = ''; checkText('The check could not be completed. Reload the page and try again.'); return true; },
+      'unsupported-callback': () => { checkText('Your browser cannot run the check. Please use a recent browser.'); },
+    });
+  } catch {
+    checkText('The check could not be started. Reload the page and try again.');
+  }
 }
 
 function resetCheck() {

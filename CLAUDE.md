@@ -24,7 +24,7 @@
   dat apparaat (ondertekende cookie, `IMAGES_SESSION_KEY`). De mail verstuurt deze Worker via het RPC-entrypoint `ImagesMail`
   (`src/images-mail.ts`, Graph met `MS365_CLIENT_SECRET`), zodat het mailsecret niet in de publieke Worker staat. Images-tab:
   tellingen per release en per maand (`src/images-stats.ts`, afgeronde maanden zonder adressen in `STATE` `images/stats/`) en
-  *Copy link* per bestand (`/download/<path>`). **Open sinds 28-10** (`gocontroll-images` versie `ebae60ed-91ed-4a42-afe5-41cef60fc598`):
+  *Copy link* per bestand (`/download/<path>`). **Open sinds 28-10** (`gocontroll-images` versie `340e55ee-9f89-4059-9d7c-da0925762cf8`; de widget verscheen pas vanaf `f6c26608`: een element met id `turnstile` is `window.turnstile` en werd voor de API aangezien):
   Turnstile-widget *GOcontroll Downloads* door de gebruiker gemaakt, sitekey `0x4AAAAAAFqCLsOdYdzKqlhv` in `TURNSTILE_SITE_KEY`,
   secret in `IMAGES_TURNSTILE_SECRET` (gecontroleerd: siteverify accepteert hem; een fout secret geeft 503, niet 403); nog geen
   echte link gemaild en geopend. Terug: eerst `gocontroll-images` naar `9a2c1639`

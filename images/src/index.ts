@@ -42,12 +42,12 @@ async function page(request: Request, env: Env, assetPath: string, csp?: string)
   return withSecurityHeaders(res, csp);
 }
 
-/** The sign-in page with the widget's site key in #turnstile (data-sitekey). */
+/** The sign-in page with the widget's site key in #human-check (data-sitekey). */
 async function signInPage(request: Request, env: Env): Promise<Response> {
   const res = await page(request, env, '/sign-in', SIGN_IN_CSP);
   if (res.status !== 200 || request.method === 'HEAD') return res;
   return new HTMLRewriter()
-    .on('#turnstile', { element: (el) => { el.setAttribute('data-sitekey', env.TURNSTILE_SITE_KEY); } })
+    .on('#human-check', { element: (el) => { el.setAttribute('data-sitekey', env.TURNSTILE_SITE_KEY); } })
     .transform(res);
 }
 

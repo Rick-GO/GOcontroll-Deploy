@@ -81,7 +81,11 @@ describe('the pages and their assets', () => {
     }
     expect(indexHtml).toContain('href="/sign-out"');
     expect(downloadHtml).toContain('href="/sign-out"');
-    expect(signInHtml).toContain('id="turnstile" data-sitekey=""');
+    expect(signInHtml).toContain('id="human-check" data-sitekey=""');
+    // The hero has no label above its title (not part of the house style).
+    for (const html of [indexHtml, signInHtml, downloadHtml]) expect(html).not.toContain('eyebrow');
+    // An element with id "turnstile" would be window.turnstile, mistaken for Cloudflare's API.
+    for (const html of [indexHtml, signInHtml, downloadHtml]) expect(html).not.toMatch(/id="turnstile"/);
   });
 
   test('catalogue text never goes into a page as HTML', () => {

@@ -98,7 +98,6 @@ code { font-family: var(--mono); font-size: 12.5px; }
   pointer-events: none;
 }
 .hero-inner { position: relative; max-width: 1080px; margin: 0 auto; padding: 28px 16px 72px; }
-.eyebrow { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--brand); margin-bottom: 6px; }
 .hero h1 { font-size: 24px; font-weight: 700; line-height: 1.2; letter-spacing: -.01em; max-width: 26ch; }
 .lede { font-size: 14px; color: rgba(255,255,255,.72); margin-top: 8px; max-width: 60ch; }
 .hero-meta { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 12px; font-size: 13px; color: rgba(255,255,255,.6); }

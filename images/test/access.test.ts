@@ -113,7 +113,7 @@ describe('the sign-in page', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-security-policy')).toBe(SIGN_IN_CSP);
     expect(res.headers.get('cache-control')).toBe('private, no-store');
-    expect(await res.text()).toContain('id="turnstile" data-sitekey="1x00000000000000000000AA"');
+    expect(await res.text()).toContain('id="human-check" data-sitekey="1x00000000000000000000AA"');
     expect(SIGN_IN_CSP).toContain('script-src \'self\' https://challenges.cloudflare.com');
     expect(SIGN_IN_CSP).toContain('frame-src https://challenges.cloudflare.com');
     expect(SIGN_IN_CSP).not.toMatch(/unsafe-inline|unsafe-eval|data:/);

@@ -6,7 +6,7 @@ Worker, **`gocontroll-images`**, in this folder of the Deploy repo; it shares no
 intranet Worker of the repo but a few source files, the bucket and one RPC call (the mail with the
 sign-in link).
 
-> **Status: open since 2026-10-28** (Deploy 0.6.0; version `ebae60ed-91ed-4a42-afe5-41cef60fc598`, the first open one
+> **Status: open since 2026-10-28** (Deploy 0.6.0; version `340e55ee-9f89-4059-9d7c-da0925762cf8`, the first open one
 > `0bc661ef`; before the site key `5cb45e29`, 503 everywhere). Customers sign in with their e-mail address and a link by
 > mail (no Cloudflare Access, no one-time PIN). The Turnstile widget *GOcontroll Downloads* exists (site key in
 > `TURNSTILE_SITE_KEY`, secret in `IMAGES_TURNSTILE_SECRET`, checked on 2026-10-28: siteverify accepts it). Not yet seen:
@@ -51,7 +51,7 @@ both). It is not repeated here. In short: `manifest.json`, `images/<product>/<ve
 |---|---|
 | `POST /api/access` | ask for a link (below); the only POST |
 | `GET /access?t=<token>` | the link from the mail: valid → the session cookie and **303** to where the customer was going (`/` or `/download/<path>`); expired → `/sign-in?link=expired` (keeping `next`); anything else → `/sign-in?link=invalid` |
-| `GET /sign-in` | the sign-in page, for anyone, with the widget's site key put into `#turnstile` (`data-sitekey`) and the only CSP that allows Turnstile; signed in already → 303 onwards |
+| `GET /sign-in` | the sign-in page, for anyone, with the widget's site key put into `#human-check` (`data-sitekey`) and the only CSP that allows Turnstile; signed in already → 303 onwards |
 | `GET /sign-out` | the cookie cleared, 303 to `/sign-in?signed-out` |
 | `GET /` | the downloads page; without a session 303 to `/sign-in` |
 | `GET /download/<path>` | the page that shows one file and starts its download; without a session 303 to `/sign-in?next=/download/<path>`; a path that is not `<images\|tools>/<product>/<version>/<file>` → 404 |
