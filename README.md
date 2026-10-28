@@ -21,8 +21,8 @@ Images tab shows how often each release is downloaded. For the members of the En
 > The Worker, the API and the pages are deployed (0.6.0 on 2026-10-28, version `86d281d3`, `gocontroll-images` version `5cb45e29`: images.gocontroll.tech signs customers in with
 > their e-mail address and a link by mail instead of Access with a one-time PIN; this Worker sends that mail through its RPC
 > entrypoint `ImagesMail` (Graph, `MS365_CLIENT_SECRET`); the Images tab counts downloads per release and per month and copies
-> a customer link per file; the site stays 503 until the owner's Turnstile widget exists ([`images/README.md`](images/README.md) →
-> *One-time setup*); 0.5.1 on 2026-10-28: the page says per repository whether Deploy can
+> a customer link per file; the site is open since 2026-10-28 (`gocontroll-images` version `ebae60ed`, the owner's Turnstile
+> widget, [`images/README.md`](images/README.md) → *One-time setup*); 0.5.1 on 2026-10-28: the page says per repository whether Deploy can
 > tag and release there; the token is set, valid until 2027-10-29; 0.5.0 on 2026-10-28, version `6370d878`: after a module firmware
 > publish Deploy sets the tag and makes the GitHub release itself ([GitHub releases](#github-releases)); 0.4.1 on 2026-10-28, version `acbf96ba`: the Firmware tab follows the
 > rules of the retired firmware agent 08: the file as git holds it, review with a dry run, never a changed `.srec`,

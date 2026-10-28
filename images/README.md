@@ -6,11 +6,12 @@ Worker, **`gocontroll-images`**, in this folder of the Deploy repo; it shares no
 intranet Worker of the repo but a few source files, the bucket and one RPC call (the mail with the
 sign-in link).
 
-> **Status: deployed, not open yet.** Since 2026-10-28 (Deploy 0.6.0, version `5cb45e29-0cc4-455f-a27e-8c757f1cad92`) customers sign in with their
-> e-mail address and a link by mail (no Cloudflare Access, no one-time PIN). Until the owner has made
-> the Turnstile widget ([one-time setup](#one-time-setup)) and its site key is in
-> `TURNSTILE_SITE_KEY`, every request gets **503 "Downloads are being set up"** (fail closed). There
-> are no images yet either; the page shows "No images have been published yet." until there are.
+> **Status: open since 2026-10-28** (Deploy 0.6.0; version `ebae60ed-91ed-4a42-afe5-41cef60fc598`, the first open one
+> `0bc661ef`; before the site key `5cb45e29`, 503 everywhere). Customers sign in with their e-mail address and a link by
+> mail (no Cloudflare Access, no one-time PIN). The Turnstile widget *GOcontroll Downloads* exists (site key in
+> `TURNSTILE_SITE_KEY`, secret in `IMAGES_TURNSTILE_SECRET`, checked on 2026-10-28: siteverify accepts it). Not yet seen:
+> a real link mailed and opened. There are no images yet either; the page shows "No images have been published yet."
+> until there are.
 
 ## How it works
 
@@ -76,7 +77,8 @@ crawlable so its `noindex` is seen. The plain pages (503, 404, 405) load nothing
 2. **`RL_ACCESS`** per client IP (Workers rate limiting, 5 per minute; a brake, not a lock) → 429.
 3. **A valid e-mail address** (`normaliseEmail`: trimmed, lower case, plain ASCII) → else 400.
 4. **Turnstile**: siteverify with `IMAGES_TURNSTILE_SECRET`, solved on this site's hostname for the
-   action `access` → else 403; no secret (`not-set`), siteverify down or Cloudflare's own error → 503.
+   action `access` → else 403; no secret (`not-set`), a secret siteverify does not know
+   (`invalid-input-secret`), siteverify down or Cloudflare's own error → 503 (not the visitor's fault).
 5. **At most 5 links per address per hour**: one empty object `access-mails/<HMAC of the address>` with
    the times in its custom metadata `sent` (the key does not reveal the address; an R2 lifecycle rule
    deletes these after a day) → 429.
@@ -215,7 +217,7 @@ bucket stays).
 
 ## One-time setup
 
-### 1. The Turnstile widget (the owner, in the dashboard)
+### 1. The Turnstile widget (the owner, in the dashboard; done 2026-10-28)
 
 The wrangler login has no Turnstile rights, so the owner does this. Cloudflare dashboard →
 **Turnstile** → *Add widget*:

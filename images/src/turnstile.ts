@@ -53,8 +53,13 @@ export async function verifyTurnstile(secretSource: SecretSource, hostname: stri
   }
   if (data.success !== true) {
     const codes = Array.isArray(data['error-codes']) ? data['error-codes'].map(String).join(',') : '';
+    // Cloudflare's own trouble, or our secret is wrong: not the visitor's fault, so 503 (and an error in the log).
+    if (/internal-error|invalid-input-secret|missing-input-secret/.test(codes)) {
+      console.error(`turnstile: siteverify cannot check (${codes}); is IMAGES_TURNSTILE_SECRET the widget's secret?`);
+      return { ok: false, reason: 'unavailable' };
+    }
     console.warn(`turnstile: rejected (${codes || 'no error code'})`);
-    return { ok: false, reason: codes.includes('internal-error') ? 'unavailable' : 'rejected' };
+    return { ok: false, reason: 'rejected' };
   }
   const got = typeof data.hostname === 'string' ? data.hostname.toLowerCase() : '';
   if (got !== hostname.toLowerCase()) {

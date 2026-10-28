@@ -74,10 +74,10 @@ secret_name = "IMAGES_TURNSTILE_SECRET"
 [vars]
 # The site's origin: the links in the mails, the sign-in form's Origin, Turnstile's hostname.
 SITE_URL = "https://images.gocontroll.tech"
-# Turnstile site key of the widget for images.gocontroll.tech (not a secret; put into the sign-in
-# page). Empty means every request gets 503 "Downloads are being set up" (fail closed): the owner
-# creates the widget first (images/README.md, "One-time setup"), then this is filled in.
-TURNSTILE_SITE_KEY = ""
+# Turnstile site key of the widget "GOcontroll Downloads" for images.gocontroll.tech (not a secret; put
+# into the sign-in page), made by the owner on 2026-10-28. Empty means every request gets 503 "Downloads
+# are being set up" (fail closed): the way to close the site at once.
+TURNSTILE_SITE_KEY = "0x4AAAAAAFqCLsOdYdzKqlhv"
 
 [dev]
 # Keep request.url on localhost during `wrangler dev` (it would otherwise take the route's host),

@@ -200,7 +200,7 @@ describe('POST /api/access: asking for a link', () => {
     expect(mail.sent).toEqual([]);
   });
 
-  test('Turnstile: no token, rejected, another site or action → 403; no secret or siteverify down → 503', async () => {
+  test('Turnstile: no token, rejected, another site or action → 403; no or a wrong secret, siteverify down → 503', async () => {
     const mail = recordingMail();
     const body = { email: EMAIL, turnstile: 'tok' };
     stubSiteverify();
@@ -218,9 +218,11 @@ describe('POST /api/access: asking for a link', () => {
     stubSiteverify('down');
     expect((await askForLink(body, {}, mail)).status).toBe(503);
     vi.restoreAllMocks();
-    stubSiteverify({ success: false, 'error-codes': ['internal-error'] });
-    expect((await askForLink(body, {}, mail)).status).toBe(503);
-    vi.restoreAllMocks();
+    for (const code of ['internal-error', 'invalid-input-secret', 'missing-input-secret']) {
+      stubSiteverify({ success: false, 'error-codes': [code] });
+      expect((await askForLink(body, {}, mail)).status, code).toBe(503);
+      vi.restoreAllMocks();
+    }
     const verify = stubSiteverify();
     expect((await askForLink(body, {}, { ...mail, TURNSTILE_SECRET: 'not-set' })).status).toBe(503);
     expect(verify).not.toHaveBeenCalled();
