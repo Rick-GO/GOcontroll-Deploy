@@ -5,7 +5,8 @@ bootloader, …) for the Moduline **L4, M1 and HMI1**, and the tools to flash th
 Worker, **`gocontroll-images`**, in this folder of the Deploy repo; it shares nothing with the
 intranet Worker of the repo but three source files and the bucket.
 
-> **Status: built, not deployed.** No Cloudflare resources exist for it yet. Until the owner has done
+> **Status: deployed on 2026-10-28 (version `9a2c1639`), not open yet.** The Worker, its custom
+> domain and the bucket exist; the Access application does not. Until the owner has done
 > the [one-time setup](#one-time-setup-in-the-cloudflare-dashboard), every request gets
 > **503 "Downloads are being set up"** (`IMAGES_AUD` is empty: fail closed). There are no images
 > yet either; the page shows "No images have been published yet." until there are.
