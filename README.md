@@ -17,9 +17,9 @@ there with their e-mail address and a one-time code ([`images/README.md`](images
 members of the Entra group **`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> The Worker, the API and the pages are deployed (0.5.0 on 2026-10-28, version `6370d878`: after a module firmware
-> publish Deploy sets the tag and makes the GitHub release itself, once the owner has put a token in `DEPLOY_GITHUB_TOKEN`
-> ([GitHub releases](#github-releases)); 0.4.1 on 2026-10-28, version `acbf96ba`: the Firmware tab follows the
+> The Worker, the API and the pages are deployed (0.5.1 on 2026-10-28: the page says per repository whether Deploy can
+> tag and release there; the token is set, valid until 2027-10-29; 0.5.0 on 2026-10-28, version `6370d878`: after a module firmware
+> publish Deploy sets the tag and makes the GitHub release itself ([GitHub releases](#github-releases)); 0.4.1 on 2026-10-28, version `acbf96ba`: the Firmware tab follows the
 > rules of the retired firmware agent 08: the file as git holds it, review with a dry run, never a changed `.srec`,
 > `latest_firmware` never down, the tag for the safety net; 0.4.0 on 2026-10-28, version `4876a23e`: the tabs **Firmware** and
 > **Images**, and the Worker `gocontroll-images` on `images.gocontroll.tech` (version `9a2c1639`), which answers 503 until
@@ -322,7 +322,11 @@ Repository access: *Only select repositories*, the `Module-*` repositories. Repo
 **Contents: Read and write** (Metadata: Read comes with it), nothing else. Expiry as long as allowed;
 note the date. Then Cloudflare → *Secrets Store → default_secrets_store → `DEPLOY_GITHUB_TOKEN` →
 Edit*, paste, save; no deploy needed. The secret was made on 2026-10-28 with the placeholder `not-set`
-(off): the review then says GitHub is not set up and the page gives the commands. A tag made with this
+(off): the review then says GitHub is not set up and the page gives the commands. **Set on 2026-10-28**: a
+fine-grained token, **valid until 2027-10-29** (renew before then: same steps, same secret), checked the same
+day with a read on GitHub: all eleven `Module-*` repositories readable, nothing outside them (GOcontroll-Team:
+404). Write access shows at the first tag. When you choose a repository folder, the page says whether Deploy
+can tag and release there (`GET /api/firmware/github`). A tag made with this
 token starts workflows (unlike one made with a workflow's own `GITHUB_TOKEN`). Way back: set the value
 to `not-set` again and revoke the token on GitHub; tags and releases already made stay.
 
@@ -595,6 +599,7 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
 | POST | `/api/sign` | multipart `appId`, `version`, and `payload` (zlib) + `rawSize`, or `container` → the signed container as a download `<APP_ID>-<version>.bin`; nothing goes into the bucket |
 | POST | `/api/releases` | multipart `appId`, `version`, `description`, `sign`, `replace`, `distributionUrl` (new folder only), and `payload` + `rawSize` or `container` → `{ binaryKey, binaryUrl, manifestKey, version, releaseDate, previousLatest, replaced, latestMovedBack, signed }` |
 | GET | `/api/firmware` | `{ github: { configured, repos }, updated, modules: [ { id, name, hardwareVersion, latest, releases: [ { version, file, date, sha256, changelog, publishedBy: { email, at, source } \| null } ], error? } ], manifestError?, firmwareUrl, moduleTypeNames }` |
+| GET | `/api/firmware/github?repo=owner/name` | `{ configured, allowed, readable, canPush, error }`: whether Deploy can tag and release there (one read on GitHub; the page shows it next to the repository) |
 | POST | `/api/firmware/releases` | `{ repo: "GOcontroll/Module-…", commit, version, files: [ { file, path } ], replaceTag? }` → `{ repo, tag, tagState: "created" \| "kept" \| "replaced", tagUrl, releaseUrl, releaseState, assets, safetyNet }`; 409 `field: "files" \| "commit" \| "version"`, or `conflict: "tag"` with `existingMessage`/`existingCommit`; 403 repository not in `GITHUB_REPOS`; 503 without a token ([GitHub releases](#github-releases)) |
 | POST | `/api/firmware` | multipart `file` (`<a>-<b>-<c>-<d>-<x>-<y>-<z>.srec`, LF, ≤ 4 MB), `released` (YYYY-MM-DD), `changelog` (≤ 2000), `module_name` (a new hardware ID), `replace` (`true`: write the entry of a published version again, same file), `dry_run` (`true`: write nothing), `source` (JSON `{ repo, branch, commit, tag, path, pushed }`) → `{ dryRun, hwId, version, file, url, sha256, date, changelog, moduleName, latest, latestBefore, objectWritten, replacedRelease, newModule, moduleManifest }`; 409 with `conflict: "release"` (published; *replace*) or `"file"` (other bytes: never) |
 | GET | `/api/images` | `{ releases: [ … + inCatalogue ], uploads, downloads: [ { at, email, path, kind, product, version, country } ], catalogueError?, publicUrl, limits: { partSize, maxFileSize } }` |

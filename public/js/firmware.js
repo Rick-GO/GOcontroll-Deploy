@@ -56,7 +56,9 @@ import { badge, confirmDialog, formDialog, setHero, stale } from './ui.js';
  * @typedef {{ repo: string, head: Head | null, tags: Tag[], gitError: string | null,
  *   log: (opts: { from: string, exclude?: string, max?: number }) => Promise<Commit[]>,
  *   fileAt: ((commit: string, path: string) => Promise<Uint8Array | null>) | null,
- *   pushed: boolean | null, github: string | null, slug: string | null, findings: string[] }} RepoInfo
+ *   pushed: boolean | null, github: string | null, slug: string | null, findings: string[],
+ *   githubCheck?: { readable: boolean, error: string | null } | null }} RepoInfo
+ *   githubCheck: whether Deploy can tag and release in slug (GET /api/firmware/github)
  *   pushed: HEAD is on origin/<branch> (true), is not (false), or that cannot be told (null)
  * @typedef {{ released: string, changelog: string, replace: boolean, names: Record<string, string> }} GroupValues
  * @typedef {{ dryRun: boolean, hwId: string, version: string, file: string, url: string, sha256: string, date: string, changelog: string,
@@ -322,6 +324,10 @@ async function drawCandidates(ctx, out, data, repo, found) {
     differs: badge('Published, other bytes', 'err', 'This version is on firmware.gocontroll.tech, but the file differs'),
     bad: badge('Cannot be used', 'err'),
   })[c.status];
+  if (repo?.slug && data.github?.configured) {
+    repo.githubCheck = await api('GET', `/firmware/github?repo=${encodeURIComponent(repo.slug)}`)
+      .catch((err) => ({ readable: false, error: errorText(err) }));
+  }
   const safety = /** @type {any} */ (repo)?.safetyNet;
   if (repo && safety) {
     repo.findings = safetyNetFindings({ ...safety, names: candidates.filter((c) => c.name).map((c) => moduleName(data, /** @type {SrecName} */ (c.name).hwId)) });
@@ -477,7 +483,10 @@ function repoLine(repo) {
     : repo.pushed === false ? ` · <strong>HEAD is not on origin/${esc(head.branch)}</strong> (as of the last fetch): push it before you publish, so the tag points to a commit everyone has.`
     : repo.pushed === null ? ` · there is no origin/${esc(head.branch)} in this clone: check yourself that HEAD is pushed.`
     : ` · pushed to origin/${esc(head.branch)}`;
-  return `<strong>${esc(repo.repo)}</strong> · ${head.branch ? `branch <span class="mono">${esc(head.branch)}</span>` : 'detached HEAD'} at <span class="mono">${esc(head.commit.slice(0, 7))}</span> · ${plural(versionTags, 'version tag')}${pushed}`;
+  const github = !repo.githubCheck ? ''
+    : repo.githubCheck.readable ? ` · GitHub: Deploy can tag and release in ${esc(repo.slug ?? '')}`
+    : ` · <strong>GitHub</strong>: ${esc(repo.githubCheck.error ?? 'not reachable')}`;
+  return `<strong>${esc(repo.repo)}</strong> · ${head.branch ? `branch <span class="mono">${esc(head.branch)}</span>` : 'detached HEAD'} at <span class="mono">${esc(head.commit.slice(0, 7))}</span> · ${plural(versionTags, 'version tag')}${pushed}${github}`;
 }
 
 /** The module's name on firmware.gocontroll.tech, or that of its type. @param {FwOverview} d @param {string} hwId */
@@ -516,6 +525,7 @@ function publishForm(c, v, repo, dryRun) {
 function cannotRelease(data, repo, plans) {
   if (!data.github?.configured) return 'GitHub is not set up yet (the token DEPLOY_GITHUB_TOKEN); the commands follow after publishing.';
   if (!repo?.head || !repo.slug) return 'Deploy knows the GitHub repository and commit only when you choose the repository folder.';
+  if (repo.githubCheck && !repo.githubCheck.readable) return `${repo.githubCheck.error ?? 'GitHub cannot be reached.'} The commands follow after publishing.`;
   if (repo.pushed !== true) return `HEAD is not on origin${repo.head.branch ? `/${repo.head.branch}` : ''} (as far as this clone knows): push it first, then publish again or use the commands.`;
   const older = plans.filter((p) => JSON.parse(p.moduleManifest).releases?.[0]?.sw_version !== p.version);
   if (older.length && /** @type {any} */ (repo).safetyNet?.workflow) {

@@ -177,6 +177,26 @@ describe('tag and release', () => {
     expect(mixed.body.field).toBe('files');
   });
 
+  test('checks, read only, whether Deploy can tag and release in a repository', async () => {
+    const seen: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: RequestInit) => {
+      const req = new Request(input, init);
+      seen.push(`${req.method} ${new URL(req.url).pathname}`);
+      const known = new URL(req.url).pathname === `/repos/${REPO}`;
+      return new Response(JSON.stringify(known ? { permissions: { push: true } } : { message: 'Not Found' }), { status: known ? 200 : 404 });
+    });
+    const ok = await call('GET', `/api/firmware/github?repo=${encodeURIComponent(REPO)}`, undefined, TOKEN);
+    expect(ok.body).toEqual({ configured: true, allowed: true, readable: true, canPush: true, error: null });
+    const unseen = await call('GET', `/api/firmware/github?repo=${encodeURIComponent('GOcontroll/Module-Other')}`, undefined, TOKEN);
+    expect(unseen.body).toMatchObject({ readable: false, error: expect.stringContaining('cannot see') });
+    const outside = await call('GET', `/api/firmware/github?repo=${encodeURIComponent('GOcontroll/GOcontroll-Team')}`, undefined, TOKEN);
+    expect(outside.body).toMatchObject({ allowed: false, readable: false });
+    const off = await call('GET', `/api/firmware/github?repo=${encodeURIComponent(REPO)}`, undefined, { GITHUB_TOKEN: 'not-set' });
+    expect(off.body).toMatchObject({ configured: false, readable: false });
+    expect((await call('GET', '/api/firmware/github?repo=nope', undefined, TOKEN)).status).toBe(400);
+    expect(seen).toEqual([`GET /repos/${REPO}`, 'GET /repos/GOcontroll/Module-Other']);
+  });
+
   test('the overview says whether GitHub is set up', async () => {
     expect((await call('GET', '/api/firmware', undefined, TOKEN)).body.github).toEqual({ configured: true, repos: 'GOcontroll/Module-*' });
     expect((await call('GET', '/api/firmware', undefined, { GITHUB_TOKEN: 'not-set' })).body.github.configured).toBe(false);

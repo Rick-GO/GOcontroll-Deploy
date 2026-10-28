@@ -14,7 +14,10 @@
   *Module-firmware*); terug naar 0.4.0: `npx wrangler rollback 4876a23e-944b-4f73-b497-d978d321036b` (staat weer vervangen
   van een `.srec` toe en publiceert de werkkopie).
 - **0.5.0 (2026-10-28, versie `6370d878-a30f-4723-bff0-937a55fabafe`)**: tag en GitHub Release vanuit de tab Firmware
-  (`src/github.ts`); `DEPLOY_GITHUB_TOKEN` staat nog op `not-set` tot de gebruiker het token plakt. Terug naar 0.4.1:
+  (`src/github.ts`); `DEPLOY_GITHUB_TOKEN` door de gebruiker gezet op 28-10 (fine-grained, **geldig tot 29-10-2027**: tijdig
+  vernieuwen), dezelfde dag gecontroleerd: leest alle 11 `Module-*`-repo's, niets daarbuiten; schrijven blijkt bij de eerste
+  tag. 0.5.1 (versie `e582f30e-2524-4ea3-9859-92736792a705`): `GET /api/firmware/github?repo=` (alleen lezen) en de pagina
+  toont per repo of tag + release lukt; terug naar 0.5.0: `npx wrangler rollback 6370d878-a30f-4723-bff0-937a55fabafe`. Terug naar 0.4.1:
   `npx wrangler rollback acbf96ba-4f0f-4689-b06d-74f4f4059b20`.
 
 ## Architectuur

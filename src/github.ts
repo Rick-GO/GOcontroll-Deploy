@@ -94,6 +94,39 @@ class GitHub {
   }
 }
 
+export interface GitHubCheck {
+  configured: boolean;      // a token is set
+  allowed: boolean;         // the repository is in GITHUB_REPOS
+  readable: boolean;        // the token can read it (GET /repos/{repo}: 200)
+  canPush: boolean | null;  // GitHub's permissions.push for the token's owner, when it says
+  error: string | null;     // why not, for the colleague
+}
+
+/**
+ * Whether Deploy can tag and release in a repository: the token is set, the repository is allowed
+ * and the token can read it. Read only (one GET). Write access shows only at the first tag: GitHub
+ * has no way to ask a fine-grained token what it may write.
+ */
+export async function checkGitHub(env: Env, repo: string): Promise<GitHubCheck> {
+  const out: GitHubCheck = { configured: false, allowed: false, readable: false, canPush: null, error: null };
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new HttpError(400, 'The GitHub repository is owner/name.', 'repo');
+  const token = await githubToken(env);
+  out.configured = Boolean(token);
+  out.allowed = repoAllowed(repo, env.GITHUB_REPOS);
+  if (!token) return { ...out, error: 'GitHub is not set up (DEPLOY_GITHUB_TOKEN).' };
+  if (!out.allowed) return { ...out, error: `Deploy may not tag ${repo} (GITHUB_REPOS: ${env.GITHUB_REPOS || 'none'}).` };
+  try {
+    const res = await new GitHub(token, repo).call('GET', '');
+    if (res.status === 404) return { ...out, error: `The GitHub token cannot see ${repo}: add the repository to the token.` };
+    if (!res.ok) return { ...out, error: `GitHub answered ${res.status} for ${repo}.` };
+    const info = await res.json<{ permissions?: { push?: boolean } }>();
+    return { ...out, readable: true, canPush: typeof info.permissions?.push === 'boolean' ? info.permissions.push : null };
+  } catch (err) {
+    if (err instanceof HttpError) return { ...out, error: err.message };
+    throw err;
+  }
+}
+
 const Body = z.object({
   repo: z.string({ message: 'The GitHub repository is missing.' }).regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, 'The GitHub repository is owner/name.'),
   commit: z.string({ message: 'The commit is missing.' }).regex(/^[0-9a-f]{40}$/, 'The commit is a full commit id.'),
