@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-  annotationMatches, changelogFromTag, compareVersions, githubUrl, guessPlatform, guessRole, normaliseChangelog, parseSrecName as pageParse,
+  annotationMatches, changelogFromTag, compareVersions, githubSlug, githubUrl, guessPlatform, guessRole, normaliseChangelog, parseSrecName as pageParse,
   previousTag, releaseDateFromTag, safetyNetFindings, tagAnnotation, toLf,
 } from '../public/js/release-helpers.js';
 import { normaliseChangelog as workerNormalise, parseSrecName as workerParse } from '../src/firmware';
@@ -65,6 +65,8 @@ describe('firmware page', () => {
     expect(githubUrl('git@github.com:GOcontroll/Module-IR.git')).toBe('https://github.com/GOcontroll/Module-IR');
     expect(githubUrl('https://gitlab.com/x/y.git')).toBeNull();
     expect(githubUrl(null)).toBeNull();
+    expect(githubSlug('git@github.com:GOcontroll/Module-IR.git')).toBe('GOcontroll/Module-IR');
+    expect(githubSlug('https://gitlab.com/x/y.git')).toBeNull();
   });
 
   it('checks the safety net as the deployment agent did', () => {

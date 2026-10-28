@@ -16,10 +16,12 @@ export interface Env {
   DOWNLOAD_HOSTS: string;    // hostnames counted as downloads
   FIRMWARE_URLS: string;     // hosts of the firmware bucket; the first one for links
   IMAGES_URL: string;        // the download site of the images bucket
+  GITHUB_REPOS: string;      // the repositories Deploy may tag and release in (owner/name, a trailing * allowed)
 
   // Secrets Store (src/lib/secret.ts reads both forms; a plain string locally and in tests).
   SIGNING_KEYS_KEY?: SecretsStoreSecret | string; // store DEPLOY_SIGNING_KEYS_KEY: AES-256 KEK of the signing keys
   CF_API_TOKEN?: SecretsStoreSecret | string;     // store DEPLOY_CF_API_TOKEN: GraphQL Analytics (optional)
+  GITHUB_TOKEN?: SecretsStoreSecret | string;     // store DEPLOY_GITHUB_TOKEN: tags and releases of the Module-* repos; not-set = off
 
   // Local development only, honoured on localhost (see auth.ts).
   DEV_USER_EMAIL?: string;

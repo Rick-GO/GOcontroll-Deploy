@@ -92,6 +92,12 @@ export function githubUrl(url) {
   return m ? `https://github.com/${m[1]}/${m[2]}` : null;
 }
 
+/** owner/name of a GitHub repository from its remote URL, or null. @param {string | null} url */
+export function githubSlug(url) {
+  const link = githubUrl(url);
+  return link ? link.slice('https://github.com/'.length) : null;
+}
+
 /**
  * What the safety net (the repository's own publish-firmware.yml, which a tag push starts) would do
  * differently, as the deployment agent checks it before a publish.

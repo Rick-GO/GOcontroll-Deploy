@@ -20,28 +20,32 @@
 //   5. Review before writing: every file is sent as a dry run first (the Worker checks it and
 //      answers what it would write); only after the colleague confirms is it published, lowest
 //      version first.
-//   6. Afterwards: the tag v<version> with exactly the annotation the CI reads (RELEASE_DATE,
-//      DEPLOY_FILES, the changelog as stored), so the CI run that pushing it starts writes the same
-//      entry; the commands, the annotation to copy or download, and the GitHub release link.
+//   6. Afterwards, per version: tag v<version> with exactly the annotation the CI reads (RELEASE_DATE,
+//      DEPLOY_FILES, the changelog as stored), so the CI run that it starts writes the same entry,
+//      and the GitHub release with the .srec attached. Deploy does both on GitHub itself (ticked in
+//      the review, src/github.ts) when it has a token, the repository folder was chosen and HEAD is
+//      pushed; otherwise, or when GitHub refuses, it gives the annotation and the commands.
 //   7. The safety net (the repository's own publish-firmware.yml): what it would do differently.
 
-import { api, errorText, postForm } from './api.js';
+import { api, ApiError, errorText, postForm } from './api.js';
 import { fmtDateTime, plural, shortHash } from './format.js';
 import { dirFromFiles, dirFromHandle, GitError, openRepo } from './git.js';
 import { act, copyButton, esc, hydrateIcons, saveBlob, toast, uniqueId } from './lib.js';
 import {
-  annotationMatches, changelogFromTag, compareVersions, githubUrl, localDay, parseSrecName, previousTag, releaseDateFromTag,
+  annotationMatches, changelogFromTag, compareVersions, githubSlug, githubUrl, localDay, parseSrecName, previousTag, releaseDateFromTag,
   safetyNetFindings, tagAnnotation, toLf,
 } from './release-helpers.js';
 import { parseSrec } from './source.js';
-import { badge, formDialog, setHero, stale } from './ui.js';
+import { badge, confirmDialog, formDialog, setHero, stale } from './ui.js';
 
 /**
  * @typedef {import('./ui.js').Ctx} Ctx
  * @typedef {{ version: string, file: string, date: string, sha256: string, changelog: string,
  *   publishedBy: { email: string, at: string, source: Source | null } | null }} FwRelease
  * @typedef {{ id: string, name: string, hardwareVersion: string, latest: string | null, releases: FwRelease[], error?: string }} FwModule
- * @typedef {{ updated: string | null, modules: FwModule[], manifestError?: string, firmwareUrl: string, moduleTypeNames: Record<string, string> }} FwOverview
+ * @typedef {{ updated: string | null, modules: FwModule[], manifestError?: string, firmwareUrl: string, moduleTypeNames: Record<string, string>,
+ *   github?: { configured: boolean, repos: string } }} FwOverview
+ *   github: whether Deploy can set tags and make releases itself (DEPLOY_GITHUB_TOKEN), and in which repositories
  * @typedef {{ repo: string, branch: string | null, commit: string | null, tag: string | null, path?: string | null, pushed?: boolean | null }} Source
  * @typedef {import('./release-helpers.js').SrecName} SrecName
  * @typedef {import('./release-helpers.js').Tag} Tag
@@ -52,7 +56,7 @@ import { badge, formDialog, setHero, stale } from './ui.js';
  * @typedef {{ repo: string, head: Head | null, tags: Tag[], gitError: string | null,
  *   log: (opts: { from: string, exclude?: string, max?: number }) => Promise<Commit[]>,
  *   fileAt: ((commit: string, path: string) => Promise<Uint8Array | null>) | null,
- *   pushed: boolean | null, github: string | null, findings: string[] }} RepoInfo
+ *   pushed: boolean | null, github: string | null, slug: string | null, findings: string[] }} RepoInfo
  *   pushed: HEAD is on origin/<branch> (true), is not (false), or that cannot be told (null)
  * @typedef {{ released: string, changelog: string, replace: boolean, names: Record<string, string> }} GroupValues
  * @typedef {{ dryRun: boolean, hwId: string, version: string, file: string, url: string, sha256: string, date: string, changelog: string,
@@ -234,7 +238,7 @@ async function fromDir(name, dir) {
   }
   if (!found.length) throw new Error(`${name} has no .srec files in a -BOOT folder. Choose the module's repository, or the .srec files themselves.`);
   /** @type {RepoInfo} */
-  const repo = { repo: name, head: null, tags: [], gitError: null, log: async () => [], fileAt: null, pushed: null, github: null, findings: [] };
+  const repo = { repo: name, head: null, tags: [], gitError: null, log: async () => [], fileAt: null, pushed: null, github: null, slug: null, findings: [] };
   try {
     const r = await openRepo(dir);
     if (!r) {
@@ -244,7 +248,9 @@ async function fromDir(name, dir) {
       repo.tags = await r.tags();
       repo.log = (opts) => r.log(opts);
       repo.fileAt = (commit, path) => r.fileAt(commit, path);
-      repo.github = githubUrl(await r.remoteUrl());
+      const remoteUrl = await r.remoteUrl();
+      repo.github = githubUrl(remoteUrl);
+      repo.slug = githubSlug(remoteUrl);
       if (r.head.branch) {
         const remote = await r.remoteBranch(r.head.branch).catch(() => null);
         repo.pushed = remote ? await r.reaches(remote, r.head.commit) : null;
@@ -429,7 +435,7 @@ async function drawCandidates(ctx, out, data, repo, found) {
       }
     }
     // Done: choosing again starts over, so nothing is sent twice by accident.
-    if (await reviewAndPublish(ctx, out, chosen, values, repo)) publishBtn.hidden = true;
+    if (await reviewAndPublish(ctx, out, data, chosen, values, repo)) publishBtn.hidden = true;
   }));
 }
 
@@ -482,7 +488,7 @@ function moduleName(d, hwId) {
     || '';
 }
 
-// ── Review, publish, tag ─────────────────────────────────────────────────────
+// ── Review, publish, tag and release ─────────────────────────────────────────
 
 /**
  * The form of one file. @param {Candidate} c @param {GroupValues} v @param {RepoInfo | null} repo @param {boolean} dryRun
@@ -504,12 +510,27 @@ function publishForm(c, v, repo, dryRun) {
 }
 
 /**
+ * Why Deploy cannot tag and release this version on GitHub itself, or null when it can.
+ * @param {FwOverview} data @param {RepoInfo | null} repo @param {PublishAnswer[]} plans  the dry runs of this version
+ */
+function cannotRelease(data, repo, plans) {
+  if (!data.github?.configured) return 'GitHub is not set up yet (the token DEPLOY_GITHUB_TOKEN); the commands follow after publishing.';
+  if (!repo?.head || !repo.slug) return 'Deploy knows the GitHub repository and commit only when you choose the repository folder.';
+  if (repo.pushed !== true) return `HEAD is not on origin${repo.head.branch ? `/${repo.head.branch}` : ''} (as far as this clone knows): push it first, then publish again or use the commands.`;
+  const older = plans.filter((p) => JSON.parse(p.moduleManifest).releases?.[0]?.sw_version !== p.version);
+  if (older.length && /** @type {any} */ (repo).safetyNet?.workflow) {
+    return `${older[0].version} is not the highest version of ${older.map((p) => p.hwId).join(', ')}: pushing its tag starts this repository's publish workflow, which would put it first, so controllers would flash the older firmware.`;
+  }
+  return null;
+}
+
+/**
  * Dry run of every file, the review, then the publish (one request per file, lowest version
- * first: they may share manifests), then the tags to set.
- * @param {Ctx} ctx @param {HTMLElement} out @param {Candidate[]} chosen @param {Map<string, GroupValues>} values @param {RepoInfo | null} repo
+ * first: they may share manifests), then per version the tag and the GitHub release.
+ * @param {Ctx} ctx @param {HTMLElement} out @param {FwOverview} data @param {Candidate[]} chosen @param {Map<string, GroupValues>} values @param {RepoInfo | null} repo
  * @returns {Promise<boolean>} true when every file was published
  */
-async function reviewAndPublish(ctx, out, chosen, values, repo) {
+async function reviewAndPublish(ctx, out, data, chosen, values, repo) {
   const results = /** @type {HTMLElement} */ (out.querySelector('[data-results]'));
   results.innerHTML = '';
   const valuesOf = (/** @type {Candidate} */ c) => /** @type {GroupValues} */ (values.get(/** @type {SrecName} */ (c.name).version));
@@ -523,17 +544,26 @@ async function reviewAndPublish(ctx, out, chosen, values, repo) {
       throw new Error(`${c.original.name}: ${errorText(err)}`);
     }
   }
+  /** @type {Map<string, PublishAnswer[]>} */
+  const byVersion = new Map();
+  for (const p of plans) byVersion.set(p.version, [...(byVersion.get(p.version) ?? []), p]);
+  /** @type {Set<string>} versions to tag and release on GitHub */
+  const release = new Set();
   const confirmed = await formDialog({
     title: 'Publish to firmware.gocontroll.tech?',
     submitLabel: `Publish ${plural(plans.length, 'file')}`,
-    body: reviewBody(plans, repo),
-    submit: async () => {},
+    body: reviewBody(byVersion, data, repo),
+    submit: async (form) => {
+      for (const version of byVersion.keys()) {
+        if (/** @type {HTMLInputElement | null} */ (form.querySelector(`[name="gh-${CSS.escape(version)}"]`))?.checked) release.add(version);
+      }
+    },
   });
   if (!confirmed) return false;
 
   results.innerHTML = `<div class="section-label">Published</div><ul class="plain-list fw-results">${chosen.map((c, i) =>
     `<li data-result="${i}"><span class="mono">${esc(c.original.name)}</span> <span class="muted" data-state>waiting</span></li>`).join('')}</ul><div data-tags></div>`;
-  /** @type {PublishAnswer[]} */
+  /** @type {{ answer: PublishAnswer, candidate: Candidate }[]} */
   const done = [];
   let failed = 0;
   for (const [i, c] of chosen.entries()) {
@@ -542,90 +572,136 @@ async function reviewAndPublish(ctx, out, chosen, values, repo) {
     try {
       /** @type {PublishAnswer} */
       const r = await postForm('/firmware', publishForm(c, valuesOf(c), repo, false));
-      done.push(r);
+      done.push({ answer: r, candidate: c });
       li.innerHTML = `${badge(r.objectWritten ? 'Published' : 'Manifest entry written again', 'ok')} <a href="${esc(r.url)}" rel="noopener">${esc(r.file)}</a> · latest of ${esc(r.hwId)}: ${esc(r.latest)}`;
     } catch (err) {
       failed++;
       li.innerHTML = `${badge('Failed', 'err')} ${esc(errorText(err))}`;
     }
   }
+
+  // Per version: the tag and the release on GitHub, or the commands to do it by hand.
   const tags = /** @type {HTMLElement} */ (results.querySelector('[data-tags]'));
-  tags.innerHTML = tagPanels(done, repo);
-  hydrateIcons(tags);
-  tags.querySelectorAll('[data-save-annotation]').forEach((b) => b.addEventListener('click', () => {
-    const el = document.getElementById(/** @type {HTMLElement} */ (b).dataset.saveAnnotation ?? '');
-    if (el) saveBlob(new Blob([el.textContent ?? ''], { type: 'text/plain' }), /** @type {HTMLElement} */ (b).dataset.filename ?? 'tag.txt');
-  }));
+  /** @type {Map<string, { answer: PublishAnswer, candidate: Candidate }[]>} */
+  const doneByVersion = new Map();
+  for (const d of done) doneByVersion.set(d.answer.version, [...(doneByVersion.get(d.answer.version) ?? []), d]);
+  tags.innerHTML = [...doneByVersion.keys()].map((v) => `<div class="fw-group" data-tag-version="${esc(v)}"></div>`).join('');
+  for (const [version, list] of doneByVersion) {
+    const box = /** @type {HTMLElement} */ (tags.querySelector(`[data-tag-version="${CSS.escape(version)}"]`));
+    if (release.has(version) && repo?.slug && repo.head) await githubRelease(box, version, list, repo);
+    else drawManualTag(box, version, list.map((d) => d.answer), repo);
+  }
+
   if (failed) {
     toast(`${plural(failed, 'file')} not published.`, 'err');
     return false;
   }
-  toast(`${plural(chosen.length, 'file')} published. Now set the tag.`);
+  toast(`${plural(chosen.length, 'file')} published.`);
   // Draw the modules again; the results and the tags stay above them.
   const nav = ctx.nav;
-  const data = /** @type {FwOverview} */ (await api('GET', '/firmware'));
+  const fresh = /** @type {FwOverview} */ (await api('GET', '/firmware'));
   if (stale(ctx, nav)) return true;
   const panel = ctx.view.querySelector('#fw-modules');
-  if (panel instanceof HTMLElement) { panel.innerHTML = modulesPanel(data); hydrateIcons(panel); }
+  if (panel instanceof HTMLElement) { panel.innerHTML = modulesPanel(fresh); hydrateIcons(panel); }
   return true;
 }
 
-/** What the dry runs say will be written. @param {PublishAnswer[]} plans @param {RepoInfo | null} repo */
-function reviewBody(plans, repo) {
-  const byVersion = new Map();
-  for (const p of plans) byVersion.set(p.version, [...(byVersion.get(p.version) ?? []), p]);
-  return `${repo?.pushed === false ? '<div class="notice warn">HEAD is not on origin yet: push it before you set the tag.</div>' : ''}
-    ${[...byVersion.entries()].map(([version, list]) => `<div class="fw-group">
+/**
+ * Tag v<version> and its release on GitHub through the Worker (src/github.ts); a tag that says
+ * something else is replaced only after the colleague confirms. Falls back to the commands.
+ * @param {HTMLElement} box @param {string} version @param {{ answer: PublishAnswer, candidate: Candidate }[]} list @param {RepoInfo} repo
+ * @param {boolean} [replaceTag]
+ */
+async function githubRelease(box, version, list, repo, replaceTag = false) {
+  const tag = `v${version}`;
+  box.innerHTML = `<h3>Tag and release ${esc(tag)}</h3><div class="loading"><span class="spinner dark"></span> On GitHub…</div>`;
+  try {
+    const r = await api('POST', '/firmware/releases', {
+      repo: repo.slug, commit: /** @type {Head} */ (repo.head).commit, version,
+      files: list.map((d) => ({ file: d.candidate.original.name, path: d.candidate.path })), replaceTag,
+    });
+    const state = { created: 'set', kept: 'was there already and says the same', replaced: 'replaced' }[/** @type {'created' | 'kept' | 'replaced'} */ (r.tagState)];
+    box.innerHTML = `<h3>Tag and release ${esc(tag)}</h3>
+      <div class="notice ok">Tag <a href="${esc(r.tagUrl)}" rel="noopener">${esc(tag)}</a> ${esc(state)} in ${esc(r.repo)};
+        release <a href="${esc(r.releaseUrl)}" rel="noopener">${esc(tag)}</a> ${r.releaseState === 'created' ? 'made' : 'was there already'}${r.assets.length ? `, with ${esc(r.assets.join(', '))} attached` : ''}.
+        ${r.safetyNet && r.tagState !== 'kept' ? ' The tag starts the repository\'s publish workflow, which writes the same entry again.' : ''}</div>`;
+  } catch (err) {
+    const body = err instanceof ApiError ? err.body : null;
+    box.innerHTML = `<h3>Tag and release ${esc(tag)}</h3><div class="notice err">${esc(errorText(err))}</div>
+      ${body?.conflict === 'tag' ? `<pre class="keytext">${esc(body.existingMessage ?? '(a tag without annotation)')}</pre>
+        <div class="btn-row"><button type="button" class="btn" data-replace-tag>Replace ${esc(tag)}…</button></div>` : ''}
+      <div data-manual></div>`;
+    box.querySelector('[data-replace-tag]')?.addEventListener('click', async () => {
+      const ok = await confirmDialog(`Replace ${tag} in ${repo.slug}?`,
+        `The tag is deleted and set again on ${esc(/** @type {Head} */ (repo.head).commit.slice(0, 7))}, saying what was published. That starts the repository's publish workflow again, which then writes the same entry.`, 'Replace tag', true);
+      if (ok) await githubRelease(box, version, list, repo, true);
+    });
+    drawManualTag(/** @type {HTMLElement} */ (box.querySelector('[data-manual]')), version, list.map((d) => d.answer), repo, true);
+  }
+}
+
+/** What the dry runs say will be written, and per version whether Deploy tags and releases it. @param {Map<string, PublishAnswer[]>} byVersion @param {FwOverview} data @param {RepoInfo | null} repo */
+function reviewBody(byVersion, data, repo) {
+  return `${repo?.pushed === false ? '<div class="notice warn">HEAD is not on origin yet: push it before the tag is set.</div>' : ''}
+    ${[...byVersion.entries()].map(([version, list]) => {
+      const why = cannotRelease(data, repo, list);
+      return `<div class="fw-group">
       <h3>Version ${esc(version)} <span class="muted">· ${esc(list[0].date)}</span></h3>
       <p class="pre">${esc(list[0].changelog)}</p>
-      <ul class="plain-list">${list.map((/** @type {PublishAnswer} */ p) => `<li><span class="mono">${esc(p.file)}</span> · ${esc(p.moduleName)} (${esc(p.hwId)})
+      <ul class="plain-list">${list.map((p) => `<li><span class="mono">${esc(p.file)}</span> · ${esc(p.moduleName)} (${esc(p.hwId)})
         · ${p.objectWritten ? 'new file' : 'the identical file is there already'}
         · ${p.newModule ? 'new module manifest' : p.replacedRelease ? 'its entry is written again' : 'entry added'}
         · latest_firmware ${esc(p.latestBefore ?? 'none')} → ${esc(p.latest)}
         <details><summary>The module manifest as it will be</summary><pre class="keytext">${esc(p.moduleManifest)}</pre></details></li>`).join('')}</ul>
-    </div>`).join('')}
+      <label class="check"><input type="checkbox" name="gh-${esc(version)}"${why ? ' disabled' : ' checked'}>
+        Then set tag v${esc(version)} on ${esc(repo?.head?.commit.slice(0, 7) ?? 'the commit')} and make the GitHub release${repo?.slug ? ` in ${esc(repo.slug)}` : ''}, with the .srec attached</label>
+      ${why ? `<p class="hint">${esc(why)}</p>` : ''}
+    </div>`;
+    }).join('')}
     <p class="hint">Then modules/manifest.json. A published firmware never changes afterwards.</p>`;
 }
 
 /**
- * Per version: the tag that keeps the safety net in step, with the commands.
- * @param {PublishAnswer[]} done @param {RepoInfo | null} repo
+ * The tag by hand: the annotation the safety net reads and the commands.
+ * @param {HTMLElement} box @param {string} version @param {PublishAnswer[]} list @param {RepoInfo | null} repo @param {boolean} [fallback]  after a failed GitHub call
  */
-function tagPanels(done, repo) {
-  const byVersion = new Map();
-  for (const r of done) byVersion.set(r.version, [...(byVersion.get(r.version) ?? []), r]);
-  return [...byVersion.entries()].map(([version, list]) => {
-    const tag = `v${version}`;
-    const files = list.map((/** @type {PublishAnswer} */ r) => r.file.split('/').pop() ?? r.file);
-    const released = `20${list[0].date.slice(6, 8)}-${list[0].date.slice(3, 5)}-${list[0].date.slice(0, 2)}`;
-    const annotation = tagAnnotation(released, files, list[0].changelog);
-    const existing = repo?.tags.find((t) => t.name === tag) ?? null;
-    const commit = repo?.head?.commit ?? '';
-    const file = `tag-${tag}.txt`;
-    const idText = uniqueId('fw-tag');
-    const idCmd = uniqueId('fw-cmd');
-    const matches = existing?.message ? annotationMatches(existing.message, released, files, list[0].changelog) : false;
-    const commands = [
-      ...(existing ? [`git tag -d ${tag}`, `git push origin --delete ${tag}`] : []),
-      `git tag -a ${tag} --cleanup=whitespace -F "$HOME/Downloads/${file}"${commit ? ` ${commit}` : ''}`,
-      `git push origin ${tag}`,
-    ].join('\n');
-    const release = repo?.github ? `<a href="${esc(`${repo.github}/releases/new?tag=${encodeURIComponent(tag)}`)}" rel="noopener">Create the GitHub release of ${esc(tag)}</a>` : '';
-    if (matches) {
-      return `<div class="fw-group"><h3>Tag ${esc(tag)}</h3><div class="notice ok">Tag ${esc(tag)} exists with exactly this date, these files and this changelog: nothing to do.${release ? ` ${release}.` : ''}</div></div>`;
-    }
-    return `<div class="fw-group"><h3>Set tag ${esc(tag)}</h3>
-      <p class="text">${existing
-        ? `Tag ${esc(tag)} exists with another date, files or changelog. Replace it, as the deployment agent did, so the safety net agrees with what was published:`
-        : `In ${esc(repo?.repo ?? 'the repository')}, so the history says what was published. Pushing it starts the repository's publish workflow (the safety net), which then writes exactly the same entry:`}</p>
-      <div class="key-box"><div class="key-head"><span class="section-label">Annotation</span>${copyButton(idText, 'annotation')}
-        <button type="button" class="btn sm" data-save-annotation="${idText}" data-filename="${esc(file)}" data-icon="arrow-down-tray">Download ${esc(file)}</button></div>
-        <pre class="keytext" id="${idText}">${esc(annotation)}</pre></div>
-      <div class="key-box"><div class="key-head"><span class="section-label">Commands (PowerShell or Git Bash, in the repository)</span>${copyButton(idCmd, 'commands')}</div>
-        <pre class="keytext" id="${idCmd}">${esc(commands)}</pre></div>
-      <p class="hint">The command reads the annotation from your Downloads folder; change the path if the browser saved it elsewhere.</p>
-      ${commit ? `<p class="hint">The tag points to ${esc(commit.slice(0, 7))}, the commit the files were read from.</p>` : `<p class="hint">Without the repository Deploy does not know the commit: tag the one that holds ${esc(files.join(', '))}.</p>`}
-      ${release ? `<p>${release}.</p>` : ''}
-    </div>`;
-  }).join('');
+function drawManualTag(box, version, list, repo, fallback = false) {
+  const tag = `v${version}`;
+  const files = list.map((r) => r.file.split('/').pop() ?? r.file);
+  const released = `20${list[0].date.slice(6, 8)}-${list[0].date.slice(3, 5)}-${list[0].date.slice(0, 2)}`;
+  const annotation = tagAnnotation(released, files, list[0].changelog);
+  const existing = repo?.tags.find((t) => t.name === tag) ?? null;
+  const commit = repo?.head?.commit ?? '';
+  const file = `tag-${tag}.txt`;
+  const idText = uniqueId('fw-tag');
+  const idCmd = uniqueId('fw-cmd');
+  const matches = existing?.message ? annotationMatches(existing.message, released, files, list[0].changelog) : false;
+  const commands = [
+    ...(existing ? [`git tag -d ${tag}`, `git push origin --delete ${tag}`] : []),
+    `git tag -a ${tag} --cleanup=whitespace -F "$HOME/Downloads/${file}"${commit ? ` ${commit}` : ''}`,
+    `git push origin ${tag}`,
+  ].join('\n');
+  const githubLink = repo?.github ? `<a href="${esc(`${repo.github}/releases/new?tag=${encodeURIComponent(tag)}`)}" rel="noopener">Make the GitHub release of ${esc(tag)}</a>` : '';
+  const title = fallback ? '' : `<h3>Set tag ${esc(tag)}</h3>`;
+  if (matches) {
+    box.innerHTML = `${title}<div class="notice ok">Tag ${esc(tag)} exists with exactly this date, these files and this changelog: nothing to do.${githubLink ? ` ${githubLink}.` : ''}</div>`;
+    return;
+  }
+  box.innerHTML = `${title}
+    <p class="text">${fallback ? 'Or by hand, in the repository:' : existing
+      ? `Tag ${esc(tag)} exists with another date, files or changelog. Replace it, so the safety net agrees with what was published:`
+      : `In ${esc(repo?.repo ?? 'the repository')}, so the history says what was published. Pushing it starts the repository's publish workflow (the safety net), which then writes exactly the same entry:`}</p>
+    <div class="key-box"><div class="key-head"><span class="section-label">Annotation</span>${copyButton(idText, 'annotation')}
+      <button type="button" class="btn sm" data-save-annotation="${idText}" data-filename="${esc(file)}" data-icon="arrow-down-tray">Download ${esc(file)}</button></div>
+      <pre class="keytext" id="${idText}">${esc(annotation)}</pre></div>
+    <div class="key-box"><div class="key-head"><span class="section-label">Commands (PowerShell or Git Bash, in the repository)</span>${copyButton(idCmd, 'commands')}</div>
+      <pre class="keytext" id="${idCmd}">${esc(commands)}</pre></div>
+    <p class="hint">The command reads the annotation from your Downloads folder; change the path if the browser saved it elsewhere.</p>
+    ${commit ? `<p class="hint">The tag points to ${esc(commit.slice(0, 7))}, the commit the files were read from.</p>` : `<p class="hint">Without the repository Deploy does not know the commit: tag the one that holds ${esc(files.join(', '))}.</p>`}
+    ${githubLink ? `<p>${githubLink}, with the changelog as its notes and the .srec attached.</p>` : ''}`;
+  hydrateIcons(box);
+  box.querySelectorAll('[data-save-annotation]').forEach((b) => b.addEventListener('click', () => {
+    const el = document.getElementById(/** @type {HTMLElement} */ (b).dataset.saveAnnotation ?? '');
+    if (el) saveBlob(new Blob([el.textContent ?? ''], { type: 'text/plain' }), /** @type {HTMLElement} */ (b).dataset.filename ?? 'tag.txt');
+  }));
 }

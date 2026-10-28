@@ -103,6 +103,15 @@ binding = "SIGNING_KEYS_KEY"
 store_id = "33801ac6937549ae8f6f92169586a707"
 secret_name = "DEPLOY_SIGNING_KEYS_KEY"
 
+# Tags and GitHub releases of module firmware (src/github.ts): a fine-grained GitHub token with
+# Contents read and write on the Module-* repositories of GOcontroll, which the owner pastes into the
+# store (README, "GitHub releases"). Made by the session on 2026-10-28 with the placeholder not-set,
+# which the code reads as "no token": the Firmware tab then gives the commands instead.
+[[secrets_store_secrets]]
+binding = "GITHUB_TOKEN"
+store_id = "33801ac6937549ae8f6f92169586a707"
+secret_name = "DEPLOY_GITHUB_TOKEN"
+
 # Download counts need a Cloudflare API token (Zone Analytics: Read + Zone: Read on
 # gocontroll.com and gocontroll.tech) in the store as DEPLOY_CF_API_TOKEN. It does not exist
 # yet, and a binding to a missing secret fails the deploy; once it is created, add
@@ -136,6 +145,9 @@ DOWNLOAD_HOSTS = "deploy.gocontroll.com,deploy.gocontroll.tech"
 FIRMWARE_URLS = "https://firmware.gocontroll.tech,https://firmware.gocontroll.com"
 # Where customers download the images and tools (the Images tab links to it).
 IMAGES_URL = "https://images.gocontroll.tech"
+# The GitHub repositories Deploy may set a tag and make a release in (src/github.ts): owner/name,
+# comma-separated, a trailing * for any rest. The token's own repository list limits it as well.
+GITHUB_REPOS = "GOcontroll/Module-*"
 
 [dev]
 # Keep request.url on localhost during `wrangler dev` (it would otherwise take the

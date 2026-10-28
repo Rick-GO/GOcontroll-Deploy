@@ -13,6 +13,9 @@
 - **0.4.1 (2026-10-28, versie `acbf96ba-4f0f-4689-b06d-74f4f4059b20`)**: de tab Firmware volgt de regels van agent 08 (zie
   *Module-firmware*); terug naar 0.4.0: `npx wrangler rollback 4876a23e-944b-4f73-b497-d978d321036b` (staat weer vervangen
   van een `.srec` toe en publiceert de werkkopie).
+- **0.5.0 (2026-10-28, versie `6370d878-a30f-4723-bff0-937a55fabafe`)**: tag en GitHub Release vanuit de tab Firmware
+  (`src/github.ts`); `DEPLOY_GITHUB_TOKEN` staat nog op `not-set` tot de gebruiker het token plakt. Terug naar 0.4.1:
+  `npx wrangler rollback acbf96ba-4f0f-4689-b06d-74f4f4059b20`.
 
 ## Architectuur
 - **Worker met static assets** (geen Pages), zelfde opzet als GOcontroll-Logistic: `run_worker_first = true`,
@@ -82,10 +85,16 @@
   commits sinds de vorige versietag ernaast. **`public/js/git.js`** (alleen lezen: loose + packs met OFS/REF-delta,
   `packed-refs`, geannoteerde tags, bestanden van een commit, origin-URL en tracking branch; geen SHA-256-repos, reftable,
   worktrees/submodules). Fixture `test/fixtures/git/` komt van `npm run fixtures:git` (git CLI); niet met de hand wijzigen.
-- **Vangnet**: de `publish-firmware.yml` van elke module-repo blijft (keuze 21-07). Na publiceren geeft de pagina per versie
-  de tag-annotatie in het CI-formaat (`release-helpers.js` `tagAnnotation`) en de commando's (`git tag -a … --cleanup=whitespace
-  -F … <commit>`, bij een afwijkende bestaande tag eerst verwijderen), zodat de CI-run hetzelfde schrijft. Vooraf
-  `safetyNetFindings`: workflow ontbreekt, `MODULE_NAME` ≠ manifestnaam, secrets, script ontbreekt of mist de versiecheck.
+- **Vangnet**: de `publish-firmware.yml` van elke module-repo blijft (keuze 21-07). Vooraf `safetyNetFindings`: workflow
+  ontbreekt, `MODULE_NAME` ≠ manifestnaam, secrets, script ontbreekt of mist de versiecheck.
+- **Tag en GitHub Release** (`src/github.ts`, `POST /api/firmware/releases`, wens gebruiker 28-10): na publiceren zet Deploy
+  per versie (aangevinkt in de review) zelf tag `v<versie>` en maakt de release met de `.srec` als asset. Tekst uit de
+  gepubliceerde manifests (niet uit de browser); bestanden op die commit op GitHub moeten de gepubliceerde SHA-256 hebben
+  (= gepusht); **geen tag voor een oudere versie als de repo de workflow heeft** (die zet hem bovenaan → controllers terug);
+  **altijd een annotated tag via `git/tags` + `git/refs`**, nooit de lightweight tag van de release-API (de workflow zou een
+  lege annotatie lezen); bestaande tag met andere tekst alleen vervangen na bevestiging. Token `DEPLOY_GITHUB_TOKEN`
+  (binding `GITHUB_TOKEN`, fine-grained, Contents read/write op `Module-*`; `not-set` = uit, dan commando's zoals in 0.4.1),
+  repos beperkt door `GITHUB_REPOS`. Tests mocken GitHub altijd (`test/github.test.ts`).
 - Log: `publish-firmware` met `previous_module_manifest` en `previous_master_manifest` (terugzetten = die terugschrijven);
   `firmware-log/<hw_id>/<versie>.json` (+ custom metadata) = wie publiceerde uit welke repo/commit; zonder = de CI.
 

@@ -3,11 +3,18 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../env';
 import { firmwareOverview, publishFirmware } from '../firmware';
+import { githubToken, tagAndRelease } from '../github';
 import { HttpError } from '../lib/http';
 
 export const firmware = new Hono<AppEnv>();
 
-firmware.get('/firmware', async (c) => c.json(await firmwareOverview(c.env)));
+firmware.get('/firmware', async (c) => {
+  const [overview, token] = await Promise.all([firmwareOverview(c.env), githubToken(c.env).catch(() => undefined)]);
+  return c.json({ ...overview, github: { configured: Boolean(token), repos: c.env.GITHUB_REPOS || '' } });
+});
+
+// Tag v<version> and the GitHub release of a publish (src/github.ts).
+firmware.post('/firmware/releases', async (c) => c.json(await tagAndRelease(c.env, c.get('user'), await c.req.json().catch(() => null))));
 
 firmware.post('/firmware', async (c) => {
   let form: FormData;
