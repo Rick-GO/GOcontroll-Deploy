@@ -13,17 +13,21 @@ first. Next to that, **module firmware** (the `.srec` files go-modules flashes i
 modules of an L4, M1 or HMI1) is published to **firmware.gocontroll.tech** (R2
 `gocontroll-firmware`), and **Linux images and tools** for customers go to R2 `gocontroll-images`,
 which the second Worker of this repo serves on **images.gocontroll.tech** to anyone who signs in
-there with their e-mail address and a one-time code ([`images/README.md`](images/README.md)). For the
-members of the Entra group **`CF_Deploy`** only.
+there with their e-mail address and a link by mail ([`images/README.md`](images/README.md)); the
+Images tab shows how often each release is downloaded. For the members of the Entra group
+**`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> The Worker, the API and the pages are deployed (0.5.1 on 2026-10-28: the page says per repository whether Deploy can
+> The Worker, the API and the pages are deployed (0.6.0 on 2026-10-28: images.gocontroll.tech signs customers in with
+> their e-mail address and a link by mail instead of Access with a one-time PIN; this Worker sends that mail through its RPC
+> entrypoint `ImagesMail` (Graph, `MS365_CLIENT_SECRET`); the Images tab counts downloads per release and per month and copies
+> a customer link per file; the site stays 503 until the owner's Turnstile widget exists ([`images/README.md`](images/README.md) →
+> *One-time setup*); 0.5.1 on 2026-10-28: the page says per repository whether Deploy can
 > tag and release there; the token is set, valid until 2027-10-29; 0.5.0 on 2026-10-28, version `6370d878`: after a module firmware
 > publish Deploy sets the tag and makes the GitHub release itself ([GitHub releases](#github-releases)); 0.4.1 on 2026-10-28, version `acbf96ba`: the Firmware tab follows the
 > rules of the retired firmware agent 08: the file as git holds it, review with a dry run, never a changed `.srec`,
 > `latest_firmware` never down, the tag for the safety net; 0.4.0 on 2026-10-28, version `4876a23e`: the tabs **Firmware** and
-> **Images**, and the Worker `gocontroll-images` on `images.gocontroll.tech` (version `9a2c1639`), which answers 503 until
-> its Access application exists ([`images/README.md`](images/README.md) → *One-time setup*); 0.3.1 on 2026-10-23: plain HTTP redirected to HTTPS and the
+> **Images**, and the Worker `gocontroll-images` on `images.gocontroll.tech` (version `9a2c1639`); 0.3.1 on 2026-10-23: plain HTTP redirected to HTTPS and the
 > security headers on `/pub/` too; 0.3.0 on 2026-10-21: Linux releases for M1, L4 and HMI1 next to
 > S1; 0.2.0: Status and Keys tabs, new applications, releases from the folder page, protected
 > folder delete); the Access application
@@ -43,7 +47,7 @@ Old links `#/publish` and `#/sign` (milestone 1) lead to the folder page with `?
 | **Folder, S1** (`#/folders/<APP_ID>`) | Customer and controller (**Change…** each). **New release** in three steps: **1 File** (`.bin` / S-record / GOCO container, version from the filename) → **2 Sign** (public key with Copy; Generate or Import a key there, or tick *publish unsigned*) → **3 Publish** (description, Replace… / latest-moves-back confirmations, binary URL with Copy), or **Download signed file instead**. Then the releases with header checks, the signing key card, controllers per version, downloads per day, other files, and the **Danger zone**. |
 | **Folder, Linux (M1, L4, HMI1)** | Customer and controller. **Package** card: the files in `files/` (name, destination, mode, owner, group) with Add / Edit / Remove; default owner and group; after install: Nothing, *Restart services* (comma list, nodered and go-simulink suggested, preview of the rendered `post-install.sh.tmpl`) or *A script of its own*. **Save package**; **Import r2-deploy.config.json…** (paste or file); **From the latest release** (files from its version manifest, `files/post-install.sh` from its tarball). **New release** in three steps: **1 Files**: one file per package file (choose per row, or drop several, matched by name), or *Upload a built package* (`update.tar.gz` + `manifest.json` from a CI `dist/`, sent as they are after a SHA-256 check here), plus the version (next patch of latest) and what changed. **2 Review**: not signed, and why (go-deploy checks SHA-256 only); size and SHA-256 of the tarball; the version manifest's files with destination, mode, owner and short SHA-256; the post-install script; `manifest.json` as it will be written; what happens to `latest_version`. **3 Publish**: Publish / Replace…, progress, result (keys written, SHA-256 with Copy, size, `latest_version`). Then the Versions table (with a Tarball download per version), controllers per version, downloads, other files, Danger zone. |
 | **Firmware** (`#/firmware`) | Module firmware on firmware.gocontroll.tech, the way the Moduline Module Firmware Deployer (agent 08) published it. **Publish firmware**: *Choose the source folder…* (the module's repository, e.g. `Module-Input`; `showDirectoryPicker`, or a folder field in browsers without it, or drop the folder) or *Choose .srec files…*. From a folder Deploy takes every `<…>-BOOT/<name>.srec`, as the CI does, and reads the repository's `.git` in the browser: the line above the files names the repository, branch, HEAD, the number of version tags and whether HEAD is on origin (as of the last fetch); a second notice lists what the repository's own publish workflow (the safety net) would do differently. Per file: module (name, hardware ID, hardware version, from the file name), version, file date and status: **New**, **Published** (the same bytes), **Published, other bytes** (cannot be published: a correction gets a new version number) or why it **cannot be used** (not committed, differs from the commit, not an S-record). Per version: the **release date** (the tag's `RELEASE_DATE` when tag `v<version>` exists, else the file's date), the **changelog** (the tag's text, else typed: one line in English, with the commits since the previous version tag beside it), the name of a module that is new on firmware.gocontroll.tech, and for a published version *Publish again* (its manifest entry, same file). **Review N files…** sends each file as a dry run and shows what will be written (new file or identical, entry added or written again, `latest_firmware` before → after, the module manifest); **Publish** writes them, lowest version first. Per version the review has *Then set tag v<version> … and make the GitHub release*, ticked when Deploy can (token set, repository folder chosen, HEAD pushed, not an older version under a safety net; else the reason): after publishing Deploy sets the tag and makes the release with the `.srec` attached, and links both (a tag that says something else: *Replace v<version>…*). Without that, or when GitHub refuses: **Set tag v<version>** with the annotation (Copy, Download), the commands and the link to make the release by hand. Below: every module (name, hardware version and ID, latest, date, number of releases), unfolding into its releases: version (link to the file, *flashed* on the first), date, changelog, SHA-256 with Copy, and who published it from Deploy and from which repository and commit, or *CI of the module repository*. |
-| **Images** (`#/images`) | Linux images and tools for customers on images.gocontroll.tech. **New release…**: image (for L4, M1 and/or HMI1) or tool, product (e.g. `moduline-headless`), version, title, controllers, release date, notes. A release is a **draft** until **Publish**; per draft *Add files…* (role guessed from the name: root file system, kernel, bootloader, device tree, flash script, tool, documentation, other; and the computer it runs on), upload with progress per file (32 MiB parts, three at a time, retried), the SHA-256 of each file as stored; *Remove* a file, *Edit…*, *Delete draft…*. A published release can be edited (text only) or **Withdrawn** (back to a draft; the files stay). Unfinished uploads with *Abort*. **Downloads**: who downloaded which file when, this month and last month, as images.gocontroll.tech logs it. |
+| **Images** (`#/images`) | Linux images and tools for customers on images.gocontroll.tech. **New release…**: image (for L4, M1 and/or HMI1) or tool, product (e.g. `moduline-headless`), version, title, controllers, release date, notes. A release is a **draft** until **Publish**; per draft *Add files…* (role guessed from the name: root file system, kernel, bootloader, device tree, flash script, tool, documentation, other; and the computer it runs on), upload with progress per file (32 MiB parts, three at a time, retried), the SHA-256 of each file as stored; *Remove* a file, *Edit…*, *Delete draft…*. A published release can be edited (text only) or **Withdrawn** (back to a draft; the files stay). Unfinished uploads with *Abort*. Per file of a published release **Copy link**: the customer link `images.gocontroll.tech/download/<path>` (sign in, then that file starts). **Downloads**: per release in all, this month and last month, and per month the downloads, different addresses and countries; the release cards show their count. **Latest downloads**: who downloaded which file when, this month and last month, as images.gocontroll.tech logs it. |
 | **Keys** (`#/keys`) | S1 applications with a key (App ID, customer, controller, short public key with Copy, made by and when, source) and without one (Generate / Import with the one-time backup). Plus: Linux packages (M1, L4, HMI1) are not signed; go-deploy checks the SHA-256 only. |
 
 ## How it works
@@ -58,9 +62,10 @@ browser ──► Cloudflare Access (Entra ID, group CF_Deploy) ──► Worker
                                                                  ├─► R2 gocontroll-images        (images and tools, manifest.json; reads downloads/)
                                                                  ├─► D1 gocontroll-business      (customers, projects: read only)
                                                                  ├─► D1 gocontroll-db            (controllers, project_provisioning: read only)
-                                                                 ├─► Secrets Store               (DEPLOY_SIGNING_KEYS_KEY; DEPLOY_CF_API_TOKEN later)
+                                                                 ├─► Secrets Store               (DEPLOY_SIGNING_KEYS_KEY, DEPLOY_GITHUB_TOKEN, MS365_CLIENT_SECRET; DEPLOY_CF_API_TOKEN later)
+                                                                 ├─► Microsoft Graph             (ImagesMail: the sign-in links of images.gocontroll.tech)
                                                                  └─► Cloudflare GraphQL Analytics (download counts, once the token exists)
-cron 17 2 * * * ─────────────────────────────────────────────► the download counts of finished days, into STATE
+cron 17 2 * * * ─────────────────────────────────────────────► the download counts of finished days, and the image counts of finished months, into STATE
 
 controllers ──► https://deploy.gocontroll.tech (Worker gocontroll-deploy) ┐
             ──► https://deploy.gocontroll.com  (R2 custom domain)         ┴─► the same bucket, byte for byte
@@ -68,8 +73,9 @@ controllers ──► https://deploy.gocontroll.tech (Worker gocontroll-deploy) 
 go-modules  ──► https://firmware.gocontroll.tech (Worker gocontroll-firmware) ┐
             ──► https://firmware.gocontroll.com  (R2 custom domain)           ┴─► gocontroll-firmware
 
-customers   ──► Cloudflare Access (one-time PIN by e-mail) ──► Worker gocontroll-images (images/, images.gocontroll.tech)
-                                                                 └─► R2 gocontroll-images (only what manifest.json names; writes downloads/)
+customers   ──► e-mail address + Turnstile, link by mail ──► Worker gocontroll-images (images/, images.gocontroll.tech)
+                                                                 ├─► R2 gocontroll-images (only what manifest.json names; writes downloads/ and access-mails/)
+                                                                 └─► service binding MAIL ──► this Worker's entrypoint ImagesMail ──► Graph, from noreply@
 ```
 
 - **One Worker with static assets** (`public/`), like Logistic, Finance, the CRM and Hours:
@@ -352,14 +358,35 @@ plus **`manifest.json`**, the catalogue customers see. Deploy (`src/images.ts`) 
   download. An unfinished upload is in `STATE` `images/uploads/<id>.json` until it is aborted (R2 drops
   its parts after 7 days).
 - **Downloads**: images.gocontroll.tech writes an empty object per download under `downloads/<yyyy>/<mm>/`
-  with who (the verified e-mail address), what and the country in its custom metadata; the Images tab
-  lists this month's and last month's (one listing per month, no reads). They are kept 13 months: an R2
-  lifecycle rule on `downloads/` ([`images/README.md`](images/README.md)).
+  with who (the e-mail address that opened the sign-in link), what and the country in its custom
+  metadata; the Images tab lists this month's and last month's (one listing per month, no reads), at
+  most 200. They are kept 13 months: an R2 lifecycle rule on `downloads/` ([`images/README.md`](images/README.md)).
+- **Counts** (`src/images-stats.ts`): per release in all, this month and last month; per month the
+  downloads, the number of different addresses and the countries. Every finished month is summed once
+  from the log into `STATE` `images/stats/<yyyy-mm>.json`, **without addresses**, and kept, so the counts
+  outlive the 13-month log; the month under way is counted live. Stored by the daily cron and when
+  someone looks (at most 6 months per run), an hour after the month ended. A download counts when a file
+  starts (not a resume or a later chunk).
+- **Customer link**: *Copy link* next to a file of a published release gives
+  `https://images.gocontroll.tech/download/<path>`: it asks a customer to sign in first, then shows that
+  file and starts it.
+- **The sign-in mail** (`src/images-mail.ts`): the download site binds this Worker's RPC entrypoint
+  **`ImagesMail`** (`export { ImagesMail }` in `src/index.ts`). `sendAccessLink({ email, link, file? })`
+  mails one fixed message in the house style (logo inline from `public/pub/logo.png`) through Microsoft
+  Graph from `MAIL_FROM` (noreply@gocontroll.com), Reply-To `IMAGES_MAIL_REPLY_TO` (info@gocontroll.com),
+  only to that one address (`normaliseEmail`), only with a link `<IMAGES_URL>/access?t=<LINK_TOKEN_RE>`
+  and a file name; anything else is refused before Microsoft is asked. Answers `{ ok }` or
+  `{ ok: false, error }`, never throws; the log names the address's domain only. Graph as in Hours and
+  the Configurator (`src/mail/graph.ts`, a copy of the Configurator's): `MS365_TENANT_ID`,
+  `MS365_CLIENT_ID`, `MS365_CLIENT_SECRET` (Secrets Store, shared with Hours, the Configurator and
+  Finance). The abuse checks (Turnstile, a rate limit per IP, 5 links per address per hour) are the
+  download site's, before it calls.
 
-The download site is the Worker **`gocontroll-images`** in [`images/`](images/README.md): Cloudflare
-Access with the **one-time PIN** login method (e-mail address → code by mail) and a managed challenge
-in front of it, its own JWT check (AUD `IMAGES_AUD`; empty = 503 for everything), and only reads of
-`manifest.json` and the files it names. It binds nothing but this bucket.
+The download site is the Worker **`gocontroll-images`** in [`images/`](images/README.md): no Cloudflare
+Access; customers type their e-mail address (Turnstile), get a link by mail, and opening it sets a
+signed session cookie for 7 days (`TURNSTILE_SITE_KEY` empty = 503 for everything). It reads
+`manifest.json` and the files it names, and binds this bucket, `MAIL` (`ImagesMail` only), a rate limit
+and two secrets of its own (`IMAGES_SESSION_KEY`, `IMAGES_TURNSTILE_SECRET`); no Microsoft 365 secret.
 
 ### Applications, settings and the controller type
 
@@ -452,6 +479,7 @@ enough for this data, so it stays there.
 | `firmware-log/<hw_id>/<version>.json` | Who published that module firmware from Deploy, when, its SHA-256, and the repository, branch, commit and tag it came from (also in the custom metadata, for the overview's one listing). None for a version the CI published. |
 | `images/releases/<kind>/<product>/<version>.json` | A release for images.gocontroll.tech: kind, product, title, version, controllers, release date, notes, files (name, path, size, SHA-256, role, platform, who uploaded it when), `draft`/`published`, who made, changed and published it when. |
 | `images/uploads/<id>.json` | An upload to `gocontroll-images` under way: R2 upload ID, object key, size, part size and count, who started it. Gone once completed or aborted. |
+| `images/stats/<yyyy-mm>.json` | The downloads of a finished month on images.gocontroll.tech: in all, different addresses (a number), per release, per file, per country. No e-mail address. Kept after the download log expires. |
 
 Read it with `npx wrangler r2 object get gocontroll-deploy-state/<key> --remote --file=-`.
 
@@ -602,7 +630,7 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
 | GET | `/api/firmware/github?repo=owner/name` | `{ configured, allowed, readable, canPush, error }`: whether Deploy can tag and release there (one read on GitHub; the page shows it next to the repository) |
 | POST | `/api/firmware/releases` | `{ repo: "GOcontroll/Module-…", commit, version, files: [ { file, path } ], replaceTag? }` → `{ repo, tag, tagState: "created" \| "kept" \| "replaced", tagUrl, releaseUrl, releaseState, assets, safetyNet }`; 409 `field: "files" \| "commit" \| "version"`, or `conflict: "tag"` with `existingMessage`/`existingCommit`; 403 repository not in `GITHUB_REPOS`; 503 without a token ([GitHub releases](#github-releases)) |
 | POST | `/api/firmware` | multipart `file` (`<a>-<b>-<c>-<d>-<x>-<y>-<z>.srec`, LF, ≤ 4 MB), `released` (YYYY-MM-DD), `changelog` (≤ 2000), `module_name` (a new hardware ID), `replace` (`true`: write the entry of a published version again, same file), `dry_run` (`true`: write nothing), `source` (JSON `{ repo, branch, commit, tag, path, pushed }`) → `{ dryRun, hwId, version, file, url, sha256, date, changelog, moduleName, latest, latestBefore, objectWritten, replacedRelease, newModule, moduleManifest }`; 409 with `conflict: "release"` (published; *replace*) or `"file"` (other bytes: never) |
-| GET | `/api/images` | `{ releases: [ … + inCatalogue ], uploads, downloads: [ { at, email, path, kind, product, version, country } ], catalogueError?, publicUrl, limits: { partSize, maxFileSize } }` |
+| GET | `/api/images` | `{ releases: [ … + inCatalogue ], uploads, downloads: [ { at, email, path, kind, product, version, country } ], stats: { month, months: [ { month, downloads, addresses, releases, files, countries, final } ], releases: [ { release, total, thisMonth, lastMonth } ], total, error? }, catalogueError?, publicUrl, limits: { partSize, maxFileSize } }` |
 | POST | `/api/images/releases` | `{ kind: "image" \| "tool", product, version, title, controllers: ["L4", "M1", "HMI1"], released, notes }` → 201, the draft; 409 when it exists |
 | PATCH | `/api/images/releases/:kind/:product/:version` | `{ title, controllers, released, notes }` → the release (a published one is updated in `manifest.json` too) |
 | DELETE | `/api/images/releases/:kind/:product/:version` | A draft, with its files and unfinished uploads |
@@ -627,10 +655,11 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
 | R2 (read + write) | `FIRMWARE_BUCKET` → `gocontroll-firmware` (module firmware; `brcm/` is never touched), public as `firmware.gocontroll.tech` and `firmware.gocontroll.com` |
 | R2 (read + write) | `IMAGES_BUCKET` → `gocontroll-images` (created 2026-10-28; no public access, no custom domain: only the Worker `gocontroll-images` serves it) |
 | D1 (read only) | `BUSINESS_DB` → `gocontroll-business`, `MODULINE_DB` → `gocontroll-db` |
-| Secrets Store | `SIGNING_KEYS_KEY` → `DEPLOY_SIGNING_KEYS_KEY` (exists); `GITHUB_TOKEN` → `DEPLOY_GITHUB_TOKEN` (exists since 2026-10-28 as `not-set`: the owner pastes the token, [GitHub releases](#github-releases)); `CF_API_TOKEN` → `DEPLOY_CF_API_TOKEN` (to be made, [Download counts](#download-counts)) |
-| Vars | `TEAM_DOMAIN`, `POLICY_AUD`, `DEPLOY_GROUPS`, `DISTRIBUTION_URLS`, `DOWNLOAD_HOSTS`, `FIRMWARE_URLS`, `IMAGES_URL`, `GITHUB_REPOS` |
+| Secrets Store | `SIGNING_KEYS_KEY` → `DEPLOY_SIGNING_KEYS_KEY` (exists); `GITHUB_TOKEN` → `DEPLOY_GITHUB_TOKEN` (exists since 2026-10-28; the owner set the token, [GitHub releases](#github-releases)); `MS365_CLIENT_SECRET` → `MS365_CLIENT_SECRET` (since 0.6.0; shared with Hours, the Configurator and Finance); `CF_API_TOKEN` → `DEPLOY_CF_API_TOKEN` (to be made, [Download counts](#download-counts)) |
+| Vars | `TEAM_DOMAIN`, `POLICY_AUD`, `DEPLOY_GROUPS`, `DISTRIBUTION_URLS`, `DOWNLOAD_HOSTS`, `FIRMWARE_URLS`, `IMAGES_URL`, `GITHUB_REPOS`, `MAIL_FROM`, `MS365_TENANT_ID`, `MS365_CLIENT_ID`, `IMAGES_MAIL_REPLY_TO` |
+| RPC entrypoint | `ImagesMail` (`src/images-mail.ts`), bound by `gocontroll-images` as `MAIL`: deploy this Worker before the download site |
 | Second Worker | `gocontroll-images` on `images.gocontroll.tech` ([`images/`](images/README.md), `npm run deploy:images`) |
-| Cron | `17 2 * * *`: stores the download counts of finished days ([Download counts](#download-counts)) |
+| Cron | `17 2 * * *`: stores the download counts of finished days ([Download counts](#download-counts)) and the image download counts of finished months |
 
 ### One-time setup
 
@@ -652,9 +681,10 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
    shown to the object ID of `CF_Deploy` (since 2026-10-21). Hiding a tile is not access
    control: the Access application and `DEPLOY_GROUPS` are.
 4. Optionally the API token for [download counts](#download-counts).
-5. **images.gocontroll.tech** (2026-10-28): the bucket `gocontroll-images` (made by the session), then
-   the owner's Access application with the one-time PIN and the managed challenge, in the order of
-   [`images/README.md`](images/README.md) → *One-time setup*.
+5. **images.gocontroll.tech** (2026-10-28): the bucket `gocontroll-images`, its lifecycle rules and the
+   store secrets `IMAGES_SESSION_KEY` and `IMAGES_TURNSTILE_SECRET` (made by the session), then the
+   owner's Turnstile widget, in the order of [`images/README.md`](images/README.md) → *One-time setup*.
+   No Access application and no one-time PIN (the plan until 0.6.0).
 
 ### Worker
 
@@ -687,6 +717,12 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
   manifest) and the root manifest before every publish is in its `publish-linux` log entry
   (`previous_manifest`); put them back with `npx wrangler r2 object put`, the root manifest last
   (`application/gzip` for the package, `application/json` for the manifests).
+- **0.6.0** (the sign-in mail `ImagesMail`, binding `MS365_CLIENT_SECRET`, download counts per month in
+  `STATE` `images/stats/`, *Copy link*; 2026-10-28): roll **images.gocontroll.tech back first**
+  (`npx wrangler rollback 9a2c1639-79b6-4057-9c8e-b5b98b4483cd -c images/wrangler.toml`, the Access
+  version: 503 without an Access application; its download site binds `ImagesMail`, which 0.5.1 does not
+  have), then this Worker with `npx wrangler rollback e582f30e-2524-4ea3-9859-92736792a705` (0.5.1).
+  `images/stats/` stays and is ignored by 0.5.1.
 - **0.5.0** (tags and GitHub releases from the Firmware tab, binding `GITHUB_TOKEN`, 2026-10-28): back to
   0.4.1 with `npx wrangler rollback acbf96ba-4f0f-4689-b06d-74f4f4059b20`; without a deploy: `DEPLOY_GITHUB_TOKEN`
   back to `not-set`. Tags and releases already made stay on GitHub (delete them there if needed).

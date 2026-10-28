@@ -1,37 +1,27 @@
-// Test helpers: Access tokens signed with a key of our own (the team's certs endpoint is mocked
-// to hand out its public half, as in ../../test/access.test.ts), requests to the Worker, and a
-// small published catalogue in the local bucket.
+// Test helpers: session cookies signed with the test key (the one test/setup.ts puts in the local
+// Secrets Store), requests to the Worker, a stubbed Turnstile siteverify, a recording stand-in for
+// the intranet's ImagesMail, and a small published catalogue in the local bucket.
 
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import { vi } from 'vitest';
-import { resetAccessCaches } from '../../src/access';
-import { catalogueText, CATALOGUE_KEY, emptyCatalogue, type Catalogue } from '../../src/images-format';
+import { catalogueText, CATALOGUE_KEY, emptyCatalogue, type AccessLinkMail, type AccessLinkResult, type Catalogue } from '../../src/images-format';
 import worker from '../src/index';
+import { SESSION_COOKIE, signSession } from '../src/session';
 
-export const TEAM = 'https://gocontroll.cloudflareaccess.com';
-export const AUD = 'test-images-aud';
 export const HOST = 'https://images.gocontroll.tech';
-const KID = 'kid-images';
-const ALG = { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' };
+export const EMAIL = 'customer@example.com';
+/** 32 fixed bytes, base64: SESSION_KEY in the local store. */
+export const TEST_SESSION_KEY = btoa(String.fromCharCode(...Array.from({ length: 32 }, (_, i) => i + 1)));
+export const TEST_TURNSTILE_SECRET = 'test-turnstile-secret';
 
-const { privateKey, publicKey } = await crypto.subtle.generateKey(ALG, true, ['sign', 'verify']) as CryptoKeyPair;
-const publicJwk = { ...(await crypto.subtle.exportKey('jwk', publicKey) as JsonWebKey), kid: KID, alg: 'RS256' };
+/** The HMAC key of TEST_SESSION_KEY, as src/session.ts imports it. */
+export const testKey = (raw = TEST_SESSION_KEY) => crypto.subtle.importKey(
+  'raw', Uint8Array.from(atob(raw), (c) => c.charCodeAt(0)), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'],
+);
 
-const b64url = (data: string | Uint8Array) => {
-  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-};
-const now = () => Math.floor(Date.now() / 1000);
-
-/** An Access application token for images.gocontroll.tech; `extra` overrides any claim. */
-export async function token(extra: Record<string, unknown> = {}): Promise<string> {
-  const head = b64url(JSON.stringify({ alg: 'RS256', kid: KID, typ: 'JWT' }));
-  const body = b64url(JSON.stringify({
-    iss: TEAM, aud: [AUD], email: 'Customer@Example.com', sub: 'otp-1', identity_nonce: `n-${Math.random()}`,
-    iat: now(), nbf: now(), exp: now() + 600, ...extra,
-  }));
-  const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, new TextEncoder().encode(`${head}.${body}`));
-  return `${head}.${body}.${b64url(new Uint8Array(sig))}`;
+/** A Cookie header with a session for `email` (signed at `now`). */
+export async function sessionCookieHeader(email = EMAIL, now = Date.now()): Promise<string> {
+  return `${SESSION_COOKIE}=${await signSession(await testKey(), email, now)}`;
 }
 
 /**
@@ -46,16 +36,6 @@ export async function emptyBucket() {
   }
 }
 
-/** Mock the team domain (only the certs endpoint exists); forget cached keys. Call in beforeEach. */
-export function mockAccess() {
-  resetAccessCaches();
-  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
-    const url = String(input instanceof Request ? input.url : input);
-    if (url === `${TEAM}/cdn-cgi/access/certs`) return Response.json({ keys: [publicJwk] });
-    throw new Error(`unexpected fetch ${url}`);
-  });
-}
-
 /** Run one request through the Worker and wait for what it left in waitUntil (the download log). */
 export async function run(request: Request, overrides: Record<string, unknown> = {}): Promise<Response> {
   const ctx = createExecutionContext();
@@ -64,11 +44,58 @@ export async function run(request: Request, overrides: Record<string, unknown> =
   return res;
 }
 
-/** A request on images.gocontroll.tech with a valid token (unless `auth: false`). */
+/** A request on images.gocontroll.tech with a session cookie (unless `auth: false`). */
 export async function signedIn(path: string, init: RequestInit & { auth?: boolean } = {}, overrides: Record<string, unknown> = {}): Promise<Response> {
   const headers = new Headers(init.headers);
-  if (init.auth !== false) headers.set('Cf-Access-Jwt-Assertion', await token());
+  if (init.auth !== false && !headers.has('cookie')) headers.set('cookie', await sessionCookieHeader());
   return run(new Request(`${HOST}${path}`, { ...init, headers }), overrides);
+}
+
+// ── Asking for a link ────────────────────────────────────────────────────────
+
+/** What siteverify answers in a test: success on images.gocontroll.tech for `access`, unless changed. */
+export type Siteverify = { success: boolean; hostname?: string; action?: string; 'error-codes'?: string[] } | 'down';
+
+/** Stub every fetch: siteverify answers `answer`; anything else fails the test. Returns the spy. */
+export function stubSiteverify(answer: Siteverify = { success: true, hostname: 'images.gocontroll.tech', action: 'access' }) {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url === 'https://challenges.cloudflare.com/turnstile/v0/siteverify') {
+      if (answer === 'down') throw new TypeError('network down');
+      return Response.json(answer);
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  });
+}
+
+/** A stand-in for the intranet's ImagesMail that records what it was asked to send. */
+export function recordingMail(result: AccessLinkResult | 'throw' = { ok: true }) {
+  const sent: AccessLinkMail[] = [];
+  return {
+    sent,
+    MAIL: {
+      async sendAccessLink(mail: AccessLinkMail): Promise<AccessLinkResult> {
+        sent.push(mail);
+        if (result === 'throw') throw new Error('service unavailable');
+        return result;
+      },
+    },
+  };
+}
+
+/** A rate limiter that always lets through (or never, with `false`). */
+export const limiter = (success = true) => ({ limit: async () => ({ success }) });
+
+/** POST /api/access as the sign-in page sends it. */
+export function askForLink(body: unknown, init: { origin?: string; contentType?: string; ip?: string } = {}, overrides: Record<string, unknown> = {}) {
+  const headers: Record<string, string> = {
+    origin: init.origin ?? HOST,
+    'content-type': init.contentType ?? 'application/json',
+    'cf-connecting-ip': init.ip ?? '203.0.113.7',
+  };
+  return run(new Request(`${HOST}/api/access`, { method: 'POST', headers, body: typeof body === 'string' ? body : JSON.stringify(body) }), {
+    RL_ACCESS: limiter(), ...overrides,
+  });
 }
 
 // ── A published catalogue ────────────────────────────────────────────────────

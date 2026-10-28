@@ -7,6 +7,8 @@ export const ME = 'jane.doe@gocontroll.com';
 
 /** The key-encryption key test/setup.ts puts in the local Secrets Store. */
 export const TEST_KEK = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
+/** The Microsoft 365 client secret in the local store (test/setup.ts); Graph is always stubbed. */
+export const TEST_MS365_SECRET = 'test-ms365-secret';
 
 const ORIGIN = 'http://localhost';
 

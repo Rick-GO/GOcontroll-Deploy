@@ -88,3 +88,55 @@ export function productGroups(releases, kind, controller = '') {
   }
   return [...groups.values()];
 }
+
+// ── Signing in and the download page ─────────────────────────────────────────
+
+/** Copies of LINK_TTL_SECONDS and SESSION_TTL_SECONDS in src/images-format.ts (the source), in minutes and days. */
+export const LINK_MINUTES = 60;
+export const ACCESS_DAYS = 7;
+
+/**
+ * What the sign-in page says first, from its address: an expired or broken link, or signed out;
+ * null when there is nothing to say. @param {URLSearchParams} params
+ * @returns {{ kind: 'err' | 'info', text: string } | null}
+ */
+export function signInNotice(params) {
+  const link = params.get('link');
+  if (link === 'expired') return { kind: 'err', text: 'This link has expired. Enter your e-mail address and we send you a new one.' };
+  if (link !== null) return { kind: 'err', text: 'This link does not work. Enter your e-mail address and we send you a new one.' };
+  if (params.has('signed-out')) return { kind: 'info', text: 'You are signed out.' };
+  return null;
+}
+
+/** The release file a download page or ?next= names, or '' (the start page). @param {string | null} path */
+export function downloadTarget(path) {
+  const prefix = '/download/';
+  if (!path || !path.startsWith(prefix)) return '';
+  const file = path.slice(prefix.length);
+  return /^(images|tools)\/[^/]+\/[^/]+\/[^/]+$/.test(file) ? file : '';
+}
+
+/** The file name of a release file path. @param {string} path */
+export const fileName = (path) => path.slice(path.lastIndexOf('/') + 1);
+
+/**
+ * The release and file of a path in the catalogue, or null when it is not (or no longer) published.
+ * @param {Catalogue} catalogue @param {string} path
+ * @returns {{ release: CatalogueRelease, file: CatalogueFile } | null}
+ */
+export function findFile(catalogue, path) {
+  for (const release of catalogue.releases) {
+    const file = release.files.find((f) => f.path === path);
+    if (file) return { release, file };
+  }
+  return null;
+}
+
+/** The commands that compute a file's SHA-256, per system, with its name filled in. @param {string} name */
+export function verifyCommands(name) {
+  return [
+    { system: 'Linux', command: `sha256sum ${name}` },
+    { system: 'macOS', command: `shasum -a 256 ${name}` },
+    { system: 'Windows (PowerShell)', command: `Get-FileHash -Algorithm SHA256 .\\${name}` },
+  ];
+}

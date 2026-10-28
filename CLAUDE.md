@@ -19,6 +19,14 @@
   tag. 0.5.1 (versie `e582f30e-2524-4ea3-9859-92736792a705`): `GET /api/firmware/github?repo=` (alleen lezen) en de pagina
   toont per repo of tag + release lukt; terug naar 0.5.0: `npx wrangler rollback 6370d878-a30f-4723-bff0-937a55fabafe`. Terug naar 0.4.1:
   `npx wrangler rollback acbf96ba-4f0f-4689-b06d-74f4f4059b20`.
+- **0.6.0 (2026-10-28, besluit gebruiker: optie B)**: `images.gocontroll.tech` zonder Cloudflare Access en zonder one-time PIN:
+  de klant vult zijn e-mailadres in (Turnstile), krijgt een link per mail (60 min geldig) en heeft daarna 7 dagen toegang op
+  dat apparaat (ondertekende cookie, `IMAGES_SESSION_KEY`). De mail verstuurt deze Worker via het RPC-entrypoint `ImagesMail`
+  (`src/images-mail.ts`, Graph met `MS365_CLIENT_SECRET`), zodat het mailsecret niet in de publieke Worker staat. Images-tab:
+  tellingen per release en per maand (`src/images-stats.ts`, afgeronde maanden zonder adressen in `STATE` `images/stats/`) en
+  *Copy link* per bestand (`/download/<path>`). Site blijft 503 tot de eigenaar de Turnstile-widget heeft gemaakt en de sitekey
+  in `TURNSTILE_SITE_KEY` staat (`images/README.md` → *One-time setup*). Terug: eerst `gocontroll-images` naar `9a2c1639`
+  (`-c images/wrangler.toml`), dan deze Worker naar 0.5.1 (`e582f30e-2524-4ea3-9859-92736792a705`).
 
 ## Architectuur
 - **Worker met static assets** (geen Pages), zelfde opzet als GOcontroll-Logistic: `run_worker_first = true`,
@@ -103,8 +111,9 @@
 
 ## Images voor klanten (`src/images.ts`, tab Images, `images/`)
 - Formaat en bucketindeling: **`src/images-format.ts`** (geen imports; door beide Workers gebundeld). Contract
-  `GOcontroll-Architecture/cloudflare/images/spec.md`. Deploy is de **enige schrijver** van releases en `manifest.json`;
-  `images.gocontroll.tech` (Worker `gocontroll-images`, `images/`) is de enige lezer en schrijft alleen `downloads/`.
+  `GOcontroll-Architecture/cloudflare/images/spec.md` (≥ 1.1.0). Deploy is de **enige schrijver** van releases en
+  `manifest.json`; `images.gocontroll.tech` (Worker `gocontroll-images`, `images/`) is de enige lezer en schrijft alleen
+  `downloads/` en `access-mails/` (het uurplafond van 5 links per adres, sleutel = HMAC van het adres, lifecycle 1 dag).
 - Release = concept in `STATE` `images/releases/<kind>/<product>/<versie>.json`; bestanden staan al in de bucket, maar de
   download-Worker serveert alleen wat `manifest.json` noemt. Publiceren/terugtrekken = `manifest.json` etag-conditioneel
   herschrijven. In `manifest.json` nooit e-mailadressen of concepten (`catalogueEntry`). Alleen een concept verliest
@@ -114,10 +123,24 @@
   `PART_PATH`), daarna `complete`: grootte gecontroleerd en SHA-256 uit het opgeslagen object (`crypto.DigestStream`).
 - Downloadlog: lege objecten `downloads/<yyyy>/<mm>/<iso>-<rand>.json` met custom metadata (`DownloadMeta`); Deploy leest
   alleen de listing van deze en vorige maand.
+- Downloadtellingen (`src/images-stats.ts`): per afgeronde maand één keer opgeteld uit het log naar `STATE`
+  `images/stats/<yyyy-mm>.json` (**zonder e-mailadressen**, alleen het aantal verschillende), door de cron en bij bekijken
+  (max. 6 per run, een uur na het einde van de maand); de lopende maand (en vorige maand in zijn eerste uur) live. Zo blijven
+  de totalen na de 13 maanden van het log.
+- **Inloggen op images.gocontroll.tech** (sinds 0.6.0, geen Access): `POST /api/access` (same origin, rate limit per IP
+  `RL_ACCESS`, geldig adres, Turnstile actie `access` op de eigen hostname, max. `LINKS_PER_HOUR` per adres) → link
+  `l.<payload>.<hmac>` (60 min) → `GET /access` zet cookie `__Host-images-session` `s.<payload>.<hmac>` (7 dagen). Soort zit in de
+  handtekening (link ≠ cookie); `next` alleen `/` of `/download/<release-bestand>` (`safeNext`). Niets server-side: nieuwe
+  `IMAGES_SESSION_KEY` = iedereen opnieuw. Sleutel onleesbaar = 503, nooit "uitgelogd".
+- **`ImagesMail`** (`src/images-mail.ts`, `export { ImagesMail }` in `src/index.ts`): mailt één vaste tekst, alleen naar het
+  ene adres en alleen met een link `<IMAGES_URL>/access?t=<LINK_TOKEN_RE>`; al het andere geweigerd vóór Microsoft. Antwoordt
+  `{ ok }`, gooit niet; log noemt alleen het domein van het adres. `src/mail/graph.ts` is een kopie van die van de
+  Configurator: houd ze in de pas. Deploy deze Worker vóór `gocontroll-images` (die bindt het entrypoint).
 - `images/` heeft eigen `wrangler.toml`, tests (`npm run test:images`, deel van `npm test`) en deploy
-  (`npm run deploy:images`). Bindt **alleen** `IMAGES_BUCKET`; JWT-check met `IMAGES_AUD` (leeg = 503 op alles), geen
-  groepscheck (one-time PIN: elk geverifieerd e-mailadres). Access-app, one-time PIN en WAF-challenge zet de eigenaar in het
-  dashboard (de wrangler-login heeft geen Access- of WAF-rechten).
+  (`npm run deploy:images`). Bindt `IMAGES_BUCKET`, `MAIL` (`ImagesMail`), `RL_ACCESS` en de store-secrets
+  `IMAGES_SESSION_KEY` en `IMAGES_TURNSTILE_SECRET` (`not-set` = geen links); **nooit** een Microsoft 365-secret, `STATE` of een
+  D1 (`images/test/config.test.ts`). `TURNSTILE_SITE_KEY` leeg = 503 op alles. De Turnstile-widget maakt de eigenaar in het
+  dashboard (de wrangler-login heeft geen Turnstile-rechten); Access, one-time PIN en een WAF-regel zijn niet meer nodig.
 
 ## Applicaties
 - Een applicatie = map: objecten onder `<APP_ID>/`, een sleutel, of settings (`folders/<APP_ID>.json`). Elk van de
@@ -188,6 +211,7 @@
   `curl -sI http://deploy.gocontroll.tools/pub/logo.svg` → 301 naar `https://`, en via https 200 met
   `content-security-policy` en `strict-transport-security`.
   Terug: `npx wrangler deployments list` → `npx wrangler rollback <versie-id>`.
-- `images.gocontroll.tech` na deploy (`npm run deploy:images`): zonder AUD `curl -sI https://images.gocontroll.tech/` → 503;
-  met Access-app → 302 naar `gocontroll.cloudflareaccess.com`.
+- `images.gocontroll.tech` na deploy (`npm run deploy:images`, altijd ná `npm run deploy`): zonder sitekey
+  `curl -sI https://images.gocontroll.tech/` → 503; met sitekey → 303 naar `/sign-in`, en `/sign-in` → 200 met een CSP die
+  `challenges.cloudflare.com` toestaat.
 - `npm install` vraagt `legacy-peer-deps` (staat in `.npmrc`).

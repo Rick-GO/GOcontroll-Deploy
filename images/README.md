@@ -3,13 +3,14 @@
 The download site for GOcontroll's **customers**: Linux images (root file system, kernel,
 bootloader, …) for the Moduline **L4, M1 and HMI1**, and the tools to flash them. A separate
 Worker, **`gocontroll-images`**, in this folder of the Deploy repo; it shares nothing with the
-intranet Worker of the repo but three source files and the bucket.
+intranet Worker of the repo but a few source files, the bucket and one RPC call (the mail with the
+sign-in link).
 
-> **Status: deployed on 2026-10-28 (version `9a2c1639`), not open yet.** The Worker, its custom
-> domain and the bucket exist; the Access application does not. Until the owner has done
-> the [one-time setup](#one-time-setup-in-the-cloudflare-dashboard), every request gets
-> **503 "Downloads are being set up"** (`IMAGES_AUD` is empty: fail closed). There are no images
-> yet either; the page shows "No images have been published yet." until there are.
+> **Status: deployed, not open yet.** Since 2026-10-28 (Deploy 0.6.0) customers sign in with their
+> e-mail address and a link by mail (no Cloudflare Access, no one-time PIN). Until the owner has made
+> the Turnstile widget ([one-time setup](#one-time-setup)) and its site key is in
+> `TURNSTILE_SITE_KEY`, every request gets **503 "Downloads are being set up"** (fail closed). There
+> are no images yet either; the page shows "No images have been published yet." until there are.
 
 ## How it works
 
@@ -17,43 +18,83 @@ intranet Worker of the repo but three source files and the bucket.
   Worker of this repo, `../src/images.ts`). It uploads the files into the R2 bucket
   **`gocontroll-images`** and writes **`manifest.json`**, the published catalogue. It is the only
   writer of both.
-- **Who downloads**: customers, on `https://images.gocontroll.tech`, behind its own Cloudflare Access
-  application with one login method, the **one-time PIN** (the customer types an e-mail address and
-  gets a code by mail), and a managed challenge in front of it (a WAF rule). Both are dashboard
-  configuration, below.
-- **This Worker** reads `manifest.json`, shows it, streams the files it names, and writes one log
-  entry per download. It never writes a release or the manifest.
+- **Who downloads**: customers, on `https://images.gocontroll.tech`. They type their e-mail address
+  (with a Cloudflare Turnstile check), get a **link by mail** from `noreply@gocontroll.com`, and
+  opening it gives them access **on that device for 7 days**. The link works for **60 minutes**. No
+  accounts, no passwords, nothing to install.
+- **Who mails**: the intranet Worker, through its RPC entrypoint **`ImagesMail`**
+  (`../src/images-mail.ts`), which this Worker binds as `MAIL`. The Microsoft 365 secret stays on the
+  intranet; ImagesMail sends one fixed message, only to the address it is given and only with a link to
+  this site.
+- **This Worker** shows the catalogue, streams the files it names, and writes one log entry per
+  download (with the address that signed in). It never writes a release or the manifest.
+- **Counts**: the Images tab of Deploy shows per release how often it was downloaded (in all, this
+  month, last month), per month the downloads, the number of different addresses and the countries, and
+  the latest downloads with who. Finished months are kept without addresses (`../src/images-stats.ts`).
 
 The contract between the two Workers — the bucket layout, the catalogue format, which files may be
-served, the download log — is **`../src/images-format.ts`** (no imports, bundled by both). It is
-not repeated here. In short: `manifest.json`, `images/<product>/<version>/<file>`,
-`tools/<product>/<version>/<file>`, `downloads/<yyyy>/<mm>/<time>-<random>.json`.
+served, the download log, the sign-in mail — is **`../src/images-format.ts`** (no imports, bundled by
+both). It is not repeated here. In short: `manifest.json`, `images/<product>/<version>/<file>`,
+`tools/<product>/<version>/<file>`, `downloads/<yyyy>/<mm>/<time>-<random>.json`, `access-mails/<hmac>`.
 
 ### Every request, in this order (`src/index.ts`)
 
 1. **Plain HTTP** → 301 (GET/HEAD) or 308 to the same path and query on `https://`
    (`../src/lib/https.ts`, the same module as the intranet Worker; `localhost` never).
-2. **`IMAGES_AUD` empty** → **503** for everything: the page, the assets, the API and the files (a
-   self-contained page, or JSON under `/api/`). Nothing is served before the Access application
-   exists.
-3. **The Access token** (`Cf-Access-Jwt-Assertion`) verified with `verifyAccessJwt` of
-   `../src/access.ts`: RS256 signature against the team's keys, issuer
-   `https://gocontroll.cloudflareaccess.com`, audience `IMAGES_AUD`, expiry. Refused → **403**.
-   The e-mail address comes only from that token. **No group check**: a one-time-PIN identity has no
-   groups, and any address Access let in may download. The team's keys unreachable → 503.
-4. **GET and HEAD only** (else 405), then:
+2. **`TURNSTILE_SITE_KEY` empty** → **503** for everything: the pages, the assets, the API, the files
+   and the sign-in (a self-contained page, or JSON under `/api/`). Locally `DEV_USER_EMAIL` on a
+   `localhost` URL passes.
+3. The routes:
 
 | Path | Answer |
 |---|---|
-| `GET /` and the assets | the page (`public/index.html`, `app.js`, `format.js`, `styles.css`, logo, favicons); anything else 404 |
-| `GET /api/catalogue` | `{ email, catalogue }`: `manifest.json` through `parseCatalogue` (no manifest yet = the empty catalogue); `cache-control: private, no-store`; a manifest that is not JSON = 503 |
-| `GET` / `HEAD /files/<path>` | the file, only when `findPublishedFile` finds `<path>` in the catalogue. A draft whose files are already in the bucket, `downloads/…`, `manifest.json`, an unknown path, a `%` escape (`%2F`, `%2e%2e`), `..` (the URL is normalised first): 404 |
+| `POST /api/access` | ask for a link (below); the only POST |
+| `GET /access?t=<token>` | the link from the mail: valid → the session cookie and **303** to where the customer was going (`/` or `/download/<path>`); expired → `/sign-in?link=expired` (keeping `next`); anything else → `/sign-in?link=invalid` |
+| `GET /sign-in` | the sign-in page, for anyone, with the widget's site key put into `#turnstile` (`data-sitekey`) and the only CSP that allows Turnstile; signed in already → 303 onwards |
+| `GET /sign-out` | the cookie cleared, 303 to `/sign-in?signed-out` |
+| `GET /` | the downloads page; without a session 303 to `/sign-in` |
+| `GET /download/<path>` | the page that shows one file and starts its download; without a session 303 to `/sign-in?next=/download/<path>`; a path that is not `<images\|tools>/<product>/<version>/<file>` → 404 |
+| `GET /api/catalogue` | `{ email, catalogue }`: `manifest.json` through `parseCatalogue` (no manifest yet = the empty catalogue); `cache-control: private, no-store`; a manifest that is not JSON = 503; without a session **401** `{ error, signIn }` |
+| `GET` / `HEAD /files/<path>` | the file, only when `findPublishedFile` finds `<path>` in the catalogue. A draft whose files are already in the bucket, `downloads/…`, `manifest.json`, an unknown path, a `%` escape, `..`: 404. Without a session 303 to the sign-in page, back to `/download/<path>` |
+| anything else | the static assets (scripts, stylesheet, brand images, `robots.txt`): public, they hold no data. The pages by file name (`/index.html`, `/sign-in.html`, `/download.html`, `/download`, `/index`): 404 |
 
-Every answer — page, assets, API, files, 403/404/405/416/503, the redirect — carries the security
+The session key unreadable (Secrets Store down, or not a key) → 503 for everything that needs it:
+nobody gets in and nobody is signed out.
+
+Every answer — pages, assets, API, files, redirects, 303/401/404/405/416/503 — carries the security
 headers of `src/headers.ts` (CSP without inline script or style and without `data:`, nosniff,
-Referrer-Policy, `X-Frame-Options: DENY`, HSTS for this host only). The plain pages (503, 403, 404,
-405) load nothing, because the assets are refused in the same situations and the CSP forbids inline
-styles.
+Referrer-Policy, `X-Frame-Options: DENY`, HSTS for this host only, **`X-Robots-Tag: noindex, nofollow`**).
+Only the sign-in page may load `https://challenges.cloudflare.com` (script and frame, `SIGN_IN_CSP`).
+`robots.txt` keeps crawlers off `/api/`, `/files/`, `/download/` and `/access`; the sign-in page stays
+crawlable so its `noindex` is seen. The plain pages (503, 404, 405) load nothing.
+
+### Signing in (`src/access.ts`, `src/session.ts`, `src/turnstile.ts`)
+
+`POST /api/access` `{ email, turnstile, next }`, from the sign-in page only, checked in this order:
+
+1. **Same origin** (`Origin` = `SITE_URL`, or the localhost origin locally), JSON, at most 8 kB → else 403/415/413/400.
+2. **`RL_ACCESS`** per client IP (Workers rate limiting, 5 per minute; a brake, not a lock) → 429.
+3. **A valid e-mail address** (`normaliseEmail`: trimmed, lower case, plain ASCII) → else 400.
+4. **Turnstile**: siteverify with `IMAGES_TURNSTILE_SECRET`, solved on this site's hostname for the
+   action `access` → else 403; no secret (`not-set`), siteverify down or Cloudflare's own error → 503.
+5. **At most 5 links per address per hour**: one empty object `access-mails/<HMAC of the address>` with
+   the times in its custom metadata `sent` (the key does not reveal the address; an R2 lifecycle rule
+   deletes these after a day) → 429.
+6. The link signed and handed to **`MAIL.sendAccessLink({ email, link, file? })`**; its `{ ok: false }`
+   or a failed call → 503 "could not be sent". Then **200** `{ ok, email }`.
+
+Tokens are signed by this Worker with **`SESSION_KEY`** (HMAC-SHA256; Secrets Store `IMAGES_SESSION_KEY`):
+
+| Token | Form | Life | Holds |
+|---|---|---|---|
+| link (in the mail) | `l.<payload>.<sig>` in `?t=` | 60 minutes | address, expiry, where to go (`next`) |
+| session (cookie `__Host-images-session`) | `s.<payload>.<sig>` | 7 days | address, expiry |
+
+`payload` is base64url JSON, `sig` = base64url HMAC over `<kind>.<payload>`, so a link never passes as a
+session or the other way round. The cookie is `Secure; HttpOnly; SameSite=Lax; Path=/`, host-only.
+`next` is only ever `/` or `/download/<release file path>` (`safeNext`): a link can never send anyone
+off this site. Nothing is kept on the server: a link opens as often as it is clicked within its hour (a
+mail scanner may open it first), and a new `SESSION_KEY` ends every session and link at once.
 
 ### Downloads (`src/files.ts`)
 
@@ -68,34 +109,50 @@ styles.
   silently (Miniflare sends the whole object). `If-Range` is honoured
   (strong ETag or the Last-Modified date), so resuming a file that changed starts over.
 - **The download log**: one empty object `downloads/<yyyy>/<mm>/<ISO time>-<12 hex>.json` per download,
-  with `DownloadMeta` as custom metadata: `email` (from the verified token), `path`, `kind`, `product`,
-  `version`, `country` (`request.cf.country`, or empty). Written in `waitUntil` only for a GET that
-  starts the file and gets the bytes (no Range, or a range from byte 0): never for HEAD, a 304, a
-  refusal or a range further into the file, so a resumed or chunked download counts once. The log is
-  personal data (an e-mail address per download): only the intranet reads it; keep it no longer than
-  needed (step 4 below).
+  with `DownloadMeta` as custom metadata: `email` (from the session: the address that opened the link),
+  `path`, `kind`, `product`, `version`, `country` (`request.cf.country`, or empty). Written in
+  `waitUntil` only for a GET that starts the file and gets the bytes (no Range, or a range from byte 0):
+  never for HEAD, a 304, a refusal or a range further into the file, so a resumed or chunked download
+  counts once. The log is personal data (an e-mail address per download): only the intranet reads it;
+  it expires after 395 days (step 3 below). The sign-in page says so.
 
-### The page (`public/`)
+### The pages (`public/`)
 
 Plain ES modules with `// @ts-check` and JSDoc, no framework, no build step, as the intranet apps.
-Header with the logo, "Downloads", the signed-in address and *Sign out* (`/cdn-cgi/access/logout`);
-the anthracite hero; **Controller images** with a filter All / L4 / M1 / HMI1 (kept in the address,
-`#M1`); **Tools**; *Verify your download* (`sha256sum`, `shasum -a 256`, `Get-FileHash -Algorithm SHA256`).
-Per product its releases newest first, the newest open, older ones collapsed (`<details>`); per
-release the version, release date (en-GB), controllers, notes as plain text and the files: name,
-role, platform (not when `any`), size, SHA-256 with *Copy*, *Download*.
 
-Catalogue text only ever goes into the page as text (`textContent`, `setAttribute`): `app.js` has no
-`innerHTML` at all (`test/page.test.ts` checks it). `public/format.js` holds the labels, sizes, dates
-and grouping without the DOM; its two label maps are copies of `FILE_ROLE_LABELS` and
-`PLATFORM_LABELS` in `../src/images-format.ts` (the source; the test fails when they drift apart).
-`public/tsconfig.json` is not served (`public/.assetsignore`).
+- **`sign-in.html` + `sign-in.js`**: the e-mail address, the Turnstile widget (Cloudflare's `api.js`,
+  rendered explicitly, reset after every request), *Send me the link*; then *Check your e-mail* (from
+  noreply@gocontroll.com, look in spam) and *Use another address or send again*. Says what the address
+  is used for. Coming from a file link it names the file. Notices for an expired or broken link and for
+  signing out (`signInNotice`).
+- **`index.html` + `app.js`**: header with the logo, "Downloads", the signed-in address and *Sign out*
+  (`/sign-out`); the anthracite hero; **Controller images** with a filter All / L4 / M1 / HMI1 (kept in
+  the address, `#M1`); **Tools**; *Verify your download*. Per product its releases newest first, the
+  newest open, older ones collapsed (`<details>`); per release the version, release date (en-GB),
+  controllers, notes as plain text and the files: name, role, platform (not when `any`), size, SHA-256
+  with *Copy*, *Download*.
+- **`download.html` + `download.js`**: `/download/<path>`, the link to give a customer for one file
+  (Deploy's Images tab copies it): the release, the file card, "Your download has started" (it starts
+  once when the page opens; the browser stays on the page), and the checksum commands with the file's
+  own name. A file that is not published (any more): a notice and a link to all downloads.
+- **`ui.js`**: the DOM helpers, the file card and loading the catalogue (401 → to `/sign-in`, back
+  to the page). **`format.js`**: labels, sizes, dates, grouping, the sign-in notices, the checksum
+  commands, without the DOM; its label maps and durations are copies of `../src/images-format.ts`
+  (the source; the test fails when they drift apart).
+
+Catalogue text only ever goes into a page as text (`textContent`, `setAttribute`): no script has
+`innerHTML` at all (`test/page.test.ts` checks it). `public/tsconfig.json` is not served
+(`public/.assetsignore`).
 
 ## Bindings
 
-Only `IMAGES_BUCKET` (R2 `gocontroll-images`), `ASSETS`, and the vars `TEAM_DOMAIN` and `IMAGES_AUD`.
-No state bucket, no D1, no secret, no service binding: anyone who receives a one-time PIN reaches this
-Worker, so nothing here may lead to the intranet's data. `test/config.test.ts` pins the list.
+`IMAGES_BUCKET` (R2 `gocontroll-images`), `ASSETS`, **`MAIL`** (service binding to
+`gocontroll-deploy-intranet`, entrypoint `ImagesMail`), **`RL_ACCESS`** (rate limit, namespace 4731),
+the Secrets Store secrets **`SESSION_KEY`** (`IMAGES_SESSION_KEY`) and **`TURNSTILE_SECRET`**
+(`IMAGES_TURNSTILE_SECRET`), and the vars `SITE_URL` and `TURNSTILE_SITE_KEY`. No state bucket, no D1,
+no Microsoft 365 secret, no other service: anyone on the internet reaches this Worker, so nothing here
+may lead to the intranet's data, and the most `MAIL` can do is mail a link to this site to one address.
+`test/config.test.ts` pins the list.
 
 ## Development and tests
 
@@ -109,12 +166,15 @@ npx wrangler dev -c images/wrangler.toml
 ```
 
 Locally, put `DEV_USER_EMAIL=you@example.com` in `images/.dev.vars` (not in git): honoured only on a
-`localhost` URL, and then no AUD or token is needed. `wrangler dev` uses a local, empty bucket; put a
-`manifest.json` there with `npx wrangler r2 object put gocontroll-images/manifest.json --file=manifest.json --local -c images/wrangler.toml`.
+`localhost` URL, and then no site key, link or cookie is needed. The sign-in itself cannot run locally
+(no ImagesMail behind `MAIL`). `wrangler dev` uses a local, empty bucket; put a `manifest.json` there
+with `npx wrangler r2 object put gocontroll-images/manifest.json --file=manifest.json --local -c images/wrangler.toml`.
 
-The tests run in the Workers runtime (Miniflare) with the real assets and a local bucket that each
-test empties first (the pool keeps storage between tests, so the files run one after the other).
-Access tokens are signed with a key of the test's own, and the team's certs endpoint is mocked.
+The tests run in the Workers runtime (Miniflare) with the real assets, a local bucket that each test
+empties first (the pool keeps storage between tests, so the files run one after the other), the two
+secrets in Miniflare's local store (`test/setup.ts`), Cloudflare's always-passing Turnstile site key,
+a stand-in Worker for `ImagesMail` (`vitest.config.ts`) and, where a test looks at what was sent, a
+recording fake instead. siteverify is stubbed; nothing leaves the test.
 
 ## Deploy
 
@@ -122,82 +182,76 @@ Access tokens are signed with a key of the test's own, and the team's certs endp
 npm run deploy:images               # typecheck + both suites, then wrangler deploy -c images/wrangler.toml
 ```
 
-The bucket **`gocontroll-images`** must exist before the first deploy (`npx wrangler r2 bucket create
-gocontroll-images`; it is shared with the Images tab of Deploy, which needs it too). Made on 2026-10-28
-by the session, with the lifecycle rule of step 4. The first deploy
-creates the custom domain `images.gocontroll.tech` (zone `gocontroll.tech`). With `IMAGES_AUD` still
-empty it answers 503 everywhere, so deploying before the Access application exists is safe.
+Before the first deploy with these bindings (all done on 2026-10-28):
+
+- the bucket **`gocontroll-images`** (`npx wrangler r2 bucket create gocontroll-images`; shared with the
+  Images tab of Deploy);
+- the store secrets **`IMAGES_SESSION_KEY`** (made by the session, never seen:
+  `node -e "process.stdout.write(require('crypto').randomBytes(32).toString('base64'))" | npx wrangler secrets-store secret create 33801ac6937549ae8f6f92169586a707 --name IMAGES_SESSION_KEY --scopes workers --remote`)
+  and **`IMAGES_TURNSTILE_SECRET`** (made with the value `not-set`; the owner pastes the real one);
+- the intranet Worker deployed with the entrypoint `ImagesMail` (Deploy 0.6.0): `npm run deploy` first,
+  then `npm run deploy:images`.
+
+The first deploy (2026-10-28) created the custom domain `images.gocontroll.tech` (zone
+`gocontroll.tech`). With `TURNSTILE_SITE_KEY` empty it answers 503 everywhere, so deploying before the
+widget exists is safe.
 
 After a deploy:
 
 ```bash
-curl -sI https://images.gocontroll.tech/      # 503 while IMAGES_AUD is empty; afterwards 302 to gocontroll.cloudflareaccess.com (or the challenge)
-curl -sI http://images.gocontroll.tech/       # 301 to https://
+curl -sI https://images.gocontroll.tech/            # 503 while TURNSTILE_SITE_KEY is empty; afterwards 303 to /sign-in
+curl -sI https://images.gocontroll.tech/sign-in     # 200, content-security-policy with challenges.cloudflare.com, x-robots-tag
+curl -sI http://images.gocontroll.tech/             # 301 to https://
 ```
 
 **Rolling back**: `npx wrangler deployments list -c images/wrangler.toml` →
-`npx wrangler rollback <version-id> -c images/wrangler.toml`. Closing the site at once without a
-rollback: set `IMAGES_AUD = ""` and deploy (503 everywhere), or withdraw releases on the Images tab of
-Deploy (a file stops being served as soon as `manifest.json` no longer names it). Removing it
-altogether: `npx wrangler delete gocontroll-images` (the custom domain goes with it; the bucket stays).
+`npx wrangler rollback <version-id> -c images/wrangler.toml`. The version before the e-mail sign-in is
+`9a2c1639-79b6-4057-9c8e-b5b98b4483cd` (Access with one-time PIN, 503 without an Access application).
+Closing the site at once without a rollback: set `TURNSTILE_SITE_KEY = ""` and deploy (503 everywhere),
+or withdraw releases on the Images tab of Deploy (a file stops being served as soon as `manifest.json`
+no longer names it). Ending every session: a new value for `IMAGES_SESSION_KEY` (no deploy needed).
+Removing it altogether: `npx wrangler delete gocontroll-images` (the custom domain goes with it; the
+bucket stays).
 
-## One-time setup in the Cloudflare dashboard
+## One-time setup
 
-By the owner, in this order. Until step 2 is done the Worker answers 503 to everything.
+### 1. The Turnstile widget (the owner, in the dashboard)
 
-### 1. The one-time PIN login method
+The wrangler login has no Turnstile rights, so the owner does this. Cloudflare dashboard →
+**Turnstile** → *Add widget*:
 
-Zero Trust → **Settings → Authentication → Login methods** → *Add new* → **One-time PIN** (if it is
-not there yet).
+- Name **GOcontroll Downloads**; hostname **`images.gocontroll.tech`** (only that one).
+- Widget mode **Managed**; no pre-clearance.
+- Create, then:
+  - the **secret key**: Secrets Store → `default_secrets_store` → `IMAGES_TURNSTILE_SECRET` → *Edit* →
+    paste it (no deploy needed);
+  - the **site key** (not a secret): to the session, which puts it in `TURNSTILE_SITE_KEY` in
+    `images/wrangler.toml`, commits and deploys. From then on the site is open.
+- Check: `curl -sI https://images.gocontroll.tech/` → 303 to `/sign-in`; in a private window ask for a
+  link with your own address, open it, see the downloads; *Sign out*; open the link of a file
+  (`/download/…`, *Copy link* on the Images tab) and see it ask, then start that file.
 
-> **Check every existing Access application first.** A login method added here is offered to every
-> application that has *Accept all available identity providers* on. For the intranet apps (the hub,
-> Hours, HR, CRM, Finance, Deploy, …) that would let anyone who can read a `@gocontroll.com` mailbox
-> sign in with a code instead of Entra ID (no MFA, no conditional access) wherever a policy matches on
-> the e-mail address or domain. In each intranet Access application: *Login methods* → turn
-> *Accept all available identity providers* **off** and select **only Entra ID**. Group-based policies
-> do not match a one-time-PIN identity (it has no groups), but policies on e-mail addresses do.
+Way back: `TURNSTILE_SITE_KEY = ""` and deploy (503 everywhere); the widget can stay.
 
-Way back: remove One-time PIN again (only when no other application uses it).
+No Cloudflare Access application, no one-time PIN login method and no WAF rule are needed (the plan
+before 2026-10-28): Turnstile is the human check, and the account-wide one-time PIN never had to be
+switched on, so the intranet's Access applications are unaffected.
 
-### 2. The Access application
+### 2. Expire the hourly cap (done 2026-10-28)
 
-Zero Trust → **Access → Applications** → *Add an application* → **Self-hosted**:
+R2 → bucket **`gocontroll-images`** → lifecycle rule `expire-access-mails`, prefix `access-mails/`,
+**delete objects 1 day** after upload. Made by the session with
+`npx wrangler r2 bucket lifecycle add gocontroll-images expire-access-mails access-mails/ --expire-days 1`.
 
-- Name **GOcontroll Images**; session duration **24 hours**.
-- Public hostname: subdomain `images`, domain `gocontroll.tech`, no path.
-- Login methods: *Accept all available identity providers* **off**, only **One-time PIN**;
-  **Instant Auth** on (skips the choice of login method).
-- Policy: name *Customers*, action **Allow**, include **Everyone** — any e-mail address that receives the
-  code. Narrow it later to *Emails ending in* (customers' domains) or a list of *Emails* when the
-  customers are known.
-- Save, then copy the **Application Audience (AUD) Tag** (Overview) into `IMAGES_AUD` in
-  `images/wrangler.toml`, commit, and `npm run deploy:images`.
-- Check: `curl -sI https://images.gocontroll.tech/` → 302 to `gocontroll.cloudflareaccess.com`; sign in
-  with a code in a private window and see the page.
+Way back: `npx wrangler r2 bucket lifecycle remove gocontroll-images --name expire-access-mails`.
 
-Way back: set `IMAGES_AUD = ""` and deploy (503 everywhere), then delete the application. Deleting only
-the application leaves the Worker refusing every request (403: no token).
-
-### 3. The human check (WAF)
-
-Zone **gocontroll.tech** → **Security → WAF → Custom rules** → *Create rule*: name *Images: human
-check*, expression `(http.host eq "images.gocontroll.tech")`, action **Managed Challenge**.
-
-This puts a challenge in front of the code form, so scripts cannot have codes mailed to arbitrary
-addresses through `images.gocontroll.tech`. It does not cover someone who opens the team domain's
-login URL (`gocontroll.cloudflareaccess.com`) directly; there Access's own rate limit on codes applies.
-Downloads in a browser pass (the challenge cookie is set when the page is opened); a download manager
-or `curl` without that cookie gets the challenge too.
-
-Way back: disable or delete the rule.
-
-### 4. Expire the download log (done 2026-10-28)
+### 3. Expire the download log (done 2026-10-28)
 
 R2 → bucket **`gocontroll-images`** → *Settings* → **Object lifecycle rules**: rule `expire-download-log`,
 prefix `downloads/`, **delete objects 395 days** after upload (13 months and a margin). The log holds an
-e-mail address per download; this keeps it from growing forever. Never a rule without that prefix: it
-would delete the images. Made by the session with
+e-mail address per download; this keeps it from growing forever. The counts per month stay (Deploy's
+`images/stats/`, without addresses). Never a rule without a prefix: it would delete the images. Made by
+the session with
 `npx wrangler r2 bucket lifecycle add gocontroll-images expire-download-log downloads/ --expire-days 395`
 (next to R2's default rule that aborts unfinished multipart uploads after 7 days).
 
@@ -208,12 +262,15 @@ Way back: `npx wrangler r2 bucket lifecycle remove gocontroll-images --name expi
 
 | File | What |
 |---|---|
-| `wrangler.toml` | the Worker: custom domain, assets, the bucket, `TEAM_DOMAIN`, `IMAGES_AUD` |
+| `wrangler.toml` | the Worker: custom domain, assets, the bucket, `MAIL`, `RL_ACCESS`, the two secrets, `SITE_URL`, `TURNSTILE_SITE_KEY` |
 | `src/index.ts` | the request flow above |
-| `src/auth.ts` | the verified e-mail address; `DEV_USER_EMAIL` on localhost |
+| `src/access.ts` | `POST /api/access` (ask for a link) and `GET /access` (open it) |
+| `src/session.ts` | the link and session tokens, the cookie, `safeNext`, `DEV_USER_EMAIL` on localhost |
+| `src/turnstile.ts` | siteverify (adapted from GOcontroll-Configurator) |
 | `src/files.ts` | `/files/`: published paths only, ranges, conditionals, the download log |
 | `src/catalogue.ts` | `manifest.json` → `Catalogue` |
-| `src/headers.ts`, `src/respond.ts` | security headers; JSON and the plain pages |
-| `public/` | the page: `index.html`, `app.js`, `format.js`, `styles.css`, logo, favicons |
+| `src/headers.ts`, `src/respond.ts` | security headers (and the sign-in CSP); JSON, redirects and the plain pages |
+| `public/` | the pages: `sign-in`, `index`, `download` (`.html` + `.js`), `ui.js`, `format.js`, `styles.css`, `robots.txt`, logo, favicons |
 | `test/` | the suite (`npm run test:images`) |
 | `../src/images-format.ts` | the contract with the intranet Worker (not in this folder) |
+| `../src/images-mail.ts` | ImagesMail, the intranet's entrypoint that sends the link (not in this folder) |

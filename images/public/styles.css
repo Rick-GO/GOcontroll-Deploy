@@ -262,6 +262,31 @@ footer a { color: inherit; }
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
+/* ── Sign-in and download pages: one column ── */
+main.narrow { max-width: 720px; }
+.notice.info { background: var(--bg); color: var(--anthracite); border: 1px solid var(--border); }
+.panel > .notice { margin-bottom: 14px; }
+.for-file { font-weight: 600; margin-bottom: 8px; overflow-wrap: anywhere; }
+.signin-form { display: grid; gap: 8px; margin-top: 14px; max-width: 420px; }
+.field { font-size: 13px; font-weight: 600; color: var(--anthracite); }
+.input {
+  width: 100%; min-height: var(--tap); padding: 8px 12px;
+  font: inherit; font-size: 16px; /* 16px: no zoom on focus on iOS */
+  color: var(--black); background: var(--white);
+  border: 1px solid var(--border2); border-radius: var(--radius);
+}
+.input:focus-visible { outline: 2px solid var(--brand); outline-offset: 0; border-color: var(--brand); }
+.input[aria-invalid="true"] { border-color: var(--danger); }
+.field-error { font-size: 13px; color: #991b1b; }
+.turnstile { min-height: 65px; margin-top: 6px; }
+.check-text { font-size: 13px; color: var(--muted); }
+.btn.send { justify-self: start; margin-top: 4px; }
+.btn:disabled { opacity: .6; cursor: default; }
+#sent .btn { margin-top: 14px; }
+.started { font-size: 14px; color: var(--anthracite); margin-bottom: 12px; }
+.back { font-size: 14px; padding: 4px 2px; }
+.back a { display: inline-flex; align-items: center; min-height: var(--tap); }
+
 /* ── Wider screens ── */
 @media (min-width: 560px) {
   .file { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }

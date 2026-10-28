@@ -25,7 +25,11 @@ import { badge, confirmDialog, formDialog, formValues, setHero, stale } from './
  *   published_at?: string | null, published_by?: string | null, inCatalogue: boolean }} Release
  * @typedef {{ id: string, key: string, kind: Kind, product: string, version: string, name: string, size: number, parts: number, started_at: string, started_by: string }} Upload
  * @typedef {{ at: string, email: string, path: string, kind: string, product: string, version: string, country: string }} Download
- * @typedef {{ releases: Release[], uploads: Upload[], downloads: Download[], catalogueError?: string, publicUrl: string,
+ * @typedef {{ month: string, downloads: number, addresses: number, releases: Record<string, number>, files: Record<string, number>,
+ *   countries: Record<string, number>, final: boolean }} MonthStats
+ * @typedef {{ release: string, total: number, thisMonth: number, lastMonth: number }} ReleaseTotal
+ * @typedef {{ month: string, months: MonthStats[], releases: ReleaseTotal[], total: number, error?: string }} Stats
+ * @typedef {{ releases: Release[], uploads: Upload[], downloads: Download[], stats: Stats, catalogueError?: string, publicUrl: string,
  *   limits: { partSize: number, maxFileSize: number } }} Overview
  */
 
@@ -78,15 +82,16 @@ export async function renderImages(ctx) {
     <section class="panel">
       <div class="panel-head"><h2>Releases</h2><span class="spacer"></span>
         <button type="button" class="btn primary" data-new data-icon="plus">New release…</button></div>
-      <p class="text">Customers sign in on <a href="${esc(data.publicUrl)}" rel="noopener">${esc(data.publicUrl.replace(/^https:\/\//, ''))}</a> with their e-mail address and a one-time code, and download what is published here. Upload every file of a release, then publish it.</p>
+      <p class="text">Customers ask for a link with their e-mail address on <a href="${esc(data.publicUrl)}" rel="noopener">${esc(data.publicUrl.replace(/^https:\/\//, ''))}</a>; it opens the downloads for 7 days, and they download what is published here. Upload every file of a release, then publish it. <em>Copy link</em> next to a published file gives the address that signs a customer in and starts that file.</p>
       ${data.uploads.length ? unfinished(data.uploads) : ''}
       <div class="section-label">Controller images</div>
       ${images.length ? images.map((r) => releaseCard(r, data)).join('') : '<p class="muted">No image yet.</p>'}
       <div class="section-label">Tools</div>
       ${tools.length ? tools.map((r) => releaseCard(r, data)).join('') : '<p class="muted">No tool yet.</p>'}
     </section>
+    ${downloadCounts(data)}
     <section class="panel">
-      <div class="panel-head"><h2>Downloads</h2><span class="sub">this month and last month</span></div>
+      <div class="panel-head"><h2>Latest downloads</h2><span class="sub">who downloaded what, this month and last month (at most 200)</span></div>
       ${downloads(data.downloads)}
     </section>`;
   hydrateIcons(ctx.view);
@@ -113,7 +118,7 @@ function kpis(d) {
   return `<section class="kpis" aria-label="Totals">
     ${tile('Published', String(published), `${fmtBytes(bytes)} for customers`)}
     ${tile('Drafts', String(d.releases.length - published), 'not visible to customers')}
-    ${tile('Downloads', String(d.downloads.length), 'this month and last month')}
+    ${tile('Downloads', String(d.stats.months.find((m) => m.month === d.stats.month)?.downloads ?? 0), `this month · ${d.stats.total} in all`)}
   </section>`;
 }
 
@@ -135,7 +140,7 @@ function releaseCard(r, d) {
       <div class="badges">${draft ? badge('Draft', 'warn', 'Not visible to customers') : badge('Published', 'ok', `Since ${fmtDateTime(r.published_at ?? '')} by ${r.published_by ?? ''}`)}
         ${r.controllers.map((c) => badge(c, 'info')).join(' ')}</div>
     </header>
-    <p class="muted">Release date ${esc(fmtDay(r.released))} · made by ${esc(r.created_by)} · last change ${esc(fmtDateTime(r.updated_at))} by ${esc(r.updated_by)}</p>
+    <p class="muted">Release date ${esc(fmtDay(r.released))} · made by ${esc(r.created_by)} · last change ${esc(fmtDateTime(r.updated_at))} by ${esc(r.updated_by)}${downloadLine(r, d)}</p>
     ${r.notes ? `<p class="pre">${esc(r.notes)}</p>` : ''}
     ${r.status === 'published' && !r.inCatalogue ? '<div class="notice err">Published here, but missing from manifest.json: withdraw and publish it again.</div>' : ''}
     ${r.files.length ? `<div class="table-wrap"><table class="data cards">
@@ -148,7 +153,7 @@ function releaseCard(r, d) {
           <td data-label="Size" class="num">${esc(fmtBytes(f.size))}</td>
           <td data-label="SHA-256" class="mono"><span id="${id}" hidden>${esc(f.sha256)}</span>${esc(shortHash(f.sha256))} ${copyButton(id, 'SHA-256')}</td>
           <td data-label="Uploaded">${esc(f.uploaded_by)}<div class="cell-sub">${esc(fmtDateTime(f.uploaded_at))}</div></td>
-          <td data-label="">${draft ? `<button type="button" class="btn sm" data-remove="${esc(f.name)}" data-icon="trash">Remove</button>` : ''}</td>
+          <td data-label="">${draft ? `<button type="button" class="btn sm" data-remove="${esc(f.name)}" data-icon="trash">Remove</button>` : customerLink(d, f)}</td>
         </tr>`;
       }).join('')}</tbody></table></div>` : '<p class="muted">No files yet.</p>'}
     ${draft ? `<div class="img-add" data-add>
@@ -162,6 +167,56 @@ function releaseCard(r, d) {
     </div>
   </article>`;
 }
+
+/** @param {Release} r @param {Overview} d */
+function downloadLine(r, d) {
+  if (r.status !== 'published' && !d.stats.releases.some((t) => t.release === `${r.kind}/${r.product}/${r.version}`)) return '';
+  const t = d.stats.releases.find((x) => x.release === `${r.kind}/${r.product}/${r.version}`);
+  return ` · <strong>${esc(plural(t?.total ?? 0, 'download'))}</strong>${t?.thisMonth ? ` (${esc(String(t.thisMonth))} this month)` : ''}`;
+}
+
+/** The link that signs a customer in and starts this file, with Copy. @param {Overview} d @param {ImageFile} f */
+function customerLink(d, f) {
+  const id = uniqueId('link');
+  return `<span id="${id}" hidden>${esc(`${d.publicUrl}/download/${f.path}`)}</span>${copyButton(id, `the customer link of ${f.name}`, 'Copy link')}`;
+}
+
+/** Counts per release (all time, this and last month) and per month. @param {Overview} d */
+function downloadCounts(d) {
+  const s = d.stats;
+  const titles = new Map(d.releases.map((r) => [`${r.kind}/${r.product}/${r.version}`, `${r.title} ${r.version}`]));
+  const perRelease = s.releases.length
+    ? `<div class="table-wrap"><table class="data cards">
+      <thead><tr><th>Release</th><th class="num">In all</th><th class="num">This month</th><th class="num">Last month</th></tr></thead>
+      <tbody>${s.releases.map((t) => `<tr>
+        <td data-label="Release">${esc(titles.get(t.release) ?? t.release)}<div class="cell-sub mono">${esc(t.release)}</div></td>
+        <td data-label="In all" class="num">${esc(String(t.total))}</td>
+        <td data-label="This month" class="num">${esc(String(t.thisMonth))}</td>
+        <td data-label="Last month" class="num">${esc(String(t.lastMonth))}</td>
+      </tr>`).join('')}</tbody></table></div>`
+    : '<p class="muted">No downloads yet.</p>';
+  /** @param {Record<string, number>} c */
+  const countries = (c) => Object.entries(c).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, n]) => `${k || '?'} ${n}`).join(', ') || '—';
+  const perMonth = s.months.filter((m) => m.downloads).length
+    ? `<div class="table-wrap"><table class="data cards">
+      <thead><tr><th>Month</th><th class="num">Downloads</th><th class="num">Addresses</th><th>Countries</th></tr></thead>
+      <tbody>${s.months.filter((m) => m.downloads || !m.final).map((m) => `<tr>
+        <td data-label="Month">${esc(fmtMonth(m.month))}${m.final ? '' : ' <span class="cell-sub">so far</span>'}</td>
+        <td data-label="Downloads" class="num">${esc(String(m.downloads))}</td>
+        <td data-label="Addresses" class="num">${esc(String(m.addresses))}</td>
+        <td data-label="Countries">${esc(countries(m.countries))}</td>
+      </tr>`).join('')}</tbody></table></div>`
+    : '';
+  return `<section class="panel">
+    <div class="panel-head"><h2>Downloads</h2><span class="sub">a download is counted when a file starts; resuming it does not count again</span></div>
+    ${s.error ? `<div class="notice err">${esc(s.error)}</div>` : ''}
+    ${perRelease}
+    ${perMonth ? `<div class="section-label">Per month</div>${perMonth}` : ''}
+  </section>`;
+}
+
+/** "October 2026" of "2026-10". @param {string} month */
+const fmtMonth = (month) => new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 
 /** @param {Download[]} list */
 function downloads(list) {

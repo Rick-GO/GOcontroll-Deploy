@@ -7,11 +7,12 @@ import { CATALOGUE_KEY, catalogueText, parseCatalogue } from '../../src/images-f
 import { parseRange, rangeBounds, requestedPath, startsDownload } from '../src/files';
 import { SECURITY_HEADERS } from '../src/headers';
 import {
-  DRAFT, downloadLog, EMPTY, emptyBucket, FLASHER, HOST, mockAccess, OLD_ROOTFS, publishSample, ROOTFS, ROOTFS_BYTES, run, sampleCatalogue, signedIn, token,
+  DRAFT, downloadLog, EMPTY, emptyBucket, FLASHER, HOST, OLD_ROOTFS, publishSample, ROOTFS, ROOTFS_BYTES, run, sampleCatalogue, sessionCookieHeader, signedIn,
 } from './helpers';
 
 beforeEach(async () => {
-  mockAccess();
+  // No call leaves the Worker while signed in: no Access, no identity lookup.
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => { throw new Error(`unexpected fetch ${String(input)}`); });
   await emptyBucket();
 });
 afterEach(() => vi.restoreAllMocks());
@@ -178,7 +179,7 @@ describe('the download log', () => {
 
   test('one empty object per download, with who and what in its custom metadata', async () => {
     const res = await run(new Request(`${HOST}/files/${ROOTFS}`, {
-      headers: { 'Cf-Access-Jwt-Assertion': await token() },
+      headers: { cookie: await sessionCookieHeader() },
       cf: { country: 'NL' },
     } as RequestInit));
     expect(res.status).toBe(200);

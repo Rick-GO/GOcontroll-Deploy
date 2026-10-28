@@ -9,11 +9,10 @@ compatibility_flags = ["nodejs_compat"]
 # bucket's releases and manifest.json; this Worker only reads them, and appends the download log.
 # The contract between the two: ../src/images-format.ts.
 #
-# A device-traffic hostname (gocontroll.tech), not the intranet (gocontroll.tools): the people
-# signing in are customers, with a one-time PIN, never Entra. Only reachable via the custom
-# domain, which sits behind its own Cloudflare Access application. workers.dev and preview URLs
-# would bypass Access; the Worker rejects them anyway (no valid token), but there is no reason to
-# expose them.
+# A gocontroll.tech hostname, not the intranet (gocontroll.tools): the people signing in are
+# customers, with their e-mail address (a link by mail, src/access.ts), never Entra. No Access
+# application: the Worker decides who is signed in itself (src/session.ts). Only reachable via the
+# custom domain; workers.dev and preview URLs would be a second address of the site for no reason.
 workers_dev = false
 preview_urls = false
 routes = [{ pattern = "images.gocontroll.tech", custom_domain = true }]
@@ -21,32 +20,66 @@ routes = [{ pattern = "images.gocontroll.tech", custom_domain = true }]
 [assets]
 directory = "./public"
 binding = "ASSETS"
-# Every request, the page, /styles.css and /app.js included, goes through the token check first:
-# there is no /pub bypass here, and nothing is served before the Worker has verified who asks.
+# Every request goes through the Worker first: the pages only with a session (or the sign-in page),
+# the scripts, stylesheet and brand images to anyone (they hold no data).
 run_worker_first = true
 
 [observability]
 enabled = true
 
-# The images bucket: manifest.json (the published catalogue), images/…, tools/… and the download
-# log downloads/… (layout in ../src/images-format.ts). This Worker serves only the files that
-# manifest.json names (never a draft, never the log) and writes one empty object per download.
-# The only binding besides the assets: no state bucket, no D1, no secret
-# (images/test/config.test.ts keeps it that way).
+# The images bucket: manifest.json (the published catalogue), images/…, tools/…, the download log
+# downloads/… and the hourly cap on links access-mails/… (layout in ../src/images-format.ts). This
+# Worker serves only the files that manifest.json names (never a draft, never the log), writes one
+# empty object per download and one per address that asked for a link.
 [[r2_buckets]]
 binding = "IMAGES_BUCKET"
 bucket_name = "gocontroll-images"
 
+# The mail with the link, without the Microsoft 365 secret: the intranet Worker's RPC entrypoint
+# ImagesMail (../src/images-mail.ts) mails one fixed message to the address it is given, with a link to
+# this site only. A service binding is not reachable from the internet. The intranet Worker must be
+# deployed with that entrypoint before this binding.
+[[services]]
+binding = "MAIL"
+service = "gocontroll-deploy-intranet"
+entrypoint = "ImagesMail"
+
+# Requests for a link per client IP (src/access.ts): a brake on scripts. namespace_id is an
+# account-wide number of our own choosing (Knowledgebase 4711, Configurator 4721–4723); period 10
+# or 60 seconds.
+[[ratelimits]]
+name = "RL_ACCESS"
+namespace_id = "4731"
+simple = { limit = 5, period = 60 }
+
+# Secrets from the account's Secrets Store default_secrets_store (GOcontroll-Team/CLAUDE.md,
+# "Geheimen"); read with ../src/lib/secret.ts. Each must exist before a deploy with its binding.
+#
+# HMAC key of the links and the session cookies (src/session.ts): base64 of 32 random bytes, made in
+# the store by the session on 2026-10-28, never seen by anyone. A new value ends every session and
+# every link (customers ask for a new one); nothing else depends on it.
+[[secrets_store_secrets]]
+binding = "SESSION_KEY"
+store_id = "33801ac6937549ae8f6f92169586a707"
+secret_name = "IMAGES_SESSION_KEY"
+
+# Turnstile secret key of the widget for images.gocontroll.tech (src/turnstile.ts). Made with the
+# placeholder not-set, which means no link can be sent; the owner pastes the widget's secret
+# (README, "One-time setup").
+[[secrets_store_secrets]]
+binding = "TURNSTILE_SECRET"
+store_id = "33801ac6937549ae8f6f92169586a707"
+secret_name = "IMAGES_TURNSTILE_SECRET"
+
 [vars]
-# Cloudflare Access team domain: token issuer and source of /cdn-cgi/access/certs.
-TEAM_DOMAIN = "https://gocontroll.cloudflareaccess.com"
-# Application Audience (AUD) tag of the Access application on images.gocontroll.tech
-# (Zero Trust → Access → Applications → GOcontroll Images → Overview). Not a secret.
-# Empty means every request gets 503 "Downloads are being set up" (fail closed): the owner
-# creates the Access application first (images/README.md, "One-time setup"), then fills this in.
-IMAGES_AUD = ""
+# The site's origin: the links in the mails, the sign-in form's Origin, Turnstile's hostname.
+SITE_URL = "https://images.gocontroll.tech"
+# Turnstile site key of the widget for images.gocontroll.tech (not a secret; put into the sign-in
+# page). Empty means every request gets 503 "Downloads are being set up" (fail closed): the owner
+# creates the widget first (images/README.md, "One-time setup"), then this is filled in.
+TURNSTILE_SITE_KEY = ""
 
 [dev]
 # Keep request.url on localhost during `wrangler dev` (it would otherwise take the route's host),
-# so the DEV_USER_EMAIL bypass of src/auth.ts can recognise local runs.
+# so the DEV_USER_EMAIL bypass of src/session.ts can recognise local runs.
 host = "localhost"

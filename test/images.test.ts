@@ -4,6 +4,7 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, test } from 'vitest';
 import { PART_SIZE, expectedPartSize } from '../src/images';
+import { STATS_PREFIX, collectFinishedMonths, imagesStats } from '../src/images-stats';
 import { CATALOGUE_KEY, downloadLogKey, parseCatalogue } from '../src/images-format';
 import worker from '../src/index';
 import { call, ok } from './helpers';
@@ -160,5 +161,71 @@ describe('releases', () => {
     expect(overview.downloads[0]).toMatchObject({ path: 'images/p/1/x.img', country: 'NL' });
     expect(overview.downloads[0].at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(overview.publicUrl).toBe('https://images.gocontroll.tech');
+  });
+});
+
+describe('download counts (src/images-stats.ts)', () => {
+  // A year of its own, after today: the overview of the other tests never stores these months.
+  const at = (iso: string) => new Date(iso);
+  const log = (iso: string, email: string, path: string, country = 'NL') => {
+    const [, kind, product, version] = /^(images|tools)\/([^/]+)\/([^/]+)\//.exec(path)!;
+    return env.IMAGES_BUCKET.put(downloadLogKey(at(iso), `r${Math.random().toString(16).slice(2, 8)}`), '', {
+      customMetadata: { email, path, kind: kind === 'images' ? 'image' : 'tool', product, version, country },
+    });
+  };
+  const A = 'images/stats-a/1.0/rootfs.img';
+  const B = 'tools/stats-b/2.0/flash.sh';
+
+  test('finished months are summed once without addresses and kept after the log expires; the month under way is live', async () => {
+    await log('2031-08-03T10:00:00Z', 'a@example.com', A);
+    await log('2031-08-20T10:00:00Z', 'A@example.com', A);
+    await log('2031-09-01T00:00:01Z', 'b@example.com', B, 'DE');
+    await log('2031-10-02T09:00:00Z', 'a@example.com', A);
+    await log('2031-10-03T09:00:00Z', 'c@example.com', A, '');
+
+    const stats = await imagesStats(env, at('2031-10-15T12:00:00Z'));
+    expect(stats.error).toBeUndefined();
+    expect(stats.month).toBe('2031-10');
+    // Other tests log downloads too (in the real month under way): only this year's months here.
+    const ours = (m: { month: string }) => m.month.startsWith('2031-');
+    expect(stats.months.filter(ours).map((m) => [m.month, m.downloads, m.addresses, m.final])).toEqual([
+      ['2031-10', 2, 2, false], ['2031-09', 1, 1, true], ['2031-08', 2, 1, true],
+    ]);
+    expect(stats.months[0].countries).toEqual({ NL: 1, '': 1 });
+    expect(stats.months[2].files).toEqual({ [A]: 2 });
+    expect(stats.releases.filter((r) => r.release.includes('/stats-'))).toEqual([
+      { release: 'image/stats-a/1.0', total: 4, thisMonth: 2, lastMonth: 0 },
+      { release: 'tool/stats-b/2.0', total: 1, thisMonth: 0, lastMonth: 1 },
+    ]);
+    expect(stats.months.filter(ours).reduce((n, m) => n + m.downloads, 0)).toBe(5);
+
+    // Stored: the finished months only, with no e-mail address in them.
+    const stored = await env.STATE.list({ prefix: STATS_PREFIX });
+    expect(stored.objects.map((o) => o.key).filter((k) => k.includes('2031'))).toEqual(['images/stats/2031-08.json', 'images/stats/2031-09.json']);
+    const august = await (await env.STATE.get('images/stats/2031-08.json'))!.text();
+    expect(august).not.toContain('@');
+
+    // The log of August expires (13 months): its counts stay.
+    const aug = await env.IMAGES_BUCKET.list({ prefix: 'downloads/2031/08/' });
+    await env.IMAGES_BUCKET.delete(aug.objects.map((o) => o.key));
+    const later = await imagesStats(env, at('2031-10-16T12:00:00Z'));
+    expect(later.months.find((m) => m.month === '2031-08')?.downloads).toBe(2);
+    expect(later.total).toBe(stats.total);
+  });
+
+  test('just after a month ends it is still counted live; an hour later it is stored', async () => {
+    await log('2032-01-31T23:59:00Z', 'd@example.com', B);
+    expect((await collectFinishedMonths(env, at('2032-02-01T00:30:00Z'))).stored).not.toContain('2032-01');
+    const early = await imagesStats(env, at('2032-02-01T00:30:00Z'));
+    expect(early.months.find((m) => m.month === '2032-01')).toMatchObject({ downloads: 1, final: false });
+    expect(early.releases.find((r) => r.release === 'tool/stats-b/2.0')?.lastMonth).toBe(1);
+    expect((await collectFinishedMonths(env, at('2032-02-01T02:17:00Z'))).stored).toContain('2032-01');
+  });
+
+  test('the overview carries the counts', async () => {
+    const overview = await ok('GET', '/api/images');
+    expect(overview.stats).toMatchObject({ months: expect.any(Array), releases: expect.any(Array), total: expect.any(Number) });
+    expect(overview.stats.month).toBe(new Date().toISOString().slice(0, 7));
+    expect(overview.stats.months.some((m: { month: string; final: boolean }) => m.month === overview.stats.month && !m.final)).toBe(true);
   });
 });

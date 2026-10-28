@@ -15,13 +15,20 @@ export interface Env {
   DISTRIBUTION_URLS: string; // allowed bases of manifest URLs; the first one for a new folder
   DOWNLOAD_HOSTS: string;    // hostnames counted as downloads
   FIRMWARE_URLS: string;     // hosts of the firmware bucket; the first one for links
-  IMAGES_URL: string;        // the download site of the images bucket
+  IMAGES_URL: string;        // the download site of the images bucket; the only origin of a sign-in link (src/images-mail.ts)
   GITHUB_REPOS: string;      // the repositories Deploy may tag and release in (owner/name, a trailing * allowed)
+
+  // The sign-in mails of images.gocontroll.tech (src/images-mail.ts, src/mail/graph.ts).
+  MAIL_FROM: string;            // noreply@gocontroll.com
+  MS365_TENANT_ID: string;
+  MS365_CLIENT_ID: string;
+  IMAGES_MAIL_REPLY_TO: string; // where a customer's reply goes (info@gocontroll.com)
 
   // Secrets Store (src/lib/secret.ts reads both forms; a plain string locally and in tests).
   SIGNING_KEYS_KEY?: SecretsStoreSecret | string; // store DEPLOY_SIGNING_KEYS_KEY: AES-256 KEK of the signing keys
   CF_API_TOKEN?: SecretsStoreSecret | string;     // store DEPLOY_CF_API_TOKEN: GraphQL Analytics (optional)
   GITHUB_TOKEN?: SecretsStoreSecret | string;     // store DEPLOY_GITHUB_TOKEN: tags and releases of the Module-* repos; not-set = off
+  MS365_CLIENT_SECRET?: SecretsStoreSecret | string; // store MS365_CLIENT_SECRET: Graph sendMail (shared with Hours, Configurator, Finance)
 
   // Local development only, honoured on localhost (see auth.ts).
   DEV_USER_EMAIL?: string;

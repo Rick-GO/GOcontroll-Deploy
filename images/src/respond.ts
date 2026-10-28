@@ -1,7 +1,7 @@
-// The answers that are not the page or a file: JSON for /api, and small self-contained HTML
-// pages for 503 (not set up yet), 403, 404, 405 and errors. Those pages load nothing (no
-// stylesheet, no script, no image): while IMAGES_AUD is empty or the token is refused, the assets
-// are refused too, and the CSP forbids inline styles. Browser defaults are enough for two lines.
+// The answers that are not a page or a file: JSON for /api, redirects, and small self-contained
+// HTML pages for 503 (not set up yet, or a store or bucket that cannot be read), 404, 405 and
+// errors. Those pages load nothing (no stylesheet, no script, no image): the CSP forbids inline
+// styles, and browser defaults are enough for two lines.
 
 import { secure } from './headers';
 
@@ -26,7 +26,13 @@ export function plainPage(status: number, title: string, message: string, extra:
   return new Response(html, { status, headers });
 }
 
-/** IMAGES_AUD is empty: the Access application does not exist yet, so nothing is served. */
+/** 303 to a path of this site (never another site: callers pass a path from safeNext or a constant). */
+export function seeOther(location: string, extra: Record<string, string> = {}): Response {
+  const headers = secure(new Headers({ location, 'cache-control': 'private, no-store', ...extra }));
+  return new Response(null, { status: 303, headers });
+}
+
+/** TURNSTILE_SITE_KEY is empty: the sign-in is not set up yet, so nothing is served. */
 export const SETUP_MESSAGE = 'Downloads are being set up. Please try again later.';
 export function notSetUp(api: boolean): Response {
   const extra = { 'retry-after': '3600' };
@@ -35,10 +41,9 @@ export function notSetUp(api: boolean): Response {
     : plainPage(503, 'Downloads are being set up', 'The GOcontroll download site is not open yet. Please try again later.', extra);
 }
 
-export function refused(api: boolean): Response {
-  return api
-    ? json(403, { error: 'You are not signed in. Reload the page to sign in again.' })
-    : plainPage(403, 'Not signed in', 'Your sign-in could not be verified. Reload the page to sign in again.');
+/** The API without a session: the page sends the customer to /sign-in. */
+export function notSignedIn(): Response {
+  return json(401, { error: 'You are not signed in.', signIn: '/sign-in' });
 }
 
 export function notFound(api: boolean): Response {
@@ -47,10 +52,10 @@ export function notFound(api: boolean): Response {
     : plainPage(404, 'Not found', 'There is nothing here. The downloads are on the start page of images.gocontroll.tech.');
 }
 
-export function methodNotAllowed(api: boolean): Response {
-  const extra = { allow: 'GET, HEAD' };
+export function methodNotAllowed(api: boolean, allow = 'GET, HEAD'): Response {
+  const extra = { allow };
   return api
-    ? json(405, { error: 'Only GET and HEAD are served here.' }, extra)
+    ? json(405, { error: `Only ${allow} is accepted here.` }, extra)
     : plainPage(405, 'Method not allowed', 'This site only serves pages and downloads.', extra);
 }
 

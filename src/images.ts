@@ -24,6 +24,7 @@
 import { z } from 'zod';
 import type { Env, User } from './env';
 import { toHex } from './goco';
+import { imagesStats, type ImagesStats } from './images-stats';
 import { HttpError, parse } from './lib/http';
 import { audit, listAll, readJson, writeJson, type Versioned } from './state';
 import {
@@ -130,22 +131,25 @@ export interface ImagesOverview {
   releases: (ImageRelease & { inCatalogue: boolean })[];
   uploads: Omit<UploadRecord, 'upload_id'>[];
   downloads: DownloadView[];
+  stats: ImagesStats;
   catalogueError?: string;
   publicUrl: string;
   limits: { partSize: number; maxFileSize: number };
 }
 
-/** Releases (drafts and published), unfinished uploads and the downloads of this and last month. */
+/** Releases (drafts and published), unfinished uploads, the downloads of this and last month and the counts (src/images-stats.ts). */
 export async function imagesOverview(env: Env, now = new Date()): Promise<ImagesOverview> {
-  const [records, uploads, downloads] = await Promise.all([
+  const [records, uploads, downloads, stats] = await Promise.all([
     listAll(env.STATE, { prefix: 'images/releases/' }),
     listAll(env.STATE, { prefix: 'images/uploads/' }),
     recentDownloads(env, now),
+    imagesStats(env, now),
   ]);
   const out: ImagesOverview = {
     releases: [],
     uploads: [],
     downloads,
+    stats,
     publicUrl: env.IMAGES_URL || 'https://images.gocontroll.tech',
     limits: { partSize: PART_SIZE, maxFileSize: MAX_FILE_SIZE },
   };

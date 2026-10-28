@@ -9,13 +9,19 @@
 // does so for the paths it protects, but not for the /pub/ bypass. /pub/ answers carry the same
 // security headers as the pages, assets and API (src/lib/headers.ts; the external security
 // assessment of 2026-10-23, F4).
-// scheduled() is the daily cron of wrangler.toml: the download counts of finished days.
+// scheduled() is the daily cron of wrangler.toml: the download counts of finished days, and the
+// image download counts of finished months (src/images-stats.ts).
+//
+// ImagesMail (src/images-mail.ts) is the RPC entrypoint images.gocontroll.tech binds as MAIL: it
+// mails a customer's sign-in link, so the Microsoft 365 secret stays in this Worker. A class is a
+// handler, so workerd accepts it as a named export of this module (constants it does not).
 
 import { Hono } from 'hono';
 import type { AppEnv, Env } from './env';
 import { AccessError } from './access';
 import { authenticate } from './auth';
 import { collectMissingDays } from './downloads';
+import { collectFinishedMonths } from './images-stats';
 import { withSecurityHeaders, SECURITY_HEADERS } from './lib/headers';
 import { HttpError } from './lib/http';
 import { httpsRedirect } from './lib/https';
@@ -129,8 +135,14 @@ export default {
       if (!w.configured) return;
       console.log(`downloads: ${w.fetched} day(s) stored, ${w.missingDays} still without counts${w.error ? `; ${w.error}` : ''}`);
     }));
+    ctx.waitUntil(collectFinishedMonths(env, new Date(controller.scheduledTime)).then(
+      (r) => { if (r.stored.length) console.log(`images stats: ${r.stored.join(', ')} stored`); },
+      (err) => console.error(`images stats: ${(err as Error).message}`),
+    ));
   },
 } satisfies ExportedHandler<Env>;
+
+export { ImagesMail } from './images-mail';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (ch) => (
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as Record<string, string>)[ch]

@@ -1,9 +1,11 @@
 // The contract of the images bucket gocontroll-images, shared by its two Workers:
 //
 //   gocontroll-deploy-intranet (this repo, src/images.ts)   the only writer of releases and of
-//                                                            manifest.json (the Images tab)
-//   gocontroll-images (this repo, images/)                  images.gocontroll.tech: customers sign in
-//                                                            (Access, one-time PIN) and download
+//                                                            manifest.json (the Images tab); mails
+//                                                            the sign-in links (src/images-mail.ts)
+//   gocontroll-images (this repo, images/)                  images.gocontroll.tech: customers ask for
+//                                                            a link with their e-mail address, open it
+//                                                            and download
 //
 // Bucket layout:
 //
@@ -14,9 +16,20 @@
 //   tools/<product>/<version>/<file>                a tool to install an image with (flash scripts, …)
 //   downloads/<yyyy>/<mm>/<iso time>-<random>.json  one download, written by images.gocontroll.tech;
 //                                                   who and what is in the custom metadata (DownloadMeta)
+//   access-mails/<hmac of the address>              the sign-in links mailed to one address in the last
+//                                                   hour (custom metadata `sent`), written by
+//                                                   images.gocontroll.tech for its hourly cap; expires
+//                                                   after a day (R2 lifecycle rule)
 //
 // A file is downloadable only while its release is in manifest.json: a draft's files are in the
 // bucket already, but images.gocontroll.tech serves nothing that the catalogue does not name.
+//
+// Signing in: images.gocontroll.tech asks for an e-mail address (and a Turnstile check), and hands the
+// intranet Worker's RPC entrypoint ImagesMail (service binding MAIL) an AccessLinkMail: the address
+// and the link it signed. The intranet writes and sends the mail itself (Microsoft Graph, from
+// noreply@gocontroll.com), so the mail secret never reaches the public Worker; it sends only to that
+// address and only a link to IMAGES_URL/access (LINK_TOKEN_RE). The link works for LINK_TTL_SECONDS;
+// opening it gives access for SESSION_TTL_SECONDS on that device.
 // Contract document: GOcontroll-Architecture/cloudflare/images/spec.md.
 //
 // No imports and only erasable TypeScript, so both Workers bundle it as it is.
@@ -194,3 +207,45 @@ export function downloadLogKey(at: Date, random: string): string {
   const iso = at.toISOString();
   return `${DOWNLOAD_LOG_PREFIX}${iso.slice(0, 4)}/${iso.slice(5, 7)}/${iso}-${random}.json`;
 }
+
+/** Whether `path` has the shape of a file of a release: <images|tools>/<product>/<version>/<file>. */
+export function isReleaseFilePath(path: string): boolean {
+  const parts = path.split('/');
+  return parts.length === 4 && (parts[0] === 'images' || parts[0] === 'tools')
+    && PRODUCT_RE.test(parts[1]) && VERSION_RE.test(parts[2]) && FILE_NAME_RE.test(parts[3]);
+}
+
+// ── Signing in on images.gocontroll.tech ─────────────────────────────────────
+
+export const ACCESS_MAIL_PREFIX = 'access-mails/';
+/** The path of the link in the mail; the signed token is its query parameter `t`. */
+export const ACCESS_PATH = '/access';
+/** A link token as images.gocontroll.tech signs it: `l.<payload>.<HMAC-SHA256>`, base64url. */
+export const LINK_TOKEN_RE = /^l\.[A-Za-z0-9_-]{16,1200}\.[A-Za-z0-9_-]{43}$/;
+/** How long the link in the mail works. */
+export const LINK_TTL_SECONDS = 60 * 60;
+/** How long opening the link gives access, on that device. */
+export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+/** At most this many links per address per hour. */
+export const LINKS_PER_HOUR = 5;
+
+/** The page that starts the download of one published file: the link to give a customer. */
+export const DOWNLOAD_PAGE_PREFIX = '/download/';
+export const downloadPagePath = (path: string): string => `${DOWNLOAD_PAGE_PREFIX}${path}`;
+
+const EMAIL_RE = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
+
+/** An e-mail address as both Workers accept it: trimmed, lower case, plain ASCII; null when it is not one. */
+export function normaliseEmail(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const email = raw.trim().toLowerCase();
+  return email.length <= 254 && EMAIL_RE.test(email) ? email : null;
+}
+
+/** What images.gocontroll.tech hands ImagesMail.sendAccessLink (the RPC entrypoint of the intranet Worker). */
+export interface AccessLinkMail {
+  email: string;   // the address the customer typed (normaliseEmail); the only recipient
+  link: string;    // <IMAGES_URL>/access?t=<token>, the token matching LINK_TOKEN_RE
+  file?: string;   // the file the customer wanted (a FILE_NAME_RE name), when they came from a download link
+}
+export type AccessLinkResult = { ok: true } | { ok: false; error: 'refused' | 'unavailable' };

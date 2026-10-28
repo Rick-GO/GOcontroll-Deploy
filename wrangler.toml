@@ -24,8 +24,9 @@ run_worker_first = true
 enabled = true
 
 # Daily at 02:17 UTC: store the download counts of the finished days still missing (at most 7
-# per run, src/downloads.ts). Without CF_API_TOKEN it does nothing. A day is also stored when
-# someone looks, so a missed run costs nothing.
+# per run, src/downloads.ts; without CF_API_TOKEN that does nothing), and the image download counts
+# of finished months (src/images-stats.ts). Both are also stored when someone looks, so a missed run
+# costs nothing.
 [triggers]
 crons = ["17 2 * * *"]
 
@@ -53,7 +54,8 @@ bucket_name = "gocontroll-firmware"
 # Linux images and tools for customers, served by images.gocontroll.tech (Worker gocontroll-images,
 # images/ in this repo) to whoever signed in there with their e-mail address. Deploy is the only
 # writer of releases and manifest.json (src/images.ts, format src/images-format.ts); the download
-# log under downloads/ is written by images.gocontroll.tech and only read here.
+# log under downloads/ is written by images.gocontroll.tech and only read here (the counts per month
+# go to STATE images/stats/, src/images-stats.ts).
 [[r2_buckets]]
 binding = "IMAGES_BUCKET"
 bucket_name = "gocontroll-images"
@@ -112,6 +114,14 @@ binding = "GITHUB_TOKEN"
 store_id = "33801ac6937549ae8f6f92169586a707"
 secret_name = "DEPLOY_GITHUB_TOKEN"
 
+# Client secret of the Microsoft 365 app registration MS365_CLIENT_ID (Graph sendMail from MAIL_FROM,
+# restricted to the noreply mailbox): the sign-in mails of images.gocontroll.tech (src/images-mail.ts).
+# The same store secret Hours, the Configurator and Finance bind; changing it means all of them.
+[[secrets_store_secrets]]
+binding = "MS365_CLIENT_SECRET"
+store_id = "33801ac6937549ae8f6f92169586a707"
+secret_name = "MS365_CLIENT_SECRET"
+
 # Download counts need a Cloudflare API token (Zone Analytics: Read + Zone: Read on
 # gocontroll.com and gocontroll.tech) in the store as DEPLOY_CF_API_TOKEN. It does not exist
 # yet, and a binding to a missing secret fails the deploy; once it is created, add
@@ -143,8 +153,16 @@ DOWNLOAD_HOSTS = "deploy.gocontroll.com,deploy.gocontroll.tech"
 # The hosts of the firmware bucket (manifests hold paths relative to the host); the first one is
 # what links on the Firmware tab use.
 FIRMWARE_URLS = "https://firmware.gocontroll.tech,https://firmware.gocontroll.com"
-# Where customers download the images and tools (the Images tab links to it).
+# Where customers download the images and tools (the Images tab links to it). Also the only origin a
+# sign-in link that ImagesMail mails may have (src/images-mail.ts).
 IMAGES_URL = "https://images.gocontroll.tech"
+# The sign-in mails of images.gocontroll.tech (src/images-mail.ts): through Microsoft Graph sendMail from
+# MAIL_FROM, with the app registration of Hours and the Configurator (Mail.Send restricted to the
+# noreply mailbox), Reply-To IMAGES_MAIL_REPLY_TO.
+MAIL_FROM = "noreply@gocontroll.com"
+MS365_TENANT_ID = "4c8512ff-bac0-4d26-919a-ee6a4cecfc9d"
+MS365_CLIENT_ID = "9ceb31c6-287d-4307-ab14-200a61e3495b"
+IMAGES_MAIL_REPLY_TO = "info@gocontroll.com"
 # The GitHub repositories Deploy may set a tag and make a release in (src/github.ts): owner/name,
 # comma-separated, a trailing * for any rest. The token's own repository list limits it as well.
 GITHUB_REPOS = "GOcontroll/Module-*"

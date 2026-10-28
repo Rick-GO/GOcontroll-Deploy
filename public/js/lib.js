@@ -182,9 +182,10 @@ export async function copyText(text, btn) {
 /**
  * A Copy button for the text of the element with id `from` (wired once in app.js:
  * every [data-copy-from] click copies). @param {string} from @param {string} [what]  for screen readers
+ * @param {string} [label]  the button's text
  */
-export const copyButton = (from, what = '') => `<button type="button" class="btn sm copy-btn" data-copy-from="${esc(from)}" data-icon="duplicate"${
-  what ? ` aria-label="Copy ${esc(what)}"` : ''}><span class="copy-label">Copy</span></button>`;
+export const copyButton = (from, what = '', label = 'Copy') => `<button type="button" class="btn sm copy-btn" data-copy-from="${esc(from)}" data-icon="duplicate"${
+  what ? ` aria-label="Copy ${esc(what)}"` : ''}><span class="copy-label">${esc(label)}</span></button>`;
 
 /** Hand a file to the browser to save. @param {Blob} blob @param {string} filename */
 export function saveBlob(blob, filename) {
