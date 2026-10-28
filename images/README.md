@@ -116,7 +116,7 @@ mail scanner may open it first), and a new `SESSION_KEY` ends every session and 
   `waitUntil` only for a GET that starts the file and gets the bytes (no Range, or a range from byte 0):
   never for HEAD, a 304, a refusal or a range further into the file, so a resumed or chunked download
   counts once. The log is personal data (an e-mail address per download): only the intranet reads it;
-  it expires after 395 days (step 3 below). The sign-in page says so.
+  it expires after 395 days (step 3 below).
 
 ### The pages (`public/`)
 
@@ -124,8 +124,8 @@ Plain ES modules with `// @ts-check` and JSDoc, no framework, no build step, as 
 
 - **`sign-in.html` + `sign-in.js`**: the e-mail address, the Turnstile widget (Cloudflare's `api.js`,
   rendered explicitly, reset after every request), *Send me the link*; then *Check your e-mail* (from
-  noreply@gocontroll.com, look in spam) and *Use another address or send again*. Says what the address
-  is used for. Coming from a file link it names the file. Notices for an expired or broken link and for
+  noreply@gocontroll.com, look in spam) and *Use another address or send again*. Coming from a file link
+  it names the file. Notices for an expired or broken link and for
   signing out (`signInNotice`).
 - **`index.html` + `app.js`**: header with the logo, "Downloads", the signed-in address and *Sign out*
   (`/sign-out`); the anthracite hero; **Controller images** with a filter All / L4 / M1 / HMI1 (kept in
