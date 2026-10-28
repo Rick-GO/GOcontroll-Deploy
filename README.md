@@ -18,7 +18,7 @@ Images tab shows how often each release is downloaded. For the members of the En
 **`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> The Worker, the API and the pages are deployed (0.6.0 on 2026-10-28: images.gocontroll.tech signs customers in with
+> The Worker, the API and the pages are deployed (0.6.0 on 2026-10-28, version `86d281d3`, `gocontroll-images` version `5cb45e29`: images.gocontroll.tech signs customers in with
 > their e-mail address and a link by mail instead of Access with a one-time PIN; this Worker sends that mail through its RPC
 > entrypoint `ImagesMail` (Graph, `MS365_CLIENT_SECRET`); the Images tab counts downloads per release and per month and copies
 > a customer link per file; the site stays 503 until the owner's Turnstile widget exists ([`images/README.md`](images/README.md) →

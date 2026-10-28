@@ -19,7 +19,7 @@
   tag. 0.5.1 (versie `e582f30e-2524-4ea3-9859-92736792a705`): `GET /api/firmware/github?repo=` (alleen lezen) en de pagina
   toont per repo of tag + release lukt; terug naar 0.5.0: `npx wrangler rollback 6370d878-a30f-4723-bff0-937a55fabafe`. Terug naar 0.4.1:
   `npx wrangler rollback acbf96ba-4f0f-4689-b06d-74f4f4059b20`.
-- **0.6.0 (2026-10-28, besluit gebruiker: optie B)**: `images.gocontroll.tech` zonder Cloudflare Access en zonder one-time PIN:
+- **0.6.0 (2026-10-28, versie `86d281d3-446d-4fd5-a2e0-ac7199b6a11e`; `gocontroll-images` versie `5cb45e29-0cc4-455f-a27e-8c757f1cad92`; besluit gebruiker: optie B)**: `images.gocontroll.tech` zonder Cloudflare Access en zonder one-time PIN:
   de klant vult zijn e-mailadres in (Turnstile), krijgt een link per mail (60 min geldig) en heeft daarna 7 dagen toegang op
   dat apparaat (ondertekende cookie, `IMAGES_SESSION_KEY`). De mail verstuurt deze Worker via het RPC-entrypoint `ImagesMail`
   (`src/images-mail.ts`, Graph met `MS365_CLIENT_SECRET`), zodat het mailsecret niet in de publieke Worker staat. Images-tab:

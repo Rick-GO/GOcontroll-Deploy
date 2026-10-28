@@ -6,7 +6,7 @@ Worker, **`gocontroll-images`**, in this folder of the Deploy repo; it shares no
 intranet Worker of the repo but a few source files, the bucket and one RPC call (the mail with the
 sign-in link).
 
-> **Status: deployed, not open yet.** Since 2026-10-28 (Deploy 0.6.0) customers sign in with their
+> **Status: deployed, not open yet.** Since 2026-10-28 (Deploy 0.6.0, version `5cb45e29-0cc4-455f-a27e-8c757f1cad92`) customers sign in with their
 > e-mail address and a link by mail (no Cloudflare Access, no one-time PIN). Until the owner has made
 > the Turnstile widget ([one-time setup](#one-time-setup)) and its site key is in
 > `TURNSTILE_SITE_KEY`, every request gets **503 "Downloads are being set up"** (fail closed). There
