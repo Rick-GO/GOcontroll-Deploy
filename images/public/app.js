@@ -8,7 +8,7 @@
 // setAttribute), never as HTML: no innerHTML or insertAdjacentHTML anywhere in this file
 // (images/test/page.test.ts checks it). The CSP allows no inline script or style either.
 
-import { CONTROLLERS, controllerGroups, formatDate, releaseTitle } from './format.js';
+import { CONTROLLERS, controllerGroups, formatDate, latestPerType, releaseTitle } from './format.js';
 import { byId, fileItem, h, icon, loadCatalogue, showWho, wireCopyButtons } from './ui.js';
 
 /** @typedef {import('./format.js').Catalogue} Catalogue */
@@ -28,7 +28,8 @@ function currentController() {
 // ── Rendering ────────────────────────────────────────────────────────────────
 
 /**
- * One release: its version and date (the card above names the controller).
+ * One release: its type (when the controller has types), version and date (the card above names the
+ * controller).
  * @param {CatalogueRelease} release @param {boolean} latest @param {boolean} open
  */
 function releaseItem(release, latest, open) {
@@ -36,6 +37,7 @@ function releaseItem(release, latest, open) {
   const summary = h('summary', {},
     icon('chevron-right'),
     h('span', { class: 'rel-line' },
+      release.type ? h('span', { class: 'rel-type' }, release.type) : null,
       h('span', { class: 'rel-version' }, `Version ${release.version}`),
       latest ? h('span', { class: 'badge latest' }, 'Latest') : null),
     date ? h('span', { class: 'rel-meta' }, `Released ${date}`) : null);
@@ -49,13 +51,14 @@ function releaseItem(release, latest, open) {
   return h('details', { class: 'release', open }, summary, body);
 }
 
-/** @param {CatalogueRelease[]} releases  one controller, newest first */
+/** @param {CatalogueRelease[]} releases  one controller: per type, newest first */
 function productCard(releases) {
-  const [newest] = releases;
-  const titleId = `product-${newest.controller}`;
+  const [first] = releases;
+  const titleId = `product-${first.controller}`;
+  const latest = latestPerType(releases);
   return h('article', { class: 'product', 'aria-labelledby': titleId },
-    h('header', { class: 'product-head' }, h('h3', { id: titleId }, releaseTitle(newest))),
-    h('div', { class: 'releases' }, ...releases.map((r, i) => releaseItem(r, i === 0, i === 0))));
+    h('header', { class: 'product-head' }, h('h3', { id: titleId }, releaseTitle(first))),
+    h('div', { class: 'releases' }, ...releases.map((r, i) => releaseItem(r, latest[i], latest[i]))));
 }
 
 /** @param {HTMLElement} container @param {CatalogueRelease[][]} groups @param {string} emptyText */

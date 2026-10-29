@@ -15,7 +15,9 @@ sign-in link).
 > until there are. Since Deploy 0.8.0 (2026-10-29, version `dc1efb7b-089c-4d09-98db-514aa0609766`) there are controller
 > images only: no tool releases, no `tools/`, `manifest.json` format 2, and the file role *Complete image* (`package`). Since
 > Deploy 0.9.0 (2026-10-29, version `8d01606e-e198-4153-a180-e51a070f9e05`) a release is one controller and a version (`manifest.json` format 3): the page names the controller
-> once, on its card (*Moduline L4*), and a release shows only its version and date.
+> once, on its card (*Moduline L4*), and a release shows only its version and date. Deploy 0.10.0 (committed 2026-10-29, not
+> deployed yet): a release can have a type (e.g. *1.07 - AV123*), shown next to its version; every type is a system of its own
+> with its own *Latest* (`manifest.json` format 4).
 
 ## How it works
 
@@ -39,11 +41,13 @@ sign-in link).
 
 The contract between the two Workers — the bucket layout, the catalogue format, which files may be
 served, the download log, the sign-in mail — is **`../src/images-format.ts`** (no imports, bundled by
-both). It is not repeated here. In short: `manifest.json` (format 3: per release `controller`, `version`,
-`released`, `notes`, `files`), `images/<product>/<version>/<file>` (`<product>` = the controller's, `moduline-l4`),
+both). It is not repeated here. In short: `manifest.json` (format 4: per release `controller`, `type` ('' =
+none), `version`, `released`, `notes`, `files`), `images/<product>/<version>/<file>` (`<product>` =
+`productOf(controller, type)`: `moduline-l4`, `moduline-hmi1-107-av123`),
 `downloads/<yyyy>/<mm>/<time>-<random>.json`, `access-mails/<hmac>`. A `manifest.json` of a newer format
-than this Worker knows shows nothing (`parseCatalogue`); a release of format 2 is read as the controller
-of its `product` (its title and controllers are dropped).
+than this Worker knows shows nothing (`parseCatalogue`); a release of format 3 has no type; one of format
+2 is read as the controller of its `product` (its title and controllers are dropped); a type that is not
+kept as Deploy writes it (`normaliseType`) leaves the release out.
 
 ### Every request, in this order (`src/index.ts`)
 
@@ -137,11 +141,14 @@ Plain ES modules with `// @ts-check` and JSDoc, no framework, no build step, as 
 - **`index.html` + `app.js`**: header with the logo, "Downloads", the signed-in address and *Sign out*
   (`/sign-out`); the anthracite hero; **Controller images** with a filter All / L4 / M1 / HMI1 (kept in
   the address, `#M1`); *Verify your download*. Per controller one card (*Moduline L4*, `releaseTitle`)
-  with its releases newest first, the newest open, older ones collapsed (`<details>`); per release the
-  version and the release date (en-GB; not the controller again), notes as plain text and the files: name, role (e.g. *Complete image*), platform (not
+  with its releases per type (none first), newest first. Every type is a system of its own
+  (`latestPerType`): its newest release is open and marked *Latest*, older ones are collapsed
+  (`<details>`), so two types can each have a latest release. Per release the type in bold (when there
+  is one), the version and the release date (en-GB; not the controller again), notes as plain text and the files: name, role (e.g. *Complete image*), platform (not
   when `any`), size, SHA-256 with *Copy*, *Download*.
 - **`download.html` + `download.js`**: `/download/<path>`, the link to give a customer for one file
-  (Deploy's Images tab copies it): the release (*Moduline L4 <version>*, released …), the file card,
+  (Deploy's Images tab copies it): the release (*Moduline HMI1 · 1.07 - AV123*, `releaseName`; then
+  "Version … · Released …"), the file card,
   "Your download has started" (it starts
   once when the page opens; the browser stays on the page), and the checksum commands with the file's
   own name. A file that is not published (any more): a notice and a link to all downloads.
@@ -215,7 +222,9 @@ curl -sI http://images.gocontroll.tech/             # 301 to https://
 ```
 
 **Rolling back**: `npx wrangler deployments list -c images/wrangler.toml` →
-`npx wrangler rollback <version-id> -c images/wrangler.toml`. The version before one controller per release
+`npx wrangler rollback <version-id> -c images/wrangler.toml`. The version before types (Deploy 0.10.0) is
+`8d01606e-e198-4153-a180-e51a070f9e05` (`manifest.json` format 3: it shows nothing of a format-4 catalogue;
+roll back before the intranet Worker). The version before one controller per release
 (Deploy 0.9.0) is `dc1efb7b-089c-4d09-98db-514aa0609766` (`manifest.json` format 2: it shows nothing of a format-3
 catalogue; roll back before the intranet Worker). The version before controller images only
 (Deploy 0.8.0) is `340e55ee-9f89-4059-9d7c-da0925762cf8` (images and tools, `manifest.json` format 1: it shows

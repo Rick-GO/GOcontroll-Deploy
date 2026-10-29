@@ -8,7 +8,7 @@
 
 /**
  * @typedef {{ name: string, path: string, size: number, sha256: string, role: string, platform: string }} CatalogueFile
- * @typedef {{ controller: string, version: string, released: string, notes: string, files: CatalogueFile[] }} CatalogueRelease
+ * @typedef {{ controller: string, type: string, version: string, released: string, notes: string, files: CatalogueFile[] }} CatalogueRelease
  * @typedef {{ format: number, updated: string | null, releases: CatalogueRelease[] }} Catalogue
  */
 
@@ -55,15 +55,33 @@ export function formatDate(date) {
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 }
 
-/** The name of a controller's images, as controllerTitle in src/images-format.ts: "Moduline L4". @param {CatalogueRelease} release */
+/** The name of a controller's images (its card), as controllerTitle in src/images-format.ts: "Moduline HMI1". @param {CatalogueRelease} release */
 export const releaseTitle = (release) => `Moduline ${release.controller}`;
+
+/** The name of one system, as releaseName in src/images-format.ts: "Moduline HMI1 · 1.07 - AV123". @param {CatalogueRelease} release */
+export const releaseName = (release) => (release.type ? `${releaseTitle(release)} · ${release.type}` : releaseTitle(release));
+
+/**
+ * Per release of one controller's card (catalogue order: type, then newest first) whether it is the
+ * latest of its type: every type is a system of its own, with a latest release of its own (a
+ * controller without types is one system). The latest is shown open, the others collapsed.
+ * @param {CatalogueRelease[]} releases @returns {boolean[]}
+ */
+export function latestPerType(releases) {
+  const seen = new Set();
+  return releases.map((r) => {
+    if (seen.has(r.type)) return false;
+    seen.add(r.type);
+    return true;
+  });
+}
 
 /** True when a release is the image of `controller` ('' = all). @param {CatalogueRelease} release @param {string} controller */
 export const isFor = (release, controller) => !controller || release.controller === controller;
 
 /**
- * The releases grouped per controller, in catalogue order (the Worker sorts: L4, M1, HMI1, then the
- * newest release first), optionally only those of one controller.
+ * The releases grouped per controller, in catalogue order (the Worker sorts: L4, M1, HMI1, then type,
+ * then the newest release first), optionally only those of one controller.
  * @param {CatalogueRelease[]} releases @param {string} [controller]
  * @returns {CatalogueRelease[][]}
  */

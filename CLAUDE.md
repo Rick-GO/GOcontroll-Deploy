@@ -67,6 +67,15 @@
   toont niet meer de public key zelf, alleen Yes/No/n/a (de key staat op de applicatiepagina). Geen binding of data gewijzigd.
   Terug naar 0.9.0: `npx wrangler rollback 5f6aa698-1fce-4102-96f5-b0026dcbaa78`; een verplaatst manifest blijft op zijn nieuwe host
   (eerst terugzetten met *Change…*, of `previous_manifest` uit de logregel `distribution`).
+- **0.10.0 (2026-10-29, gecommit, nog niet gedeployd; wens gebruiker)**: een **type** per release (vrije tekst, optioneel,
+  bijv. `1.07 - AV123`: hardwareversie × adapterboard van de HMI1). Elk type is een eigen systeem met een eigen *Latest*.
+  Formulier: controller, releasedatum, type, versie, notes; het type hoort bij de identiteit en is niet via *Edit…* te wijzigen.
+  Identiteit = controller + type + versie; map = `productOf(controller, type)` (`moduline-hmi1-107-av123`), ook de sleutel in
+  de API (`/api/images/releases/:product/:version`); `manifest.json` **format 4**. Zelfde slug, andere tekst = 409. Releases
+  zonder type houden map en sleutel. Deploy: `npm run deploy`, dan `npm run deploy:images`. Terug: eerst
+  `npx wrangler rollback 8d01606e-e198-4153-a180-e51a070f9e05 -c images/wrangler.toml`, dan
+  `npx wrangler rollback b903561d-cc62-4181-8225-069824314a63` (0.9.1), na het verwijderen van releases met een type en van
+  `manifest.json` (README → *Rolling back*).
 
 ## Architectuur
 - **Worker met static assets** (geen Pages), zelfde opzet als GOcontroll-Logistic: `run_worker_first = true`,
@@ -164,21 +173,27 @@
 
 ## Images voor klanten (`src/images.ts`, tab Images, `images/`)
 - Formaat en bucketindeling: **`src/images-format.ts`** (geen imports; door beide Workers gebundeld). Contract
-  `GOcontroll-Architecture/cloudflare/images/spec.md` (≥ 3.0.0). Deploy is de **enige schrijver** van releases en
+  `GOcontroll-Architecture/cloudflare/images/spec.md` (≥ 4.0.0). Deploy is de **enige schrijver** van releases en
   `manifest.json`; `images.gocontroll.tech` (Worker `gocontroll-images`, `images/`) is de enige lezer en schrijft alleen
   `downloads/` en `access-mails/` (het uurplafond van 5 links per adres, sleutel = HMAC van het adres, lifecycle 1 dag).
 - **Alleen controller-images** (sinds 0.8.0, wens gebruiker): een release heeft geen soort, alles staat onder `images/`.
-- **Eén controller per release** (sinds 0.9.0, wens gebruiker): `controller` is de enige bron; `product` (map, downloadlog,
-  tellingen, STATE-key) = `productOf(controller)` en de naam voor klanten = `controllerTitle` (*Moduline L4*), nergens
-  opgeslagen in een release. Een record van 0.8.0 (`product`, `title`, `controllers`) leest als de controller van zijn product
-  (`asRelease`/`asUpload`) en wordt bij de volgende wijziging in de nieuwe vorm geschreven; geen datamigratie. Bestandsrollen `FILE_ROLES`, waarvan **`package`** = *Complete image* (zip met alles
+- **Eén controller per release** (sinds 0.9.0, wens gebruiker), **met optioneel één type** (sinds 0.10.0): `controller` + `type`
+  zijn de enige bron; `product` (map, downloadlog, tellingen, STATE-key, API-sleutel) = `productOf(controller, type)`
+  (`moduline-l4`; met type `moduline-hmi1-107-av123`, `typeSlug`: kleine letters, punten weg, andere scheidingen een streepje) en
+  de naam voor klanten = `controllerTitle` op de kaart (*Moduline HMI1*), het type naast de versie, `releaseName` op de
+  downloadpagina (*Moduline HMI1 · 1.07 - AV123*); nergens opgeslagen in een release. Type = vrije tekst (`normaliseType`: max.
+  40 printbare ASCII-tekens, met een letter of cijfer); twee typen met dezelfde slug = 409 (`checkTypeFolder`). Elk type is een
+  eigen systeem: per controller + type de nieuwste open en *Latest* (`latestPerType`). Een record zonder type (0.9.x) heeft geen
+  type; een record van 0.8.0 (`product`, `title`, `controllers`) leest als de controller van zijn product (`asRelease`/`asUpload`)
+  en wordt bij de volgende wijziging in de nieuwe vorm geschreven; geen datamigratie.
+- Bestandsrollen `FILE_ROLES`, waarvan **`package`** = *Complete image* (zip met alles
   wat UUU nodig heeft: de volledige image en een script voor alleen de kernel; `.zip` raadt de pagina als `package`). Een rol
   die het contract niet kent (bijv. `tool` van vóór 0.8.0) leest als `other`. Labels: bron `src/images-format.ts`, kopieën in
   `public/js/release-helpers.js` (`test/pages.test.ts`) en `images/public/format.js` (`images/test/page.test.ts`).
-- `manifest.json` is **format 3** (`CATALOGUE_FORMAT`). Een nieuwer format: de download-site toont niets (`parseCatalogue`)
-  en Deploy schrijft er nooit overheen (409); een ouder format wordt gelezen (een format-2-release als de controller van zijn
-  `product`) en bij de volgende publicatie of terugtrekking format 3.
-- Release = concept in `STATE` `images/releases/<product>/<versie>.json` (product van de controller; auditlog App ID `image-<product>`); bestanden staan al in de bucket, maar de
+- `manifest.json` is **format 4** (`CATALOGUE_FORMAT`). Een nieuwer format: de download-site toont niets (`parseCatalogue`)
+  en Deploy schrijft er nooit overheen (409); een ouder format wordt gelezen (format 3: geen type; format 2: de controller van
+  zijn `product`) en bij de volgende publicatie of terugtrekking format 4.
+- Release = concept in `STATE` `images/releases/<product>/<versie>.json` (product van controller + type; auditlog App ID `image-<product>`); bestanden staan al in de bucket, maar de
   download-Worker serveert alleen wat `manifest.json` noemt. Publiceren/terugtrekken = `manifest.json` etag-conditioneel
   herschrijven. In `manifest.json` nooit e-mailadressen of concepten (`catalogueEntry`). Alleen een concept verliest
   bestanden of wordt verwijderd (geen archief: images worden opnieuw gebouwd).

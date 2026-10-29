@@ -15,7 +15,7 @@
 //   images/<product>/<version>/<file>               a file of a controller image: the complete image as
 //                                                   one zip for UUU (role package), or a part of it
 //                                                   (rootfs, kernel, bootloader, …); <product> follows
-//                                                   from the controller (CONTROLLER_PRODUCTS)
+//                                                   from the controller and the type (productOf)
 //   downloads/<yyyy>/<mm>/<iso time>-<random>.json  one download, written by images.gocontroll.tech;
 //                                                   who and what is in the custom metadata (DownloadMeta)
 //   access-mails/<hmac of the address>              the sign-in links mailed to one address in the last
@@ -38,13 +38,14 @@
 
 export const CATALOGUE_KEY = 'manifest.json';
 /**
- * Format 3 (since 2026-10-29, Deploy 0.9.0): a release is one controller's image, named by `controller`
- * and `version` only; its product folder follows from the controller, there is no title. Format 2 had
- * `product`, `title` and `controllers` (still read: the controller from the product, CONTROLLER_PRODUCTS);
- * format 1 also had tool releases (never published). A manifest of a newer format than this is read as
- * empty: a reader that does not know it shows nothing, and Deploy never writes over it.
+ * Format 4 (since 2026-10-29, Deploy 0.10.0): a release is the image of one controller and one type of
+ * it (`type`, '' = none: the controller is one system) in one version; its product folder follows from
+ * controller and type (productOf), there is no title. Format 3 had no `type` (read as ''); format 2 had
+ * `product`, `title` and `controllers` (read: the controller of the product); format 1 also had tool
+ * releases (never published). A manifest of a newer format than this is read as empty: a reader that
+ * does not know it shows nothing, and Deploy never writes over it.
  */
-export const CATALOGUE_FORMAT = 3;
+export const CATALOGUE_FORMAT = 4;
 export const DOWNLOAD_LOG_PREFIX = 'downloads/';
 /** The top folder of every release in the bucket. */
 export const RELEASES_DIR = 'images';
@@ -53,18 +54,49 @@ export const RELEASES_DIR = 'images';
 export const IMAGE_CONTROLLERS = ['L4', 'M1', 'HMI1'] as const;
 export type ImageController = (typeof IMAGE_CONTROLLERS)[number];
 
-/**
- * The product of each controller: its folder under images/, and the `product` of the download log and
- * the counts. Derived, never stored in a release: the controller is the one source.
- */
+/** The product of each controller without a type: its folder under images/. */
 export const CONTROLLER_PRODUCTS: Readonly<Record<ImageController, string>> = { L4: 'moduline-l4', M1: 'moduline-m1', HMI1: 'moduline-hmi1' };
-export const productOf = (controller: ImageController): string => CONTROLLER_PRODUCTS[controller];
-/** The controller whose product this is (format 2 and older records named the product); null for any other. */
+
+/**
+ * A type: a variant of a controller that is a system of its own (e.g. "1.07 - AV123": hardware version
+ * and adapter board of an HMI1), with releases and a latest release of its own. Free text as people
+ * write it, shown to customers as it is; '' = none. At most TYPE_MAX printable ASCII characters, at
+ * least one letter or digit.
+ */
+export const TYPE_MAX = 40;
+const TYPE_RE = /^[ -~]{1,40}$/;
+
+/** A type as it is kept: trimmed, inner spaces collapsed; '' for none; null when it is not a type. */
+export function normaliseType(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return '';
+  if (typeof raw !== 'string') return null;
+  const type = raw.trim().replace(/\s+/g, ' ');
+  if (!type) return '';
+  return TYPE_RE.test(type) && /[A-Za-z0-9]/.test(type) ? type : null;
+}
+
+/** The folder part of a type: lower case, dots dropped, every other run of non-alphanumerics a dash ("1.07 - AV123" → "107-av123"). */
+export function typeSlug(type: string): string {
+  return type.toLowerCase().split('.').join('').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+/**
+ * The product of a release: its folder under images/, the key of its record in Deploy's state, and the
+ * `product` of the download log and the counts. Derived, never stored in a release: controller and type
+ * are the one source. "moduline-hmi1", or with a type "moduline-hmi1-107-av123". Two types with the same
+ * slug would share a folder: Deploy refuses the second.
+ */
+export const productOf = (controller: ImageController, type = ''): string =>
+  (type ? `${CONTROLLER_PRODUCTS[controller]}-${typeSlug(type)}` : CONTROLLER_PRODUCTS[controller]);
+/** The controller whose product (without a type) this is (format 2 named the product); null for any other. */
 export function controllerOfProduct(product: unknown): ImageController | null {
   return IMAGE_CONTROLLERS.find((c) => CONTROLLER_PRODUCTS[c] === product) ?? null;
 }
-/** The name customers see for a controller's images. */
+/** The name customers see for a controller's images (the card). */
 export const controllerTitle = (controller: ImageController): string => `Moduline ${controller}`;
+/** The name of one system: the controller, with its type when it has one ("Moduline HMI1 · 1.07 - AV123"). */
+export const releaseName = (controller: ImageController, type: string): string =>
+  (type ? `${controllerTitle(controller)} · ${type}` : controllerTitle(controller));
 
 /**
  * What a file in a release is. `package`: a zip with everything UUU needs to install the image, the
@@ -90,7 +122,7 @@ export const PLATFORM_LABELS: Readonly<Record<Platform, string>> = { any: 'Any',
 
 /** The shape of a product folder (the products themselves: CONTROLLER_PRODUCTS). */
 export const PRODUCT_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-/** A version: e.g. 2026-10-29_6.12.87, 2026.11.0, 1.4.2-rc1. Never "." or "..": it starts with a letter or digit. */
+/** A version: e.g. 6.12.87, 2026-10-29_6.12.87, 1.4.2-rc1. Never "." or "..": it starts with a letter or digit. */
 export const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$/;
 /** A file name in a release: no path, no leading dot. */
 export const FILE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
@@ -107,7 +139,8 @@ export interface CatalogueFile {
 }
 
 export interface CatalogueRelease {
-  controller: ImageController;     // whose image this is; its product folder is productOf(controller)
+  controller: ImageController;     // whose image this is
+  type: string;                    // which type of the controller ('' = none); folder productOf(controller, type)
   version: string;
   released: string;                // YYYY-MM-DD
   notes: string;                   // plain text; the page shows it as text, never as HTML
@@ -124,14 +157,14 @@ export interface Catalogue {
 export interface DownloadMeta {
   email: string;
   path: string;
-  product: string;   // productOf(controller), as in the path
+  product: string;   // productOf(controller, type), as in the path
   version: string;
   country: string;
 }
 
 /** The folder of a release in the bucket, with a trailing slash. */
-export const releasePrefix = (controller: ImageController, version: string): string =>
-  `${RELEASES_DIR}/${productOf(controller)}/${version}/`;
+export const releasePrefix = (controller: ImageController, type: string, version: string): string =>
+  `${RELEASES_DIR}/${productOf(controller, type)}/${version}/`;
 
 export const emptyCatalogue = (): Catalogue => ({ format: CATALOGUE_FORMAT, updated: null, releases: [] });
 
@@ -155,10 +188,11 @@ export function compareLooseVersions(a: string, b: string): number {
   return 0;
 }
 
-/** Catalogue order: controller (L4, M1, HMI1), then the newest release first. */
+/** Catalogue order: controller (L4, M1, HMI1), then type (none first), then the newest release first. */
 export function sortReleases(releases: CatalogueRelease[]): CatalogueRelease[] {
   return [...releases].sort((a, b) =>
     IMAGE_CONTROLLERS.indexOf(a.controller) - IMAGE_CONTROLLERS.indexOf(b.controller)
+    || compareLooseVersions(a.type, b.type)
     || b.released.localeCompare(a.released)
     || compareLooseVersions(b.version, a.version));
 }
@@ -169,9 +203,9 @@ const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => (lis
 /**
  * Read manifest.json. A release or file that does not hold up is left out (never served), so a
  * broken entry cannot open a path outside its release. A newer format than CATALOGUE_FORMAT gives
- * no releases at all (`format` says which it was). A release of format 2 (no `controller`) takes
- * the controller of its `product`; its `title` and `controllers` are dropped. Throws only when the
- * text is not JSON.
+ * no releases at all (`format` says which it was). A release without `type` (format 3 and older)
+ * has none; one of format 2 (no `controller`) takes the controller of its `product`, its `title` and
+ * `controllers` are dropped. Throws only when the text is not JSON.
  */
 export function parseCatalogue(text: string): Catalogue {
   const doc = JSON.parse(text) as Record<string, unknown>;
@@ -183,8 +217,9 @@ export function parseCatalogue(text: string): Catalogue {
   for (const r of releases as Record<string, unknown>[]) {
     if (!r || !isString(r.version) || !VERSION_RE.test(r.version)) continue;
     const controller = oneOf(IMAGE_CONTROLLERS, r.controller) ? r.controller : controllerOfProduct(r.product);
-    if (!controller) continue;
-    const prefix = releasePrefix(controller, r.version);
+    const type = normaliseType(r.type);
+    if (!controller || type === null || type !== (r.type ?? '')) continue;
+    const prefix = releasePrefix(controller, type, r.version);
     const files: CatalogueFile[] = [];
     for (const f of (Array.isArray(r.files) ? r.files : []) as Record<string, unknown>[]) {
       if (!f || !isString(f.name) || !FILE_NAME_RE.test(f.name) || f.path !== prefix + f.name) continue;
@@ -199,6 +234,7 @@ export function parseCatalogue(text: string): Catalogue {
     }
     out.releases.push({
       controller,
+      type,
       version: r.version,
       released: isString(r.released) && DATE_RE.test(r.released) ? r.released : '',
       notes: isString(r.notes) ? r.notes : '',

@@ -2,7 +2,7 @@
 // Images (#/images): Linux images for the Moduline L4, M1 and HMI1, for customers on
 // images.gocontroll.tech (bucket gocontroll-images, src/images.ts).
 //
-// A release (the image of one controller in one version) starts as a draft. Its files are uploaded straight
+// A release (the image of one controller, optionally one type of it, in one version) starts as a draft. Its files are uploaded straight
 // into the bucket in parts of the Worker's partSize, three at a time, each part retried a few times;
 // at the end the Worker joins them and reads the SHA-256 from the stored file. Customers see a
 // release only once it is published (manifest.json); Withdraw takes it away again. Drafts can lose
@@ -20,10 +20,10 @@ import { badge, confirmDialog, formDialog, formValues, setHero, stale } from './
 /**
  * @typedef {import('./ui.js').Ctx} Ctx
  * @typedef {{ name: string, path: string, size: number, sha256: string, role: string, platform: string, uploaded_at: string, uploaded_by: string }} ImageFile
- * @typedef {{ controller: string, product: string, version: string, released: string, notes: string,
+ * @typedef {{ controller: string, type: string, product: string, version: string, released: string, notes: string,
  *   files: ImageFile[], status: 'draft' | 'published', created_at: string, created_by: string, updated_at: string, updated_by: string,
  *   published_at?: string | null, published_by?: string | null, inCatalogue: boolean }} Release
- * @typedef {{ id: string, key: string, controller: string, version: string, name: string, size: number, parts: number, started_at: string, started_by: string }} Upload
+ * @typedef {{ id: string, key: string, controller: string, type: string, product: string, version: string, name: string, size: number, parts: number, started_at: string, started_by: string }} Upload
  * @typedef {{ at: string, email: string, path: string, product: string, version: string, country: string }} Download
  * @typedef {{ month: string, downloads: number, addresses: number, releases: Record<string, number>, files: Record<string, number>,
  *   countries: Record<string, number>, final: boolean }} MonthStats
@@ -37,12 +37,12 @@ const CONTROLLERS = ['L4', 'M1', 'HMI1'];
 const PARALLEL_PARTS = 3;
 const PART_ATTEMPTS = 4;
 
-/** @param {{ controller: string, version: string }} r */
-const base = (r) => `/images/releases/${encodeURIComponent(r.controller)}/${encodeURIComponent(r.version)}`;
-/** How a release is named in the download counts (product/version, product = the controller's, from the API). @param {{ product: string, version: string }} r */
+/** A release's URL: its folder (product = controller + type, from the API) and version. @param {{ product: string, version: string }} r */
+const base = (r) => `/images/releases/${encodeURIComponent(r.product)}/${encodeURIComponent(r.version)}`;
+/** A release's key: on its card and in the download counts (product/version). @param {{ product: string, version: string }} r */
 const releaseId = (r) => `${r.product}/${r.version}`;
-/** The name customers see, as controllerTitle in src/images-format.ts. @param {{ controller: string }} r */
-const titleOf = (r) => `Moduline ${r.controller}`;
+/** The name customers see, as releaseName in src/images-format.ts: "Moduline HMI1 · 1.07 - AV123". @param {{ controller: string, type: string }} r */
+const titleOf = (r) => (r.type ? `Moduline ${r.controller} · ${r.type}` : `Moduline ${r.controller}`);
 
 /** The release date field's default: today, local. */
 function today() {
@@ -89,7 +89,7 @@ export async function renderImages(ctx) {
   hydrateIcons(ctx.view);
 
   ctx.view.querySelector('[data-new]')?.addEventListener('click', async () => {
-    if (await releaseDialog(null)) reload();
+    if (await releaseDialog(data, null)) reload();
   });
   ctx.view.querySelectorAll('[data-abort]').forEach((b) => b.addEventListener('click', () => act(b, async () => {
     const id = /** @type {HTMLElement} */ (b).dataset.abort ?? '';
@@ -124,8 +124,8 @@ function unfinished(uploads) {
 /** @param {Release} r @param {Overview} d */
 function releaseCard(r, d) {
   const draft = r.status === 'draft';
-  const uploading = d.uploads.some((u) => u.controller === r.controller && u.version === r.version);
-  return `<article class="img-release" data-release="${esc(`${r.controller}/${r.version}`)}">
+  const uploading = d.uploads.some((u) => u.product === r.product && u.version === r.version);
+  return `<article class="img-release" data-release="${esc(releaseId(r))}">
     <header class="img-head">
       <div><h3>${esc(titleOf(r))} <span class="mono muted">${esc(r.version)}</span></h3>
         <div class="cell-sub mono">images/${esc(r.product)}/${esc(r.version)}</div></div>
@@ -226,11 +226,11 @@ function downloads(list) {
 
 /** @param {HTMLElement} card @param {Overview} data @param {() => void} reload */
 function wireCard(card, data, reload) {
-  const [controller, version] = (card.dataset.release ?? '').split('/');
-  const r = /** @type {Release} */ (data.releases.find((x) => x.controller === controller && x.version === version));
+  const [product, version] = (card.dataset.release ?? '').split('/');
+  const r = /** @type {Release} */ (data.releases.find((x) => x.product === product && x.version === version));
   const q = (/** @type {string} */ sel) => card.querySelector(sel);
 
-  q('[data-edit]')?.addEventListener('click', async () => { if (await releaseDialog(r)) reload(); });
+  q('[data-edit]')?.addEventListener('click', async () => { if (await releaseDialog(data, r)) reload(); });
   const publish = q('[data-publish]');
   publish?.addEventListener('click', () => act(publish, async () => {
     const ok = await confirmDialog(`Publish ${titleOf(r)} ${r.version}?`,
@@ -387,17 +387,23 @@ async function uploadFile(r, file, role, platform, progress) {
 // ── New release / Edit ───────────────────────────────────────────────────────
 
 /**
- * New release: the controller (one), the version, the date and the notes; what customers see as its
- * name follows from the controller ("Moduline L4"). Edit: the date and the notes only.
- * @param {Release | null} r  null: a new release
+ * New release, in this order: the controller (one), the release date, the type (optional, e.g.
+ * "1.07 - AV123": a system of its own), the version, the notes. What customers see as its name
+ * follows from controller and type ("Moduline HMI1 · 1.07 - AV123"), its folder too. Edit: the date
+ * and the notes only (controller, type and version are what the release is).
+ * @param {Overview} data @param {Release | null} r  null: a new release
  * @returns {Promise<boolean>}
  */
-function releaseDialog(r) {
+function releaseDialog(data, r) {
+  const typesId = uniqueId('types');
+  const types = [...new Set(data.releases.map((x) => x.type).filter(Boolean))].sort();
   const body = `<div class="form-grid two">
     ${r ? `<p class="span-2 muted">${esc(titleOf(r))} · <span class="mono">${esc(r.version)}</span> (cannot be changed)</p>` : `
     <fieldset class="span-2"><legend>Controller</legend><div class="checks seg" role="radiogroup" aria-label="Controller">${CONTROLLERS.map((c) => `
       <label class="check"><input type="radio" name="controller" value="${c}" required> ${c}</label>`).join('')}</div></fieldset>`}
     ${field('Release date', (id) => `<input type="date" id="${id}" name="released" required value="${esc(r?.released ?? today())}">`)}
+    ${r ? '' : field('Type', (id) => `<input id="${id}" name="type" maxlength="40" list="${typesId}" placeholder="e.g. 1.07 - AV123">
+      <datalist id="${typesId}">${types.map((t) => `<option value="${esc(t)}">`).join('')}</datalist>`, '', 'Optional: a variant that is a system of its own (hardware version, adapter board), with its own latest release. Customers see it next to the version. Empty: the controller is one system.')}
     ${r ? '' : field('Version', (id) => `<input id="${id}" name="version" required maxlength="64" class="mono" placeholder="e.g. 2026-10-29_6.12.87">`)}
     ${field('Notes', (id) => `<textarea id="${id}" name="notes" rows="5" maxlength="4000" placeholder="What is new, how to install it">${esc(r?.notes ?? '')}</textarea>`, 'span-2', 'Plain text, shown to customers.')}
   </div>`;
@@ -409,7 +415,7 @@ function releaseDialog(r) {
       const v = formValues(form);
       const payload = { released: v.released, notes: v.notes };
       if (r) await api('PATCH', base(r), payload);
-      else await api('POST', '/images/releases', { ...payload, controller: v.controller, version: String(v.version).trim() });
+      else await api('POST', '/images/releases', { ...payload, controller: v.controller, type: String(v.type ?? '').trim(), version: String(v.version).trim() });
       toast(r ? 'Saved.' : 'Draft created. Add its files.');
     },
   });

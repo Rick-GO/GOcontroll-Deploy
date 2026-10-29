@@ -104,27 +104,27 @@ export const ROOTFS = 'images/moduline-l4/2026.11.0/rootfs.ext4.zst';
 export const ROOTFS_BYTES = '0123456789abcdefghij'; // 20 bytes
 export const OLD_ROOTFS = 'images/moduline-l4/2026.10.0/rootfs.ext4.zst';
 /** The complete image for UUU (role package) of another controller. */
-export const PACKAGE = 'images/moduline-hmi1/2026.11.0/moduline-hmi1-2026.11.0.zip';
+export const PACKAGE = 'images/moduline-hmi1-107-av123/2026.11.0/moduline-hmi1-107-av123-2026.11.0.zip';
 /** In the bucket, but its release is a draft: not in manifest.json. */
 export const DRAFT = 'images/moduline-l4/2026.12.0/rootfs.ext4.zst';
 const SHA = 'a'.repeat(64);
 
 export function sampleCatalogue(): Catalogue {
   return {
-    format: 3,
+    format: 4,
     updated: '2026-10-28T09:00:00.000Z',
     releases: [
       {
-        controller: 'L4', version: '2026.11.0', released: '2026-11-01', notes: 'Kernel 6.12.\n<b>Not HTML</b>',
+        controller: 'L4', type: '', version: '2026.11.0', released: '2026-11-01', notes: 'Kernel 6.12.\n<b>Not HTML</b>',
         files: [{ name: 'rootfs.ext4.zst', path: ROOTFS, size: 20, sha256: SHA, role: 'rootfs', platform: 'any' }],
       },
       {
-        controller: 'L4', version: '2026.10.0', released: '2026-10-01', notes: '',
+        controller: 'L4', type: '', version: '2026.10.0', released: '2026-10-01', notes: '',
         files: [{ name: 'rootfs.ext4.zst', path: OLD_ROOTFS, size: 5, sha256: SHA, role: 'rootfs', platform: 'any' }],
       },
       {
-        controller: 'HMI1', version: '2026.11.0', released: '2026-09-15', notes: 'Everything UUU needs.',
-        files: [{ name: 'moduline-hmi1-2026.11.0.zip', path: PACKAGE, size: 3, sha256: SHA, role: 'package', platform: 'any' }],
+        controller: 'HMI1', type: '1.07 - AV123', version: '2026.11.0', released: '2026-09-15', notes: 'Everything UUU needs.',
+        files: [{ name: 'moduline-hmi1-107-av123-2026.11.0.zip', path: PACKAGE, size: 3, sha256: SHA, role: 'package', platform: 'any' }],
       },
     ],
   };

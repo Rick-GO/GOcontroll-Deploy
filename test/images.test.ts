@@ -5,7 +5,7 @@ import { env } from 'cloudflare:test';
 import { describe, expect, test } from 'vitest';
 import { PART_SIZE, expectedPartSize } from '../src/images';
 import { STATS_PREFIX, collectFinishedMonths, imagesStats } from '../src/images-stats';
-import { CATALOGUE_KEY, catalogueText, downloadLogKey, parseCatalogue } from '../src/images-format';
+import { CATALOGUE_KEY, catalogueText, downloadLogKey, parseCatalogue, productOf, type ImageController } from '../src/images-format';
 import worker from '../src/index';
 import { call, ok } from './helpers';
 
@@ -21,7 +21,9 @@ function release(fields: Record<string, unknown> = {}) {
   return { controller: 'L4', version: version(), released: '2026-10-28', notes: 'First image.\nKernel 6.12.', ...fields };
 }
 
-const base = (r: { controller: string; version: string }) => `/api/images/releases/${r.controller}/${r.version}`;
+/** A release's URL: its folder (controller + type) and version. */
+const base = (r: { controller: string; type?: string; version: string }) =>
+  `/api/images/releases/${productOf(r.controller as ImageController, r.type ?? '')}/${r.version}`;
 
 async function putPart(id: string, partNumber: number, bytes: Uint8Array<ArrayBuffer>, headers: Record<string, string> = {}) {
   const res = await worker.fetch(new Request(`${ORIGIN}/api/images/uploads/${id}/parts/${partNumber}`, {
@@ -31,7 +33,7 @@ async function putPart(id: string, partNumber: number, bytes: Uint8Array<ArrayBu
 }
 
 /** Upload one small file (one part) into a draft; returns the file record. */
-async function uploadFile(r: { controller: string; version: string }, name: string, content: string, role = 'rootfs') {
+async function uploadFile(r: { controller: string; type?: string; version: string }, name: string, content: string, role = 'rootfs') {
   const bytes = enc(content);
   const start = await ok('POST', `${base(r)}/files`, { name, size: bytes.length, role, platform: 'any' }, 201);
   expect(start).toMatchObject({ partSize: PART_SIZE, parts: 1 });
@@ -61,8 +63,9 @@ describe('releases', () => {
     for (const fields of [{ controller: 'L5' }, { controller: undefined, controllers: ['L4'] }, { controller: undefined, product: 'moduline-l4' }]) {
       expect((await call('POST', '/api/images/releases', release(fields))).status, JSON.stringify(fields)).toBe(400);
     }
-    // The URLs of 0.8.0 had the product in them: no such route any more.
-    expect((await call('POST', `/api/images/releases/moduline-l4/${r.version}/publish`)).status).toBe(404);
+    // The URLs of 0.9.0 named the controller: no such folder.
+    expect((await call('POST', `/api/images/releases/L4/${r.version}/publish`)).status).toBe(404);
+    expect(made.type).toBe('');
     const m1 = release({ controller: 'M1' });
     expect(await ok('POST', '/api/images/releases', m1, 201)).toMatchObject({ controller: 'M1' });
     expect(await env.STATE.head(`images/releases/moduline-m1/${m1.version}.json`)).not.toBeNull();
@@ -88,7 +91,7 @@ describe('releases', () => {
     const text = await cat!.text();
     expect(text).not.toContain('@');
     for (const gone of ['kind', 'product', 'title', 'controllers']) expect(text).not.toContain(`"${gone}"`);
-    expect(JSON.parse(text).format).toBe(3);
+    expect(JSON.parse(text).format).toBe(4);
     const entry = parseCatalogue(text).releases.find((x) => x.version === r.version)!;
     expect(entry).toMatchObject({ controller: 'L4', notes: r.notes });
     expect(entry.files).toEqual([{ name: file.name, path: file.path, size: file.size, sha256: file.sha256, role: 'rootfs', platform: 'any' }]);
@@ -128,8 +131,8 @@ describe('releases', () => {
       size: 3, role: 'package', platform: 'any', part_size: PART_SIZE, parts: 1, started_at: '2026-10-29T12:00:00.000Z', started_by: ME,
     }));
     const up = (await ok('GET', '/api/images')).uploads.find((u: { id: string }) => u.id === id);
-    expect(up).toMatchObject({ controller: 'HMI1', version: '1.0' });
-    expect(up.product).toBeUndefined();
+    // Read as the controller of its product, without a type; the overview adds the folder it belongs to.
+    expect(up).toMatchObject({ controller: 'HMI1', type: '', product: 'moduline-hmi1', version: '1.0' });
     await ok('DELETE', `/api/images/uploads/${id}`);
     expect(await env.STATE.head(`images/uploads/${id}.json`)).toBeNull();
   });
@@ -176,23 +179,23 @@ describe('releases', () => {
     expect(pkg).toMatchObject({ role: 'package', path: `images/moduline-l4/${r.version}/moduline-l4-uuu.zip` });
   });
 
-  test('manifest.json of an older format is written as format 3; one of a newer format is never overwritten', async () => {
+  test('manifest.json of an older format is written as format 4; one of a newer format is never overwritten', async () => {
     const r = release();
     await ok('POST', '/api/images/releases', r, 201);
     await uploadFile(r, 'image.zip', 'zip', 'package');
     const before = await env.IMAGES_BUCKET.get(CATALOGUE_KEY);
     const kept = before ? await before.text() : null;
     try {
-      await env.IMAGES_BUCKET.put(CATALOGUE_KEY, catalogueText({ format: 4, updated: null, releases: [] }));
+      await env.IMAGES_BUCKET.put(CATALOGUE_KEY, catalogueText({ format: 5, updated: null, releases: [] }));
       const refused = await call('POST', `${base(r)}/publish`);
       expect(refused.status).toBe(409);
-      expect(refused.body.error).toMatch(/format 4/);
-      expect(JSON.parse(await (await env.IMAGES_BUCKET.get(CATALOGUE_KEY))!.text()).format).toBe(4);
+      expect(refused.body.error).toMatch(/format 5/);
+      expect(JSON.parse(await (await env.IMAGES_BUCKET.get(CATALOGUE_KEY))!.text()).format).toBe(5);
 
       await env.IMAGES_BUCKET.put(CATALOGUE_KEY, JSON.stringify({ format: 1, updated: null, releases: [] }));
       await ok('POST', `${base(r)}/publish`);
       const doc = JSON.parse(await (await env.IMAGES_BUCKET.get(CATALOGUE_KEY))!.text());
-      expect(doc.format).toBe(3);
+      expect(doc.format).toBe(4);
       expect(doc.releases.map((x: { version: string }) => x.version)).toContain(r.version);
     } finally {
       if (kept === null) await env.IMAGES_BUCKET.delete(CATALOGUE_KEY);
@@ -225,17 +228,105 @@ describe('releases', () => {
       expect(shown).toMatchObject({ controller: 'L4', product: 'moduline-l4', status: 'published', inCatalogue: true });
       for (const gone of ['title', 'controllers']) expect(shown[gone], gone).toBeUndefined();
 
-      await ok('POST', `/api/images/releases/L4/${v}/withdraw`);
+      await ok('POST', `/api/images/releases/moduline-l4/${v}/withdraw`);
       const doc = JSON.parse(await (await env.IMAGES_BUCKET.get(CATALOGUE_KEY))!.text());
-      expect(doc).toMatchObject({ format: 3, releases: [] });
+      expect(doc).toMatchObject({ format: 4, releases: [] });
       const record = JSON.parse(await (await env.STATE.get(`images/releases/moduline-l4/${v}.json`))!.text());
-      expect(record).toMatchObject({ controller: 'L4', version: v, status: 'draft' });
+      expect(record).toMatchObject({ controller: 'L4', type: '', version: v, status: 'draft' });
       for (const gone of ['product', 'title', 'controllers']) expect(record[gone], gone).toBeUndefined();
 
-      await ok('DELETE', `/api/images/releases/L4/${v}`);
+      await ok('DELETE', `/api/images/releases/moduline-l4/${v}`);
       expect(await env.STATE.head(`images/releases/moduline-l4/${v}.json`)).toBeNull();
       expect(await env.IMAGES_BUCKET.head(path)).toBeNull();
     } finally {
+      if (kept === null) await env.IMAGES_BUCKET.delete(CATALOGUE_KEY);
+      else await env.IMAGES_BUCKET.put(CATALOGUE_KEY, kept);
+    }
+  });
+
+  test('a type: its own folder and system; the same slug with other characters is refused; it cannot be edited', async () => {
+    const v = `${version()}-t`;
+    const av123 = await ok('POST', '/api/images/releases', release({ controller: 'HMI1', type: '  1.07   -  AV123 ', version: v }), 201);
+    expect(av123).toMatchObject({ controller: 'HMI1', type: '1.07 - AV123', version: v });
+    expect(await env.STATE.head(`images/releases/moduline-hmi1-107-av123/${v}.json`)).not.toBeNull();
+    // Another type and no type are other systems: the same version is free for them.
+    await ok('POST', '/api/images/releases', release({ controller: 'HMI1', type: '1.07 - AV101', version: v }), 201);
+    await ok('POST', '/api/images/releases', release({ controller: 'HMI1', version: v }), 201);
+    expect((await call('POST', '/api/images/releases', release({ controller: 'HMI1', type: '1.07 - AV123', version: v }))).status).toBe(409);
+    // The same folder (slug) written differently: refused, naming the type that is there.
+    const same = await call('POST', '/api/images/releases', release({ controller: 'HMI1', type: '1.07-AV123', version: `${v}.1` }));
+    expect(same.status).toBe(409);
+    expect(same.body.field).toBe('type');
+    expect(same.body.error).toContain('moduline-hmi1-107-av123');
+    expect(same.body.error).toContain('"1.07 - AV123"');
+    for (const type of ['--', 'x'.repeat(41), 'AV123é', 'a\u0007b']) {
+      const bad = await call('POST', '/api/images/releases', release({ controller: 'HMI1', type, version: `${v}.2` }));
+      expect(bad.status, type).toBe(400);
+      expect(bad.body.field, type).toBe('type');
+    }
+
+    const r = { controller: 'HMI1', type: '1.07 - AV123', version: v };
+    const pkg = await uploadFile(r, 'moduline-hmi1-107-av123.zip', 'zip', 'package');
+    expect(pkg.path).toBe(`images/moduline-hmi1-107-av123/${v}/moduline-hmi1-107-av123.zip`);
+    await ok('POST', `${base(r)}/publish`);
+    // Editing changes the date and the notes; the type is what the release is.
+    await ok('PATCH', base(r), { type: 'other', released: '2026-10-30', notes: 'AV123 adapter board.' });
+    const entry = (await catalogue())!.releases.find((x) => x.version === v && x.type === '1.07 - AV123');
+    expect(entry).toMatchObject({ controller: 'HMI1', type: '1.07 - AV123', released: '2026-10-30', notes: 'AV123 adapter board.' });
+    expect(entry!.files.map((f) => f.path)).toEqual([pkg.path]);
+    const shown = (await ok('GET', '/api/images')).releases.filter((x: { version: string }) => x.version === v);
+    expect(shown.map((x: { type: string; product: string }) => `${x.type}|${x.product}`)).toEqual([
+      '|moduline-hmi1', '1.07 - AV101|moduline-hmi1-107-av101', '1.07 - AV123|moduline-hmi1-107-av123',
+    ]);
+    await ok('POST', `${base(r)}/withdraw`);
+  });
+
+  test('the releases live before 0.10.0 (format 3, no type) stay downloadable and can be withdrawn and deleted', async () => {
+    const rec = (controller: string, v: string, name: string) => {
+      const product = productOf(controller as ImageController);
+      const file = { name, path: `images/${product}/${v}/${name}`, size: 3, sha256: 'c'.repeat(64), role: 'package', platform: 'any' };
+      return {
+        product, file, entry: { controller, version: v, released: '2026-10-29', notes: '', files: [file] },
+        record: { controller, version: v, released: '2026-10-29', notes: '', files: [{ ...file, uploaded_at: '2026-10-29T13:40:00.000Z', uploaded_by: ME }],
+          status: 'published', created_at: '2026-10-29T13:30:00.000Z', created_by: ME, updated_at: '2026-10-29T13:41:00.000Z', updated_by: ME,
+          published_at: '2026-10-29T13:41:00.000Z', published_by: ME },
+      };
+    };
+    const live = [
+      rec('M1', 'live-6.12.87', 'moduline-m1-111_2026-10-29_6.12.87.zip'),
+      rec('HMI1', 'AV123_6.12.87', 'moduline-hmi1-107-av123_2026-10-29_6.12.87.zip'),
+      rec('HMI1', 'AV101_6.12.87', 'moduline-hmi1-107-av101_2026-10-29_6.12.87.zip'),
+    ];
+    const before = await env.IMAGES_BUCKET.get(CATALOGUE_KEY);
+    const kept = before ? await before.text() : null;
+    try {
+      for (const l of live) {
+        await env.IMAGES_BUCKET.put(l.file.path, 'zip');
+        await env.STATE.put(`images/releases/${l.product}/${l.entry.version}.json`, JSON.stringify(l.record));
+      }
+      await env.IMAGES_BUCKET.put(CATALOGUE_KEY, catalogueText({ format: 3, updated: '2026-10-29T13:43:36.525Z', releases: live.map((l) => l.entry) } as never));
+      const parsed = (await catalogue())!;
+      expect(parsed.releases.map((x) => `${x.controller}|${x.type}|${x.version}|${x.files.length}`)).toEqual([
+        'M1||live-6.12.87|1', 'HMI1||AV123_6.12.87|1', 'HMI1||AV101_6.12.87|1',
+      ]);
+      const shown = (await ok('GET', '/api/images')).releases.filter((x: { version: string }) => live.some((l) => l.entry.version === x.version));
+      expect(shown.every((x: { type: string; inCatalogue: boolean }) => x.type === '' && x.inCatalogue)).toBe(true);
+
+      // What the owner does after the deploy: withdraw and delete the HMI1 releases named by version.
+      await ok('POST', '/api/images/releases/moduline-hmi1/AV101_6.12.87/withdraw');
+      const doc = JSON.parse(await (await env.IMAGES_BUCKET.get(CATALOGUE_KEY))!.text());
+      expect(doc.format).toBe(4);
+      expect(doc.releases.map((x: { controller: string; type: string; version: string }) => `${x.controller}|${x.type}|${x.version}`)).toEqual([
+        'M1||live-6.12.87', 'HMI1||AV123_6.12.87',
+      ]);
+      await ok('DELETE', '/api/images/releases/moduline-hmi1/AV101_6.12.87');
+      expect(await env.IMAGES_BUCKET.head(live[2].file.path)).toBeNull();
+      expect(await env.IMAGES_BUCKET.head(live[1].file.path)).not.toBeNull();
+    } finally {
+      for (const l of live) {
+        await env.STATE.delete(`images/releases/${l.product}/${l.entry.version}.json`);
+        await env.IMAGES_BUCKET.delete(l.file.path);
+      }
       if (kept === null) await env.IMAGES_BUCKET.delete(CATALOGUE_KEY);
       else await env.IMAGES_BUCKET.put(CATALOGUE_KEY, kept);
     }

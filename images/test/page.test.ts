@@ -3,7 +3,7 @@
 // runs here), and the catalogue never reaches them as HTML.
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { controllerTitle, FILE_ROLE_LABELS, FILE_ROLES, IMAGE_CONTROLLERS, LINK_TTL_SECONDS, PLATFORM_LABELS, PLATFORMS, SESSION_TTL_SECONDS, type CatalogueRelease } from '../../src/images-format';
+import { controllerTitle, releaseName, typeSlug, normaliseType, productOf, FILE_ROLE_LABELS, FILE_ROLES, IMAGE_CONTROLLERS, LINK_TTL_SECONDS, PLATFORM_LABELS, PLATFORMS, SESSION_TTL_SECONDS, type CatalogueRelease } from '../../src/images-format';
 import * as format from '../public/format.js';
 import appSource from '../public/app.js?raw';
 import downloadHtml from '../public/download.html?raw';
@@ -128,8 +128,32 @@ describe('format.js', () => {
     expect(format.formatDate(null)).toBe('');
   });
 
-  const rel = (controller: CatalogueRelease['controller'], version: string): CatalogueRelease => ({
-    controller, version, released: '2026-11-01', notes: '', files: [],
+  const rel = (controller: CatalogueRelease['controller'], version: string, type = ''): CatalogueRelease => ({
+    controller, type, version, released: '2026-11-01', notes: '', files: [],
+  });
+
+  test('every type is a system of its own: its newest release is the latest (and open), per controller and type', () => {
+    // Catalogue order within a card: type (none first), then the newest first.
+    const hmi1 = [rel('HMI1', '2'), rel('HMI1', '1'), rel('HMI1', '2', '1.07 - AV101'), rel('HMI1', '1', '1.07 - AV101'), rel('HMI1', '1', '1.07 - AV123')];
+    expect(format.latestPerType(hmi1)).toEqual([true, false, true, false, true]);
+    expect(format.latestPerType([rel('L4', '3'), rel('L4', '2')])).toEqual([true, false]);
+    expect(format.latestPerType([])).toEqual([]);
+    for (const [c, t] of [['HMI1', '1.07 - AV123'], ['L4', '']] as const) expect(format.releaseName(rel(c, '1', t))).toBe(releaseName(c, t));
+    expect(format.releaseName(rel('HMI1', '1', '1.07 - AV123'))).toBe('Moduline HMI1 · 1.07 - AV123');
+    expect(appSource).toContain('latestPerType(releases)');
+    expect(appSource).toContain("class: 'rel-type'");
+  });
+
+  test('the folder of a type (src/images-format.ts): slug, product, the rules of a type', () => {
+    expect(typeSlug('1.07 - AV123')).toBe('107-av123');
+    expect(typeSlug('3.06-D')).toBe('306-d');
+    expect(productOf('HMI1', '1.07 - AV123')).toBe('moduline-hmi1-107-av123');
+    expect(productOf('HMI1', '')).toBe('moduline-hmi1');
+    expect(productOf('HMI1', '1.07-AV123')).toBe(productOf('HMI1', '1.07 - AV123')); // Deploy refuses the second
+    expect(normaliseType('  1.07   -  AV123 ')).toBe('1.07 - AV123');
+    expect(normaliseType(undefined)).toBe('');
+    expect(normaliseType('   ')).toBe('');
+    for (const bad of ['--', 'x'.repeat(41), 'AV123é', 42]) expect(normaliseType(bad), String(bad)).toBeNull();
   });
 
   test('releases grouped per controller in catalogue order, filtered per controller; the name from the controller', () => {
@@ -164,7 +188,7 @@ describe('format.js: signing in and the download page', () => {
   });
 
   test('findFile and the verify commands with the name filled in', () => {
-    const catalogue = { format: 3, updated: null, releases: [{ controller: 'L4', version: '1', released: '', notes: '',
+    const catalogue = { format: 4, updated: null, releases: [{ controller: 'L4', type: '', version: '1', released: '', notes: '',
       files: [{ name: 'a.img', path: 'images/moduline-l4/1/a.img', size: 1, sha256: '', role: 'rootfs', platform: 'any' }] }] };
     expect(format.findFile(catalogue, 'images/moduline-l4/1/a.img')?.file.name).toBe('a.img');
     expect(format.findFile(catalogue, 'images/moduline-l4/1/b.img')).toBeNull();

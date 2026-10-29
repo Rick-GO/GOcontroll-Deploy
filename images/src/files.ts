@@ -153,7 +153,7 @@ async function logDownload(env: Env, request: Request, email: string, release: C
   const meta: DownloadMeta = {
     email,
     path: file.path,
-    product: productOf(release.controller),
+    product: productOf(release.controller, release.type),
     version: release.version,
     country: typeof country === 'string' ? country : '',
   };
