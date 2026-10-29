@@ -51,7 +51,8 @@
   eerst `npx wrangler rollback 340e55ee-9f89-4059-9d7c-da0925762cf8 -c images/wrangler.toml`, dan
   `npx wrangler rollback d9953f95-a736-40d8-9f1b-51c0526ddc8a` (0.7.0); releases van 0.8.0 ziet 0.7.0 niet (format 1 vraagt
   `kind`), dus die eerst terugtrekken en verwijderen.
-- **0.9.0 (2026-10-29, wens gebruiker: "te veel dubbele informatie")**: een release = **één controller** (L4/M1/HMI1) + versie,
+- **0.9.0 (2026-10-29, versie `5f6aa698-1fce-4102-96f5-b0026dcbaa78`; `gocontroll-images` versie
+  `8d01606e-e198-4153-a180-e51a070f9e05`; wens gebruiker: "te veel dubbele informatie")**: een release = **één controller** (L4/M1/HMI1) + versie,
   met datum en notes. Formulier *New release*: controller, releasedatum (standaard vandaag), versie, notes; **geen product- en
   geen titelveld**: product (`moduline-l4`) en naam (*Moduline L4*) volgen uit de controller (`CONTROLLER_PRODUCTS`,
   `controllerTitle`). Portaal: per controller één kaart, per release alleen versie en datum ("For the L4" en de productnaam

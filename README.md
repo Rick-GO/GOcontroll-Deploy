@@ -20,7 +20,7 @@ Images tab shows how often each release is downloaded. For the members of the En
 **`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> The Worker, the API and the pages are deployed (0.9.0 on 2026-10-29: a release on the Images tab is one **controller** (L4, M1 or HMI1)
+> The Worker, the API and the pages are deployed (0.9.0 on 2026-10-29, version `5f6aa698`, `gocontroll-images` version `8d01606e`: a release on the Images tab is one **controller** (L4, M1 or HMI1)
 > and a version, with its date and notes; no product and no title to fill in: both follow from the controller (folder `moduline-l4`,
 > name *Moduline L4*), and images.gocontroll.tech no longer repeats the controller per release (`manifest.json` format 3);
 > 0.8.0 on 2026-10-29, version `fbebca17`, `gocontroll-images` version `dc1efb7b`: images.gocontroll.tech has controller images only; the release kind
@@ -790,7 +790,8 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
   manifest) and the root manifest before every publish is in its `publish-linux` log entry
   (`previous_manifest`); put them back with `npx wrangler r2 object put`, the root manifest last
   (`application/gzip` for the package, `application/json` for the manifests).
-- **0.9.0** (a release is one controller and a version: no product, title or controllers in a release; `manifest.json`
+- **0.9.0** (version `5f6aa698-1fce-4102-96f5-b0026dcbaa78`, `gocontroll-images` version `8d01606e-e198-4153-a180-e51a070f9e05`;
+  a release is one controller and a version: no product, title or controllers in a release; `manifest.json`
   format 3; routes `/api/images/releases/:controller/:version`; 2026-10-29; no binding changed; the STATE keys and the bucket
   paths stay, a record of 0.8.0 is rewritten in the new shape at its next change): roll **images.gocontroll.tech back first**
   (`npx wrangler rollback dc1efb7b-089c-4d09-98db-514aa0609766 -c images/wrangler.toml`), then this Worker to 0.8.0 with
