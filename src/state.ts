@@ -19,7 +19,7 @@
 //   deleting/<APP_ID>.json                  an unfinished delete: its archive timestamp, actor, reason
 //   firmware-log/<hw_id>/<version>.json      who published that module firmware from Deploy, from which commit
 //                                           (src/firmware.ts); none for a version the module repo's CI published
-//   images/releases/<kind>/<product>/<version>.json      a release of images.gocontroll.tech (src/images.ts)
+//   images/releases/<product>/<version>.json a release of images.gocontroll.tech (src/images.ts)
 //   images/uploads/<id>.json                an upload to the images bucket that is under way (src/images.ts)
 //
 // Writes that must not overwrite each other are conditional (an R2 etag): a key is created

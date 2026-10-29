@@ -1,7 +1,8 @@
 # GOcontroll Downloads — images.gocontroll.tech
 
-The download site for GOcontroll's **customers**: Linux images (root file system, kernel,
-bootloader, …) for the Moduline **L4, M1 and HMI1**, and the tools to flash them. A separate
+The download site for GOcontroll's **customers**: Linux images for the Moduline **L4, M1 and HMI1**,
+as a **Complete image** (one zip with everything UUU needs: the complete image and a script that
+installs only the kernel) or in parts (root file system, kernel, bootloader, …). A separate
 Worker, **`gocontroll-images`**, in this folder of the Deploy repo; it shares nothing with the
 intranet Worker of the repo but a few source files, the bucket and one RPC call (the mail with the
 sign-in link).
@@ -11,7 +12,8 @@ sign-in link).
 > mail (no Cloudflare Access, no one-time PIN). The Turnstile widget *GOcontroll Downloads* exists (site key in
 > `TURNSTILE_SITE_KEY`, secret in `IMAGES_TURNSTILE_SECRET`, checked on 2026-10-28: siteverify accepts it). Not yet seen:
 > a real link mailed and opened. There are no images yet either; the page shows "No images have been published yet."
-> until there are.
+> until there are. Since Deploy 0.8.0 (2026-10-29) there are controller images only: no tool releases, no `tools/`,
+> `manifest.json` format 2.
 
 ## How it works
 
@@ -35,8 +37,9 @@ sign-in link).
 
 The contract between the two Workers — the bucket layout, the catalogue format, which files may be
 served, the download log, the sign-in mail — is **`../src/images-format.ts`** (no imports, bundled by
-both). It is not repeated here. In short: `manifest.json`, `images/<product>/<version>/<file>`,
-`tools/<product>/<version>/<file>`, `downloads/<yyyy>/<mm>/<time>-<random>.json`, `access-mails/<hmac>`.
+both). It is not repeated here. In short: `manifest.json` (format 2), `images/<product>/<version>/<file>`,
+`downloads/<yyyy>/<mm>/<time>-<random>.json`, `access-mails/<hmac>`. A `manifest.json` of a newer format
+than this Worker knows shows nothing (`parseCatalogue`).
 
 ### Every request, in this order (`src/index.ts`)
 
@@ -54,7 +57,7 @@ both). It is not repeated here. In short: `manifest.json`, `images/<product>/<ve
 | `GET /sign-in` | the sign-in page, for anyone, with the widget's site key put into `#human-check` (`data-sitekey`) and the only CSP that allows Turnstile; signed in already → 303 onwards |
 | `GET /sign-out` | the cookie cleared, 303 to `/sign-in?signed-out` |
 | `GET /` | the downloads page; without a session 303 to `/sign-in` |
-| `GET /download/<path>` | the page that shows one file and starts its download; without a session 303 to `/sign-in?next=/download/<path>`; a path that is not `<images\|tools>/<product>/<version>/<file>` → 404 |
+| `GET /download/<path>` | the page that shows one file and starts its download; without a session 303 to `/sign-in?next=/download/<path>`; a path that is not `images/<product>/<version>/<file>` → 404 |
 | `GET /api/catalogue` | `{ email, catalogue }`: `manifest.json` through `parseCatalogue` (no manifest yet = the empty catalogue); `cache-control: private, no-store`; a manifest that is not JSON = 503; without a session **401** `{ error, signIn }` |
 | `GET` / `HEAD /files/<path>` | the file, only when `findPublishedFile` finds `<path>` in the catalogue. A draft whose files are already in the bucket, `downloads/…`, `manifest.json`, an unknown path, a `%` escape, `..`: 404. Without a session 303 to the sign-in page, back to `/download/<path>` |
 | anything else | the static assets (scripts, stylesheet, brand images, `robots.txt`): public, they hold no data. The pages by file name (`/index.html`, `/sign-in.html`, `/download.html`, `/download`, `/index`): 404 |
@@ -112,7 +115,7 @@ mail scanner may open it first), and a new `SESSION_KEY` ends every session and 
   (strong ETag or the Last-Modified date), so resuming a file that changed starts over.
 - **The download log**: one empty object `downloads/<yyyy>/<mm>/<ISO time>-<12 hex>.json` per download,
   with `DownloadMeta` as custom metadata: `email` (from the session: the address that opened the link),
-  `path`, `kind`, `product`, `version`, `country` (`request.cf.country`, or empty). Written in
+  `path`, `product`, `version`, `country` (`request.cf.country`, or empty). Written in
   `waitUntil` only for a GET that starts the file and gets the bytes (no Range, or a range from byte 0):
   never for HEAD, a 304, a refusal or a range further into the file, so a resumed or chunked download
   counts once. The log is personal data (an e-mail address per download): only the intranet reads it;
@@ -129,10 +132,10 @@ Plain ES modules with `// @ts-check` and JSDoc, no framework, no build step, as 
   signing out (`signInNotice`).
 - **`index.html` + `app.js`**: header with the logo, "Downloads", the signed-in address and *Sign out*
   (`/sign-out`); the anthracite hero; **Controller images** with a filter All / L4 / M1 / HMI1 (kept in
-  the address, `#M1`); **Tools**; *Verify your download*. Per product its releases newest first, the
+  the address, `#M1`); *Verify your download*. Per product its releases newest first, the
   newest open, older ones collapsed (`<details>`); per release the version, release date (en-GB),
-  controllers, notes as plain text and the files: name, role, platform (not when `any`), size, SHA-256
-  with *Copy*, *Download*.
+  controllers, notes as plain text and the files: name, role (e.g. *Complete image*), platform (not
+  when `any`), size, SHA-256 with *Copy*, *Download*.
 - **`download.html` + `download.js`**: `/download/<path>`, the link to give a customer for one file
   (Deploy's Images tab copies it): the release, the file card, "Your download has started" (it starts
   once when the page opens; the browser stays on the page), and the checksum commands with the file's
@@ -207,8 +210,11 @@ curl -sI http://images.gocontroll.tech/             # 301 to https://
 ```
 
 **Rolling back**: `npx wrangler deployments list -c images/wrangler.toml` →
-`npx wrangler rollback <version-id> -c images/wrangler.toml`. The version before the e-mail sign-in is
-`9a2c1639-79b6-4057-9c8e-b5b98b4483cd` (Access with one-time PIN, 503 without an Access application).
+`npx wrangler rollback <version-id> -c images/wrangler.toml`. The version before controller images only
+(Deploy 0.8.0) is `340e55ee-9f89-4059-9d7c-da0925762cf8` (images and tools, `manifest.json` format 1: it shows
+nothing of a format-2 catalogue; roll back before the intranet Worker, `../README.md` → *Rolling back*). The
+version before the e-mail sign-in is `9a2c1639-79b6-4057-9c8e-b5b98b4483cd` (Access with one-time PIN, 503
+without an Access application).
 Closing the site at once without a rollback: set `TURNSTILE_SITE_KEY = ""` and deploy (503 everywhere),
 or withdraw releases on the Images tab of Deploy (a file stops being served as soon as `manifest.json`
 no longer names it). Ending every session: a new value for `IMAGES_SESSION_KEY` (no deploy needed).

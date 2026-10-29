@@ -1,5 +1,5 @@
 // gocontroll-images: images.gocontroll.tech, where GOcontroll's customers download Linux images
-// for the Moduline L4, M1 and HMI1 and the tools to flash them. A customer gets in with an e-mail
+// for the Moduline L4, M1 and HMI1. A customer gets in with an e-mail
 // address: a link by mail, a session cookie for SESSION_TTL_SECONDS (src/access.ts, src/session.ts).
 //
 // run_worker_first = true (images/wrangler.toml), so every request passes through here, in this

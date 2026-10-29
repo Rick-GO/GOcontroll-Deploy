@@ -1,5 +1,5 @@
-// How often the images and tools of images.gocontroll.tech are downloaded, per month, per release and
-// per file, for the Images tab.
+// How often the images of images.gocontroll.tech are downloaded, per month, per release and per
+// file, for the Images tab.
 //
 // The source is the download log in the images bucket (downloads/<yyyy>/<mm>/…, one empty object per
 // download with DownloadMeta as custom metadata, src/images-format.ts). That log holds an e-mail
@@ -16,7 +16,7 @@ import { listAll, readJson, writeJson } from './state';
 export const STATS_PREFIX = 'images/stats/';
 const MONTHS_PER_RUN = 6;
 
-/** The downloads of one month. Keys of `releases`: `<kind>/<product>/<version>`; of `countries`: ISO code, '' = unknown. */
+/** The downloads of one month. Keys of `releases`: `<product>/<version>`; of `countries`: ISO code, '' = unknown. */
 export interface MonthStats {
   month: string;                     // YYYY-MM (UTC)
   downloads: number;
@@ -60,7 +60,7 @@ export function summarise(month: string, log: Partial<DownloadMeta>[], final: bo
   for (const d of log) {
     out.downloads++;
     if (d.email) addresses.add(d.email.toLowerCase());
-    if (d.kind && d.product && d.version) bump(out.releases, `${d.kind}/${d.product}/${d.version}`);
+    if (d.product && d.version) bump(out.releases, `${d.product}/${d.version}`);
     if (d.path) bump(out.files, d.path);
     bump(out.countries, d.country ?? '');
   }

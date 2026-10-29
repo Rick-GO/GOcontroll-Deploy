@@ -69,7 +69,10 @@ describe('the mail', () => {
     expect(html).toContain('for 7 days');
     expect(html).toContain(`cid:${LOGO_CID}`);
     expect(html).toContain('If that was not you, you can ignore it');
-    expect(accessMail({ email: 'a@example.com', link: LINK }).html).toContain('Open the downloads');
+    const plain = accessMail({ email: 'a@example.com', link: LINK }).html;
+    expect(plain).toContain('Open the downloads');
+    expect(plain).toContain('the Linux images for the Moduline L4, M1 and HMI1');
+    expect(plain).not.toMatch(/\btools?\b/i); // there are only controller images (since 0.8.0)
   });
 });
 

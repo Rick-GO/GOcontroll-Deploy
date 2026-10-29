@@ -12,8 +12,9 @@
 //   manifest.json                                   the published catalogue (Catalogue below); what
 //                                                   customers see, nothing else (no e-mail addresses,
 //                                                   no drafts)
-//   images/<product>/<version>/<file>               a controller image (rootfs, kernel, bootloader, …)
-//   tools/<product>/<version>/<file>                a tool to install an image with (flash scripts, …)
+//   images/<product>/<version>/<file>               a file of a controller image: the complete image as
+//                                                   one zip for UUU (role package), or a part of it
+//                                                   (rootfs, kernel, bootloader, …)
 //   downloads/<yyyy>/<mm>/<iso time>-<random>.json  one download, written by images.gocontroll.tech;
 //                                                   who and what is in the custom metadata (DownloadMeta)
 //   access-mails/<hmac of the address>              the sign-in links mailed to one address in the last
@@ -35,39 +36,43 @@
 // No imports and only erasable TypeScript, so both Workers bundle it as it is.
 
 export const CATALOGUE_KEY = 'manifest.json';
-export const CATALOGUE_FORMAT = 1;
+/**
+ * Format 2 (since 2026-10-29): every release is a controller image, without `kind`, its files under
+ * images/. Format 1 also had tool releases (`kind`, tools/); none was ever published. A manifest of a
+ * newer format than this is read as empty: a reader that does not know it shows nothing.
+ */
+export const CATALOGUE_FORMAT = 2;
 export const DOWNLOAD_LOG_PREFIX = 'downloads/';
-
-/** What a release is: an image for a controller, or a tool to install one with. */
-export const RELEASE_KINDS = ['image', 'tool'] as const;
-export type ReleaseKind = (typeof RELEASE_KINDS)[number];
-/** The top folder of each kind in the bucket. */
-export const KIND_DIRS: Readonly<Record<ReleaseKind, string>> = { image: 'images', tool: 'tools' };
+/** The top folder of every release in the bucket. */
+export const RELEASES_DIR = 'images';
 
 /** The Linux controllers an image is for (order as shown). */
 export const IMAGE_CONTROLLERS = ['L4', 'M1', 'HMI1'] as const;
 export type ImageController = (typeof IMAGE_CONTROLLERS)[number];
 
-/** What a file in a release is. */
-export const FILE_ROLES = ['rootfs', 'kernel', 'bootloader', 'devicetree', 'script', 'tool', 'docs', 'other'] as const;
+/**
+ * What a file in a release is. `package`: a zip with everything UUU needs to install the image, the
+ * complete image and a script that installs only the kernel.
+ */
+export const FILE_ROLES = ['package', 'rootfs', 'kernel', 'bootloader', 'devicetree', 'script', 'docs', 'other'] as const;
 export type FileRole = (typeof FILE_ROLES)[number];
 export const FILE_ROLE_LABELS: Readonly<Record<FileRole, string>> = {
+  package: 'Complete image',
   rootfs: 'Root file system',
   kernel: 'Kernel',
   bootloader: 'Bootloader',
   devicetree: 'Device tree',
   script: 'Flash script',
-  tool: 'Tool',
   docs: 'Documentation',
   other: 'Other',
 };
 
-/** The computer a file runs on; `any` for an image or a file that is not a program. */
+/** The computer a file runs on (a flash script); `any` for an image or a file that is not a program. */
 export const PLATFORMS = ['any', 'windows', 'linux', 'macos'] as const;
 export type Platform = (typeof PLATFORMS)[number];
 export const PLATFORM_LABELS: Readonly<Record<Platform, string>> = { any: 'Any', windows: 'Windows', linux: 'Linux', macos: 'macOS' };
 
-/** A product: one line of releases (e.g. moduline-headless, flash-tools). */
+/** A product: one line of releases (e.g. moduline-headless, moduline-display). */
 export const PRODUCT_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 /** A version: e.g. 2026.11.0, 1.4.2-rc1. Never "." or "..": it starts with a letter or digit. */
 export const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$/;
@@ -86,11 +91,10 @@ export interface CatalogueFile {
 }
 
 export interface CatalogueRelease {
-  kind: ReleaseKind;
   product: string;
   title: string;
   version: string;
-  controllers: ImageController[];  // empty for a tool that works with every controller
+  controllers: ImageController[];  // at least one (Deploy refuses an image without)
   released: string;                // YYYY-MM-DD
   notes: string;                   // plain text; the page shows it as text, never as HTML
   files: CatalogueFile[];
@@ -106,15 +110,14 @@ export interface Catalogue {
 export interface DownloadMeta {
   email: string;
   path: string;
-  kind: string;
   product: string;
   version: string;
   country: string;
 }
 
 /** The folder of a release in the bucket, with a trailing slash. */
-export const releasePrefix = (kind: ReleaseKind, product: string, version: string): string =>
-  `${KIND_DIRS[kind]}/${product}/${version}/`;
+export const releasePrefix = (product: string, version: string): string =>
+  `${RELEASES_DIR}/${product}/${version}/`;
 
 export const emptyCatalogue = (): Catalogue => ({ format: CATALOGUE_FORMAT, updated: null, releases: [] });
 
@@ -138,11 +141,10 @@ export function compareLooseVersions(a: string, b: string): number {
   return 0;
 }
 
-/** Catalogue order: images before tools, then product, then the newest release first. */
+/** Catalogue order: product, then the newest release first. */
 export function sortReleases(releases: CatalogueRelease[]): CatalogueRelease[] {
   return [...releases].sort((a, b) =>
-    (a.kind === b.kind ? 0 : a.kind === 'image' ? -1 : 1)
-    || a.product.localeCompare(b.product)
+    a.product.localeCompare(b.product)
     || b.released.localeCompare(a.released)
     || compareLooseVersions(b.version, a.version));
 }
@@ -152,17 +154,20 @@ const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => (lis
 
 /**
  * Read manifest.json. A release or file that does not hold up is left out (never served), so a
- * broken entry cannot open a path outside its release. Throws only when the text is not JSON.
+ * broken entry cannot open a path outside its release. A newer format than CATALOGUE_FORMAT gives
+ * no releases at all (`format` says which it was). Throws only when the text is not JSON.
  */
 export function parseCatalogue(text: string): Catalogue {
   const doc = JSON.parse(text) as Record<string, unknown>;
   const out = emptyCatalogue();
   out.updated = isString(doc?.updated) ? doc.updated : null;
+  if (typeof doc?.format === 'number' && Number.isSafeInteger(doc.format) && doc.format > 0) out.format = doc.format;
+  if (out.format > CATALOGUE_FORMAT) return out;
   const releases = Array.isArray(doc?.releases) ? doc.releases : [];
   for (const r of releases as Record<string, unknown>[]) {
-    if (!r || !oneOf(RELEASE_KINDS, r.kind) || !isString(r.product) || !PRODUCT_RE.test(r.product)
+    if (!r || !isString(r.product) || !PRODUCT_RE.test(r.product)
       || !isString(r.version) || !VERSION_RE.test(r.version)) continue;
-    const prefix = releasePrefix(r.kind, r.product, r.version);
+    const prefix = releasePrefix(r.product, r.version);
     const files: CatalogueFile[] = [];
     for (const f of (Array.isArray(r.files) ? r.files : []) as Record<string, unknown>[]) {
       if (!f || !isString(f.name) || !FILE_NAME_RE.test(f.name) || f.path !== prefix + f.name) continue;
@@ -176,7 +181,6 @@ export function parseCatalogue(text: string): Catalogue {
       });
     }
     out.releases.push({
-      kind: r.kind,
       product: r.product,
       title: isString(r.title) && r.title.trim() ? r.title : r.product,
       version: r.version,
@@ -208,10 +212,10 @@ export function downloadLogKey(at: Date, random: string): string {
   return `${DOWNLOAD_LOG_PREFIX}${iso.slice(0, 4)}/${iso.slice(5, 7)}/${iso}-${random}.json`;
 }
 
-/** Whether `path` has the shape of a file of a release: <images|tools>/<product>/<version>/<file>. */
+/** Whether `path` has the shape of a file of a release: images/<product>/<version>/<file>. */
 export function isReleaseFilePath(path: string): boolean {
   const parts = path.split('/');
-  return parts.length === 4 && (parts[0] === 'images' || parts[0] === 'tools')
+  return parts.length === 4 && parts[0] === RELEASES_DIR
     && PRODUCT_RE.test(parts[1]) && VERSION_RE.test(parts[2]) && FILE_NAME_RE.test(parts[3]);
 }
 

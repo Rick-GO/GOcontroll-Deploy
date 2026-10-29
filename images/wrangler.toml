@@ -3,8 +3,8 @@ main = "src/index.ts"
 compatibility_date = "2026-09-01"
 compatibility_flags = ["nodejs_compat"]
 
-# The download site for customers: Linux images (rootfs, kernel, bootloader, …) for the Moduline
-# L4, M1 and HMI1 and the tools to flash them, from the bucket gocontroll-images. The intranet
+# The download site for customers: Linux images (the complete image for UUU, rootfs, kernel,
+# bootloader, …) for the Moduline L4, M1 and HMI1, from the bucket gocontroll-images. The intranet
 # Worker of this repo (gocontroll-deploy-intranet, the Images tab) is the only writer of that
 # bucket's releases and manifest.json; this Worker only reads them, and appends the download log.
 # The contract between the two: ../src/images-format.ts.
@@ -27,7 +27,7 @@ run_worker_first = true
 [observability]
 enabled = true
 
-# The images bucket: manifest.json (the published catalogue), images/…, tools/…, the download log
+# The images bucket: manifest.json (the published catalogue), images/…, the download log
 # downloads/… and the hourly cap on links access-mails/… (layout in ../src/images-format.ts). This
 # Worker serves only the files that manifest.json names (never a draft, never the log), writes one
 # empty object per download and one per address that asked for a link.

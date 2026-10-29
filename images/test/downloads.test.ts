@@ -7,7 +7,7 @@ import { CATALOGUE_KEY, catalogueText, parseCatalogue } from '../../src/images-f
 import { parseRange, rangeBounds, requestedPath, startsDownload } from '../src/files';
 import { SECURITY_HEADERS } from '../src/headers';
 import {
-  DRAFT, downloadLog, EMPTY, emptyBucket, FLASHER, HOST, OLD_ROOTFS, publishSample, ROOTFS, ROOTFS_BYTES, run, sampleCatalogue, sessionCookieHeader, signedIn,
+  DRAFT, downloadLog, EMPTY, emptyBucket, HOST, OLD_ROOTFS, PACKAGE, publishSample, ROOTFS, ROOTFS_BYTES, run, sampleCatalogue, sessionCookieHeader, signedIn,
 } from './helpers';
 
 beforeEach(async () => {
@@ -33,14 +33,17 @@ describe('GET /api/catalogue', () => {
     const body = await res.json<any>();
     expect(body.email).toBe('customer@example.com');
     expect(body.catalogue).toEqual(parseCatalogue(catalogueText(sampleCatalogue())));
-    expect(body.catalogue.releases.map((r: any) => `${r.kind} ${r.product} ${r.version}`)).toEqual([
-      'image moduline-headless 2026.11.0', 'image moduline-headless 2026.10.0', 'tool flash-tools 1.4.2',
+    expect(body.catalogue.format).toBe(2);
+    expect(body.catalogue.releases.map((r: any) => `${r.product} ${r.version}`)).toEqual([
+      'moduline-headless 2026.11.0', 'moduline-headless 2026.10.0', 'moduline-hmi1 2026.11.0',
     ]);
+    expect(body.catalogue.releases.every((r: any) => !('kind' in r))).toBe(true);
+    expect(body.catalogue.releases[2].files[0]).toMatchObject({ path: PACKAGE, role: 'package' });
   });
 
   test('a broken entry is left out; a manifest that is not JSON is a 503, never a guess', async () => {
     const doc = sampleCatalogue() as any;
-    doc.releases.push({ kind: 'image', product: '../etc', version: '1', files: [] });
+    doc.releases.push({ product: '../etc', version: '1', files: [] });
     doc.releases[0].files.push({ name: 'x.bin', path: 'downloads/x.bin', size: 1, sha256: '', role: 'rootfs', platform: 'any' });
     await env.IMAGES_BUCKET.put(CATALOGUE_KEY, JSON.stringify(doc));
     const body = await (await signedIn('/api/catalogue')).json<any>();
@@ -51,6 +54,23 @@ describe('GET /api/catalogue', () => {
     const broken = await signedIn('/api/catalogue');
     expect(broken.status).toBe(503);
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) expect(broken.headers.get(k)).toBe(v);
+  });
+
+  test('a newer format than this reader knows: nothing at all; a tool of format 1 has no files here', async () => {
+    await publishSample({ ...sampleCatalogue(), format: 3 });
+    const newer = await (await signedIn('/api/catalogue')).json<any>();
+    expect(newer.catalogue).toMatchObject({ format: 3, releases: [] });
+    expect((await signedIn(`/files/${ROOTFS}`)).status).toBe(404);
+
+    // Format 1 also had tool releases under tools/ (never published): such a file is never served.
+    const old = { format: 1, updated: null, releases: [{ kind: 'tool', product: 'flash-tools', title: 'Flash tools', version: '1.4.2', controllers: [], released: '', notes: '',
+      files: [{ name: 'flash.ps1', path: 'tools/flash-tools/1.4.2/flash.ps1', size: 3, sha256: '', role: 'tool', platform: 'windows' }] }] };
+    await env.IMAGES_BUCKET.put(CATALOGUE_KEY, JSON.stringify(old));
+    await env.IMAGES_BUCKET.put('tools/flash-tools/1.4.2/flash.ps1', 'ps1');
+    const parsed = await (await signedIn('/api/catalogue')).json<any>();
+    expect(parsed.catalogue.releases[0].files).toEqual([]);
+    expect((await signedIn('/files/tools/flash-tools/1.4.2/flash.ps1')).status).toBe(404);
+    expect((await signedIn('/download/tools/flash-tools/1.4.2/flash.ps1')).status).toBe(404);
   });
 });
 
@@ -70,7 +90,7 @@ describe('GET /files/<path>', () => {
     expect(res.headers.get('last-modified')).toMatch(/GMT$/);
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) expect(res.headers.get(k), k).toBe(v);
     expect((await signedIn(`/files/${OLD_ROOTFS}`)).status).toBe(200);
-    expect(await (await signedIn(`/files/${FLASHER}`)).text()).toBe('ps1');
+    expect(await (await signedIn(`/files/${PACKAGE}`)).text()).toBe('zip');
   });
 
   test('a draft, the log, manifest.json, unknown paths and path tricks are 404', async () => {
@@ -102,9 +122,9 @@ describe('GET /files/<path>', () => {
   });
 
   test('in the catalogue but not in the bucket: 404', async () => {
-    await env.IMAGES_BUCKET.delete(FLASHER);
-    expect((await signedIn(`/files/${FLASHER}`)).status).toBe(404);
-    expect((await signedIn(`/files/${FLASHER}`, { method: 'HEAD' })).status).toBe(404);
+    await env.IMAGES_BUCKET.delete(PACKAGE);
+    expect((await signedIn(`/files/${PACKAGE}`)).status).toBe(404);
+    expect((await signedIn(`/files/${PACKAGE}`, { method: 'HEAD' })).status).toBe(404);
   });
 
   test('HEAD: the headers and the size, no body', async () => {
@@ -190,13 +210,13 @@ describe('the download log', () => {
     expect(log[0].key.slice(10, 17)).toBe(new Date().toISOString().slice(0, 7).replace('-', '/'));
     expect(log[0].size).toBe(0);
     expect(log[0].customMetadata).toEqual({
-      email: 'customer@example.com', path: ROOTFS, kind: 'image', product: 'moduline-headless', version: '2026.11.0', country: 'NL',
+      email: 'customer@example.com', path: ROOTFS, product: 'moduline-headless', version: '2026.11.0', country: 'NL',
     });
 
-    await signedIn(`/files/${FLASHER}`);
-    const tool = (await downloadLog()).find((o) => o.customMetadata?.path === FLASHER);
-    expect(tool?.customMetadata).toEqual({
-      email: 'customer@example.com', path: FLASHER, kind: 'tool', product: 'flash-tools', version: '1.4.2', country: '',
+    await signedIn(`/files/${PACKAGE}`);
+    const pkg = (await downloadLog()).find((o) => o.customMetadata?.path === PACKAGE);
+    expect(pkg?.customMetadata).toEqual({
+      email: 'customer@example.com', path: PACKAGE, product: 'moduline-hmi1', version: '2026.11.0', country: '',
     });
   });
 
@@ -222,10 +242,10 @@ describe('the download log', () => {
 });
 
 describe('helpers', () => {
-  test('requestedPath: only images/ and tools/, never an escape', () => {
+  test('requestedPath: only images/, never an escape', () => {
     expect(requestedPath(`/files/${ROOTFS}`)).toBe(ROOTFS);
-    expect(requestedPath(`/files/${FLASHER}`)).toBe(FLASHER);
-    for (const p of ['/files/', '/files/manifest.json', '/files/downloads/x', `/files/${ROOTFS.replace('/', '%2F')}`, '/other/images/x']) {
+    expect(requestedPath(`/files/${PACKAGE}`)).toBe(PACKAGE);
+    for (const p of ['/files/', '/files/manifest.json', '/files/downloads/x', '/files/tools/flash-tools/1.4.2/flash.ps1', `/files/${ROOTFS.replace('/', '%2F')}`, '/other/images/x']) {
       expect(requestedPath(p), p).toBeNull();
     }
   });

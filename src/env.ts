@@ -5,7 +5,7 @@ export interface Env {
   BUSINESS_DB: D1Database; // gocontroll-business: customers, projects (read only)
   MODULINE_DB: D1Database; // gocontroll-db: controllers, project_provisioning (read only)
   FIRMWARE_BUCKET: R2Bucket; // gocontroll-firmware: module firmware (.srec) and manifests (src/firmware.ts)
-  IMAGES_BUCKET: R2Bucket;   // gocontroll-images: Linux images and tools for customers (src/images.ts)
+  IMAGES_BUCKET: R2Bucket;   // gocontroll-images: Linux images of the controllers, for customers (src/images.ts)
   ASSETS: Fetcher;
 
   TEAM_DOMAIN: string;

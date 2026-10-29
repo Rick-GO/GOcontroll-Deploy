@@ -19,7 +19,7 @@
 // whole file, or a range from byte 0) and gets the bytes. Never a HEAD, a 304, or a range further
 // into the file, so a resumed or chunked download counts once.
 
-import { downloadLogKey, findPublishedFile, type Catalogue, type CatalogueFile, type CatalogueRelease, type DownloadMeta } from '../../src/images-format';
+import { downloadLogKey, findPublishedFile, RELEASES_DIR, type Catalogue, type CatalogueFile, type CatalogueRelease, type DownloadMeta } from '../../src/images-format';
 import type { Env } from './env';
 import { secure } from './headers';
 import { notFound, plainPage } from './respond';
@@ -30,7 +30,7 @@ export const FILES_PREFIX = '/files/';
 export function requestedPath(pathname: string): string | null {
   if (!pathname.startsWith(FILES_PREFIX)) return null;
   const path = pathname.slice(FILES_PREFIX.length);
-  if (!path || path.includes('%') || !/^(images|tools)\//.test(path)) return null;
+  if (!path || path.includes('%') || !path.startsWith(`${RELEASES_DIR}/`)) return null;
   return path;
 }
 
@@ -153,7 +153,6 @@ async function logDownload(env: Env, request: Request, email: string, release: C
   const meta: DownloadMeta = {
     email,
     path: file.path,
-    kind: release.kind,
     product: release.product,
     version: release.version,
     country: typeof country === 'string' ? country : '',

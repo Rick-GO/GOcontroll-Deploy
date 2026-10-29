@@ -1,30 +1,30 @@
 // @ts-check
-// Images (#/images): Linux images for the Moduline L4, M1 and HMI1 and the tools to install them,
-// for customers on images.gocontroll.tech (bucket gocontroll-images, src/images.ts).
+// Images (#/images): Linux images for the Moduline L4, M1 and HMI1, for customers on
+// images.gocontroll.tech (bucket gocontroll-images, src/images.ts).
 //
-// A release (image or tool, product + version) starts as a draft. Its files are uploaded straight
+// A release (an image: product + version) starts as a draft. Its files are uploaded straight
 // into the bucket in parts of the Worker's partSize, three at a time, each part retried a few times;
 // at the end the Worker joins them and reads the SHA-256 from the stored file. Customers see a
 // release only once it is published (manifest.json); Withdraw takes it away again. Drafts can lose
 // files or be deleted; a published release only changes its text.
 //
-// The labels of roles and platforms are those of src/images-format.ts (the source).
+// The labels of roles and platforms are those of src/images-format.ts (the source), copied in
+// release-helpers.js.
 
 import { api, errorText, putBlob } from './api.js';
 import { fmtBytes, fmtDateTime, fmtDay, plural, shortHash } from './format.js';
 import { act, copyButton, esc, field, hydrateIcons, toast, uniqueId } from './lib.js';
-import { guessPlatform, guessRole } from './release-helpers.js';
+import { IMAGE_PLATFORM_LABELS as PLATFORM_LABELS, IMAGE_ROLE_LABELS as ROLE_LABELS, guessPlatform, guessRole } from './release-helpers.js';
 import { badge, confirmDialog, formDialog, formValues, setHero, stale } from './ui.js';
 
 /**
  * @typedef {import('./ui.js').Ctx} Ctx
- * @typedef {'image' | 'tool'} Kind
  * @typedef {{ name: string, path: string, size: number, sha256: string, role: string, platform: string, uploaded_at: string, uploaded_by: string }} ImageFile
- * @typedef {{ kind: Kind, product: string, title: string, version: string, controllers: string[], released: string, notes: string,
+ * @typedef {{ product: string, title: string, version: string, controllers: string[], released: string, notes: string,
  *   files: ImageFile[], status: 'draft' | 'published', created_at: string, created_by: string, updated_at: string, updated_by: string,
  *   published_at?: string | null, published_by?: string | null, inCatalogue: boolean }} Release
- * @typedef {{ id: string, key: string, kind: Kind, product: string, version: string, name: string, size: number, parts: number, started_at: string, started_by: string }} Upload
- * @typedef {{ at: string, email: string, path: string, kind: string, product: string, version: string, country: string }} Download
+ * @typedef {{ id: string, key: string, product: string, version: string, name: string, size: number, parts: number, started_at: string, started_by: string }} Upload
+ * @typedef {{ at: string, email: string, path: string, product: string, version: string, country: string }} Download
  * @typedef {{ month: string, downloads: number, addresses: number, releases: Record<string, number>, files: Record<string, number>,
  *   countries: Record<string, number>, final: boolean }} MonthStats
  * @typedef {{ release: string, total: number, thisMonth: number, lastMonth: number }} ReleaseTotal
@@ -34,18 +34,13 @@ import { badge, confirmDialog, formDialog, formValues, setHero, stale } from './
  */
 
 const CONTROLLERS = ['L4', 'M1', 'HMI1'];
-/** @type {Record<string, string>} */
-const ROLE_LABELS = {
-  rootfs: 'Root file system', kernel: 'Kernel', bootloader: 'Bootloader', devicetree: 'Device tree',
-  script: 'Flash script', tool: 'Tool', docs: 'Documentation', other: 'Other',
-};
-/** @type {Record<string, string>} */
-const PLATFORM_LABELS = { any: 'Any', windows: 'Windows', linux: 'Linux', macos: 'macOS' };
 const PARALLEL_PARTS = 3;
 const PART_ATTEMPTS = 4;
 
-/** @param {{ kind: string, product: string, version: string }} r */
-const base = (r) => `/images/releases/${r.kind}/${encodeURIComponent(r.product)}/${encodeURIComponent(r.version)}`;
+/** @param {{ product: string, version: string }} r */
+const base = (r) => `/images/releases/${encodeURIComponent(r.product)}/${encodeURIComponent(r.version)}`;
+/** How a release is named in the stats and on its card. @param {{ product: string, version: string }} r */
+const releaseId = (r) => `${r.product}/${r.version}`;
 
 /** The release date field's default: today, local. */
 function today() {
@@ -68,14 +63,12 @@ export async function renderImages(ctx) {
   const nav = ctx.nav;
   setHero({
     title: 'Images',
-    lede: 'Linux images for the Moduline L4, M1 and HMI1 and the tools to install them, for customers on images.gocontroll.tech. A release is a draft until you publish it.',
+    lede: 'Linux images for the Moduline L4, M1 and HMI1, for customers on images.gocontroll.tech. A release is a draft until you publish it.',
   });
   /** @type {Overview} */
   const data = await api('GET', '/images');
   if (stale(ctx, nav)) return;
   const reload = () => { if (!stale(ctx, nav)) renderImages(ctx).catch((err) => toast(errorText(err), 'err')); };
-  const images = data.releases.filter((r) => r.kind === 'image');
-  const tools = data.releases.filter((r) => r.kind === 'tool');
   ctx.view.innerHTML = `
     ${data.catalogueError ? `<section class="panel"><div class="notice err">${esc(data.catalogueError)}</div></section>` : ''}
     ${kpis(data)}
@@ -84,10 +77,7 @@ export async function renderImages(ctx) {
         <button type="button" class="btn primary" data-new data-icon="plus">New release…</button></div>
       <p class="text">Customers ask for a link with their e-mail address on <a href="${esc(data.publicUrl)}" rel="noopener">${esc(data.publicUrl.replace(/^https:\/\//, ''))}</a>; it opens the downloads for 7 days, and they download what is published here. Upload every file of a release, then publish it. <em>Copy link</em> next to a published file gives the address that signs a customer in and starts that file.</p>
       ${data.uploads.length ? unfinished(data.uploads) : ''}
-      <div class="section-label">Controller images</div>
-      ${images.length ? images.map((r) => releaseCard(r, data)).join('') : '<p class="muted">No image yet.</p>'}
-      <div class="section-label">Tools</div>
-      ${tools.length ? tools.map((r) => releaseCard(r, data)).join('') : '<p class="muted">No tool yet.</p>'}
+      ${data.releases.length ? data.releases.map((r) => releaseCard(r, data)).join('') : '<p class="muted">No image yet.</p>'}
     </section>
     ${downloadCounts(data)}
     <section class="panel">
@@ -132,11 +122,11 @@ function unfinished(uploads) {
 /** @param {Release} r @param {Overview} d */
 function releaseCard(r, d) {
   const draft = r.status === 'draft';
-  const uploading = d.uploads.some((u) => u.kind === r.kind && u.product === r.product && u.version === r.version);
-  return `<article class="img-release" data-release="${esc(`${r.kind}/${r.product}/${r.version}`)}">
+  const uploading = d.uploads.some((u) => u.product === r.product && u.version === r.version);
+  return `<article class="img-release" data-release="${esc(releaseId(r))}">
     <header class="img-head">
       <div><h3>${esc(r.title)} <span class="mono muted">${esc(r.version)}</span></h3>
-        <div class="cell-sub mono">${esc(r.kind === 'image' ? 'images' : 'tools')}/${esc(r.product)}/${esc(r.version)}</div></div>
+        <div class="cell-sub mono">images/${esc(r.product)}/${esc(r.version)}</div></div>
       <div class="badges">${draft ? badge('Draft', 'warn', 'Not visible to customers') : badge('Published', 'ok', `Since ${fmtDateTime(r.published_at ?? '')} by ${r.published_by ?? ''}`)}
         ${r.controllers.map((c) => badge(c, 'info')).join(' ')}</div>
     </header>
@@ -170,8 +160,8 @@ function releaseCard(r, d) {
 
 /** @param {Release} r @param {Overview} d */
 function downloadLine(r, d) {
-  if (r.status !== 'published' && !d.stats.releases.some((t) => t.release === `${r.kind}/${r.product}/${r.version}`)) return '';
-  const t = d.stats.releases.find((x) => x.release === `${r.kind}/${r.product}/${r.version}`);
+  if (r.status !== 'published' && !d.stats.releases.some((t) => t.release === releaseId(r))) return '';
+  const t = d.stats.releases.find((x) => x.release === releaseId(r));
   return ` · <strong>${esc(plural(t?.total ?? 0, 'download'))}</strong>${t?.thisMonth ? ` (${esc(String(t.thisMonth))} this month)` : ''}`;
 }
 
@@ -184,7 +174,7 @@ function customerLink(d, f) {
 /** Counts per release (all time, this and last month) and per month. @param {Overview} d */
 function downloadCounts(d) {
   const s = d.stats;
-  const titles = new Map(d.releases.map((r) => [`${r.kind}/${r.product}/${r.version}`, `${r.title} ${r.version}`]));
+  const titles = new Map(d.releases.map((r) => [releaseId(r), `${r.title} ${r.version}`]));
   const perRelease = s.releases.length
     ? `<div class="table-wrap"><table class="data cards">
       <thead><tr><th>Release</th><th class="num">In all</th><th class="num">This month</th><th class="num">Last month</th></tr></thead>
@@ -235,8 +225,8 @@ function downloads(list) {
 
 /** @param {HTMLElement} card @param {Overview} data @param {() => void} reload */
 function wireCard(card, data, reload) {
-  const [kind, product, version] = (card.dataset.release ?? '').split('/');
-  const r = /** @type {Release} */ (data.releases.find((x) => x.kind === kind && x.product === product && x.version === version));
+  const [product, version] = (card.dataset.release ?? '').split('/');
+  const r = /** @type {Release} */ (data.releases.find((x) => x.product === product && x.version === version));
   const q = (/** @type {string} */ sel) => card.querySelector(sel);
 
   q('[data-edit]')?.addEventListener('click', async () => { if (await releaseDialog(data, r)) reload(); });
@@ -296,7 +286,7 @@ function drawQueue(queue, r, data, files, reload) {
         : taken.has(f.name) ? 'Already in this release: remove it first.'
         : f.size > data.limits.maxFileSize ? 'Larger than 32 GB.'
         : !f.size ? 'The file is empty.' : '';
-      const role = guessRole(f.name, r.kind);
+      const role = guessRole(f.name);
       const platform = guessPlatform(f.name);
       return `<tr data-q="${i}"${problem ? ' class="inactive"' : ''}>
         <td data-label="File" class="mono">${esc(f.name)}${problem ? `<div class="cell-sub error">${esc(problem)}</div>` : ''}</td>
@@ -402,19 +392,15 @@ async function uploadFile(r, file, role, platform, progress) {
 function releaseDialog(data, r) {
   const products = [...new Set(data.releases.map((x) => x.product))].sort();
   const listId = uniqueId('products');
-  const kind = r?.kind ?? 'image';
   const body = `<div class="form-grid two">
-    ${r ? `<p class="span-2 muted">${esc(r.kind === 'image' ? 'Image' : 'Tool')} · <span class="mono">${esc(r.product)} ${esc(r.version)}</span> (cannot be changed)</p>` : `
-    <fieldset class="span-2"><legend>What</legend><div class="checks seg">
-      <label class="check"><input type="radio" name="kind" value="image" checked> Image for a controller</label>
-      <label class="check"><input type="radio" name="kind" value="tool"> Tool to install an image</label></div></fieldset>
+    ${r ? `<p class="span-2 muted"><span class="mono">${esc(r.product)} ${esc(r.version)}</span> (cannot be changed)</p>` : `
     ${field('Product', (id) => `<input id="${id}" name="product" list="${listId}" required maxlength="64" class="mono" placeholder="e.g. moduline-headless" pattern="[a-z0-9][a-z0-9._\\-]*">
       <datalist id="${listId}">${products.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>`, '', 'Lower case, digits and . _ -. Releases of one product are listed together, newest first.')}
     ${field('Version', (id) => `<input id="${id}" name="version" required maxlength="64" class="mono" placeholder="e.g. 2026.11.0">`)}`}
     ${field('Title', (id) => `<input id="${id}" name="title" required maxlength="120" value="${esc(r?.title ?? '')}" placeholder="e.g. Moduline Debian trixie (headless)">`, 'span-2', 'What customers see.')}
     <fieldset class="span-2"><legend>Controllers</legend><div class="checks">${CONTROLLERS.map((c) => `
       <label class="check"><input type="checkbox" name="ctl-${c}"${r?.controllers.includes(c) ? ' checked' : ''}> ${c}</label>`).join('')}</div>
-      <p class="hint">An image needs at least one; a tool for every controller needs none.</p></fieldset>
+      <p class="hint">At least one.</p></fieldset>
     ${field('Release date', (id) => `<input type="date" id="${id}" name="released" required value="${esc(r?.released ?? today())}">`)}
     ${field('Notes', (id) => `<textarea id="${id}" name="notes" rows="5" maxlength="4000" placeholder="What is new, how to install it">${esc(r?.notes ?? '')}</textarea>`, 'span-2', 'Plain text, shown to customers.')}
   </div>`;
@@ -422,9 +408,6 @@ function releaseDialog(data, r) {
     title: r ? `Edit ${r.title} ${r.version}` : 'New release',
     submitLabel: r ? 'Save' : 'Create draft',
     body,
-    onOpen: (form) => {
-      if (!r) /** @type {HTMLInputElement} */ (form.querySelector('input[name=kind][value=' + kind + ']')).checked = true;
-    },
     submit: async (form) => {
       const v = formValues(form);
       const payload = {
@@ -432,7 +415,7 @@ function releaseDialog(data, r) {
         controllers: CONTROLLERS.filter((c) => v[`ctl-${c}`]),
       };
       if (r) await api('PATCH', base(r), payload);
-      else await api('POST', '/images/releases', { ...payload, kind: v.kind, product: String(v.product).trim(), version: String(v.version).trim() });
+      else await api('POST', '/images/releases', { ...payload, product: String(v.product).trim(), version: String(v.version).trim() });
       toast(r ? 'Saved.' : 'Draft created. Add its files.');
     },
   });

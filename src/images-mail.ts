@@ -59,7 +59,7 @@ export function accessMail(mail: AccessLinkMail): { subject: string; html: strin
   const p = (html: string, style = '') => `<p style="margin:0 0 14px;font-size:15px;line-height:1.55;color:${TEXT};${style}">${html}</p>`;
   const what = mail.file
     ? `Open the link below to sign in; the download of <strong>${esc(mail.file)}</strong> then starts.`
-    : 'Open the link below to sign in to the Linux images and tools for the Moduline L4, M1 and HMI1.';
+    : 'Open the link below to sign in to the Linux images for the Moduline L4, M1 and HMI1.';
   const button = `<a href="${esc(mail.link)}" style="display:inline-block;padding:12px 22px;background:${BRAND};color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;border-radius:6px">${mail.file ? 'Sign in and download' : 'Open the downloads'}</a>`;
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title>
 <style>@media (max-width:520px){.gc-outer{padding:0!important}.gc-card{border-radius:0!important}.gc-pad{padding-left:16px!important;padding-right:16px!important}}</style></head>

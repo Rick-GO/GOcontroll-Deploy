@@ -30,7 +30,7 @@ describe('the pages and their assets', () => {
     expect(page.status).toBe(200);
     expect(page.headers.get('content-type')).toMatch(/^text\/html/);
     const html = await page.text();
-    expect(html).toContain('Linux images and tools for the Moduline L4, M1 and HMI1');
+    expect(html).toContain('Linux images for the Moduline L4, M1 and HMI1');
     expect(linkedAssets(html)).toEqual(['/app.js', '/favicon-dark.png', '/favicon-large.png', '/favicon-light.png', '/logo.svg', '/styles.css']);
     // What the scripts import and the stylesheet loads, plus robots.txt: public, no session needed.
     for (const path of [...linkedAssets(html), '/format.js', '/ui.js', '/sign-in.js', '/download.js', '/pattern.svg', '/robots.txt']) {
@@ -88,6 +88,11 @@ describe('the pages and their assets', () => {
     for (const html of [indexHtml, signInHtml, downloadHtml]) expect(html).not.toMatch(/id="turnstile"/);
   });
 
+  test('there are only controller images: no page or script speaks of tools (since 0.8.0)', () => {
+    for (const text of [indexHtml, signInHtml, downloadHtml, appSource, formatSource]) expect(text).not.toMatch(/\btools?\b/i);
+    expect(indexHtml).toContain('id="images"');
+  });
+
   test('catalogue text never goes into a page as HTML', () => {
     for (const source of [appSource, formatSource, uiSource, signInSource, downloadSource]) {
       const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, ''); // without comments
@@ -103,6 +108,8 @@ describe('format.js', () => {
     expect(format.CONTROLLERS).toEqual([...IMAGE_CONTROLLERS]);
     expect(FILE_ROLES.map(format.roleLabel)).toEqual(FILE_ROLES.map((r) => FILE_ROLE_LABELS[r]));
     expect(format.roleLabel('unknown')).toBe('Other');
+    expect(format.roleLabel('package')).toBe('Complete image');
+    expect(format.roleLabel('tool')).toBe('Other'); // the role of the tool releases of format 1
     expect(PLATFORMS.map(format.platformLabel)).toEqual(['', 'Windows', 'Linux', 'macOS']);
   });
 
@@ -116,23 +123,21 @@ describe('format.js', () => {
     expect(format.joinList(['L4', 'M1', 'HMI1'])).toBe('L4, M1 and HMI1');
   });
 
-  const rel = (kind: 'image' | 'tool', product: string, version: string, controllers: string[]): CatalogueRelease => ({
-    kind, product, title: product, version, controllers: controllers as CatalogueRelease['controllers'], released: '2026-11-01', notes: '', files: [],
+  const rel = (product: string, version: string, controllers: string[]): CatalogueRelease => ({
+    product, title: product, version, controllers: controllers as CatalogueRelease['controllers'], released: '2026-11-01', notes: '', files: [],
   });
 
   test('releases grouped per product in catalogue order, filtered per controller', () => {
     const releases = [
-      rel('image', 'a', '2', ['L4', 'M1']), rel('image', 'a', '1', ['L4']), rel('image', 'b', '1', ['HMI1']),
-      rel('image', 'c', '1', []), rel('tool', 't', '1', []),
+      rel('a', '2', ['L4', 'M1']), rel('a', '1', ['L4']), rel('b', '1', ['HMI1']), rel('c', '1', []),
     ];
     const ids = (groups: { product: string; version: string }[][]) => groups.map((g) => g.map((r) => `${r.product}${r.version}`));
-    expect(ids(format.productGroups(releases, 'image'))).toEqual([['a2', 'a1'], ['b1'], ['c1']]);
-    expect(ids(format.productGroups(releases, 'image', 'M1'))).toEqual([['a2'], ['c1']]);
-    expect(ids(format.productGroups(releases, 'image', 'HMI1'))).toEqual([['b1'], ['c1']]);
-    expect(ids(format.productGroups(releases, 'tool'))).toEqual([['t1']]);
-    expect(ids(format.productGroups([], 'image'))).toEqual([]);
+    expect(ids(format.productGroups(releases))).toEqual([['a2', 'a1'], ['b1'], ['c1']]);
+    expect(ids(format.productGroups(releases, 'M1'))).toEqual([['a2'], ['c1']]);
+    expect(ids(format.productGroups(releases, 'HMI1'))).toEqual([['b1'], ['c1']]);
+    expect(ids(format.productGroups([]))).toEqual([]);
     expect(format.controllersText(releases[0])).toBe('For the L4 and M1');
-    expect(format.controllersText(releases[4])).toBe('For every controller');
+    expect(format.controllersText(releases[3])).toBe('For every controller');
   });
 });
 
@@ -151,12 +156,12 @@ describe('format.js: signing in and the download page', () => {
 
   test('downloadTarget: a release file of /download/…, else nothing', () => {
     expect(format.downloadTarget(`/download/${ROOTFS}`)).toBe(ROOTFS);
-    for (const p of [null, '', '/', '/download/', '/download/manifest.json', '/files/x', '/download/images/a/b']) expect(format.downloadTarget(p), String(p)).toBe('');
+    for (const p of [null, '', '/', '/download/', '/download/manifest.json', '/files/x', '/download/images/a/b', '/download/tools/a/1/b']) expect(format.downloadTarget(p), String(p)).toBe('');
     expect(format.fileName(ROOTFS)).toBe('rootfs.ext4.zst');
   });
 
   test('findFile and the verify commands with the name filled in', () => {
-    const catalogue = { format: 1, updated: null, releases: [{ kind: 'image' as const, product: 'p', title: 'P', version: '1', controllers: [], released: '', notes: '',
+    const catalogue = { format: 2, updated: null, releases: [{ product: 'p', title: 'P', version: '1', controllers: [], released: '', notes: '',
       files: [{ name: 'a.img', path: 'images/p/1/a.img', size: 1, sha256: '', role: 'rootfs', platform: 'any' }] }] };
     expect(format.findFile(catalogue, 'images/p/1/a.img')?.file.name).toBe('a.img');
     expect(format.findFile(catalogue, 'images/p/1/b.img')).toBeNull();

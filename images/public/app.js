@@ -1,6 +1,6 @@
 // @ts-check
 // The download page of images.gocontroll.tech: reads GET /api/catalogue and lists the published
-// images (filtered per controller) and tools, each product with its releases newest first. Without
+// images (filtered per controller), each product with its releases newest first. Without
 // a session the Worker sends the browser to /sign-in before this page loads; a session that ends
 // while the page is open does the same (ui.js loadCatalogue).
 //
@@ -53,7 +53,7 @@ function releaseItem(release, latest, open, productTitle) {
 /** @param {CatalogueRelease[]} releases  one product, newest first */
 function productCard(releases) {
   const [newest] = releases;
-  const titleId = `product-${newest.kind}-${newest.product}`;
+  const titleId = `product-${newest.product}`;
   return h('article', { class: 'product', 'aria-labelledby': titleId },
     h('header', { class: 'product-head' },
       h('h3', { id: titleId }, newest.title),
@@ -72,16 +72,15 @@ function render() {
   for (const button of document.querySelectorAll('[data-controller]')) {
     button.setAttribute('aria-pressed', String(button.getAttribute('data-controller') === controller));
   }
-  renderSection(byId('images'), productGroups(catalogue.releases, 'image', controller),
+  renderSection(byId('images'), productGroups(catalogue.releases, controller),
     controller ? `No images for the ${controller} have been published yet.` : 'No images have been published yet.');
-  renderSection(byId('tools'), productGroups(catalogue.releases, 'tool'), 'No tools have been published yet.');
 }
 
 /** @param {string} text */
 function showError(text) {
   byId('notice-text').textContent = text;
   byId('notice').hidden = false;
-  for (const id of ['images', 'tools']) byId(id).replaceChildren(h('p', { class: 'empty' }, 'The downloads could not be loaded.'));
+  byId('images').replaceChildren(h('p', { class: 'empty' }, 'The downloads could not be loaded.'));
 }
 
 // ── Loading ──────────────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@
 //                  #/applications/<APP_ID>      one application: New release, releases, public key, customer,
 //                                               controller, delete
 //   Firmware       #/firmware                   module firmware on firmware.gocontroll.tech: modules, Publish firmware
-//   Images         #/images                     Linux images and tools for customers on images.gocontroll.tech
+//   Images         #/images                     Linux images of the controllers for customers on images.gocontroll.tech
 //   Key generator  #/key-generator[?app=<ID>]   a signing key pair made in this browser; its public key attached
 //                                               to an application
 // The App ID in a hash is URL-encoded. Older links still work (bookmarks), replaced without a new

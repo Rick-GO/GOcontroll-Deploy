@@ -51,7 +51,7 @@ bucket_name = "gocontroll-deploy"
 binding = "FIRMWARE_BUCKET"
 bucket_name = "gocontroll-firmware"
 
-# Linux images and tools for customers, served by images.gocontroll.tech (Worker gocontroll-images,
+# Linux images of the controllers for customers, served by images.gocontroll.tech (Worker gocontroll-images,
 # images/ in this repo) to whoever signed in there with their e-mail address. Deploy is the only
 # writer of releases and manifest.json (src/images.ts, format src/images-format.ts); the download
 # log under downloads/ is written by images.gocontroll.tech and only read here (the counts per month
@@ -155,7 +155,7 @@ DOWNLOAD_HOSTS = "deploy.gocontroll.com,deploy.gocontroll.tech"
 # The hosts of the firmware bucket (manifests hold paths relative to the host); the first one is
 # what links on the Firmware tab use.
 FIRMWARE_URLS = "https://firmware.gocontroll.tech,https://firmware.gocontroll.com"
-# Where customers download the images and tools (the Images tab links to it). Also the only origin a
+# Where customers download the images (the Images tab links to it). Also the only origin a
 # sign-in link that ImagesMail mails may have (src/images-mail.ts).
 IMAGES_URL = "https://images.gocontroll.tech"
 # The sign-in mails of images.gocontroll.tech (src/images-mail.ts): through Microsoft Graph sendMail from

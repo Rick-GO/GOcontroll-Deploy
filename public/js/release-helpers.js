@@ -169,16 +169,28 @@ export function previousTag(tags, version) {
 
 // ── Images ──
 
-/** A guess of a file's role from its name. @param {string} name @param {'image' | 'tool'} kind */
-export function guessRole(name, kind) {
+/**
+ * What a file of an image is: copies of FILE_ROLE_LABELS and PLATFORM_LABELS in src/images-format.ts
+ * (the source; test/pages.test.ts fails when they drift apart), in the order of the role choice.
+ * @type {Readonly<Record<string, string>>}
+ */
+export const IMAGE_ROLE_LABELS = Object.freeze({
+  package: 'Complete image', rootfs: 'Root file system', kernel: 'Kernel', bootloader: 'Bootloader', devicetree: 'Device tree',
+  script: 'Flash script', docs: 'Documentation', other: 'Other',
+});
+/** @type {Readonly<Record<string, string>>} */
+export const IMAGE_PLATFORM_LABELS = Object.freeze({ any: 'Any', windows: 'Windows', linux: 'Linux', macos: 'macOS' });
+
+/** A guess of a file's role from its name: a zip is the complete image for UUU. @param {string} name */
+export function guessRole(name) {
   const n = name.toLowerCase();
+  if (/\.zip$/.test(n)) return 'package';
   if (/\.(ps1|sh|bat|cmd)$/.test(n)) return 'script';
   if (/rootfs|\.ext4|\.wic|\.img\.(zst|gz|xz)$/.test(n)) return 'rootfs';
   if (/barebox|u-boot|imx-boot|flash\.bin|bootloader/.test(n)) return 'bootloader';
   if (/\.dtb$|devicetree/.test(n)) return 'devicetree';
   if (/^(image|zimage|vmlinu[xz])|kernel/.test(n)) return 'kernel';
   if (/\.(pdf|md|txt|html)$/.test(n)) return 'docs';
-  if (/\.(exe|msi|dmg|appimage)$/.test(n) || kind === 'tool') return 'tool';
   return 'other';
 }
 

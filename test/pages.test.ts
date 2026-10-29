@@ -3,11 +3,12 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-  annotationMatches, changelogFromTag, compareVersions, githubSlug, githubUrl, guessPlatform, guessRole, normaliseChangelog, parseSrecName as pageParse,
+  IMAGE_PLATFORM_LABELS, IMAGE_ROLE_LABELS, annotationMatches, changelogFromTag, compareVersions, githubSlug, githubUrl, guessPlatform, guessRole, normaliseChangelog, parseSrecName as pageParse,
   previousTag, releaseDateFromTag, safetyNetFindings, syncState, tagAnnotation, toLf,
 } from '../public/js/release-helpers.js';
 import { TABS, applicationHref, redirectFor, tabOf } from '../public/js/routes.js';
 import { normaliseChangelog as workerNormalise, parseSrecName as workerParse } from '../src/firmware';
+import { FILE_ROLE_LABELS, PLATFORM_LABELS } from '../src/images-format';
 import indexHtml from '../public/index.html?raw';
 
 describe('tabs and routes', () => {
@@ -151,12 +152,21 @@ describe('firmware page', () => {
 });
 
 describe('images page', () => {
+  it('chooses roles and platforms from copies of the contract, in its order', () => {
+    expect(IMAGE_ROLE_LABELS).toEqual(FILE_ROLE_LABELS);
+    expect(Object.keys(IMAGE_ROLE_LABELS)).toEqual(Object.keys(FILE_ROLE_LABELS));
+    expect(IMAGE_PLATFORM_LABELS).toEqual(PLATFORM_LABELS);
+    expect(IMAGE_ROLE_LABELS.package).toBe('Complete image');
+    expect('tool' in IMAGE_ROLE_LABELS).toBe(false);
+  });
+
   it('guesses what a file is and what it runs on', () => {
-    expect(guessRole('rootfs13_headless.ext4.zst', 'image')).toBe('rootfs');
-    expect(guessRole('barebox-gocontroll-mini-111.img', 'image')).toBe('bootloader');
-    expect(guessRole('flash_mini_111.ps1', 'tool')).toBe('script');
-    expect(guessRole('imx-usb-loader.exe', 'tool')).toBe('tool');
-    expect(guessRole('README.pdf', 'tool')).toBe('docs');
+    expect(guessRole('moduline-l4-2026.11.0.zip')).toBe('package');
+    expect(guessRole('rootfs13_headless.ext4.zst')).toBe('rootfs');
+    expect(guessRole('barebox-gocontroll-mini-111.img')).toBe('bootloader');
+    expect(guessRole('flash_mini_111.ps1')).toBe('script');
+    expect(guessRole('imx-usb-loader.exe')).toBe('other');
+    expect(guessRole('README.pdf')).toBe('docs');
     expect(guessPlatform('flash_mini_111.ps1')).toBe('windows');
     expect(guessPlatform('flash_mini_111.sh')).toBe('linux');
     expect(guessPlatform('rootfs.ext4')).toBe('any');

@@ -103,30 +103,31 @@ export function askForLink(body: unknown, init: { origin?: string; contentType?:
 export const ROOTFS = 'images/moduline-headless/2026.11.0/rootfs.ext4.zst';
 export const ROOTFS_BYTES = '0123456789abcdefghij'; // 20 bytes
 export const OLD_ROOTFS = 'images/moduline-headless/2026.10.0/rootfs.ext4.zst';
-export const FLASHER = 'tools/flash-tools/1.4.2/flash.ps1';
+/** The complete image for UUU (role package) of another product. */
+export const PACKAGE = 'images/moduline-hmi1/2026.11.0/moduline-hmi1-2026.11.0.zip';
 /** In the bucket, but its release is a draft: not in manifest.json. */
 export const DRAFT = 'images/moduline-headless/2026.12.0/rootfs.ext4.zst';
 const SHA = 'a'.repeat(64);
 
 export function sampleCatalogue(): Catalogue {
   return {
-    format: 1,
+    format: 2,
     updated: '2026-10-28T09:00:00.000Z',
     releases: [
       {
-        kind: 'image', product: 'moduline-headless', title: 'Moduline headless image', version: '2026.11.0',
+        product: 'moduline-headless', title: 'Moduline headless image', version: '2026.11.0',
         controllers: ['L4', 'M1'], released: '2026-11-01', notes: 'Kernel 6.12.\n<b>Not HTML</b>',
         files: [{ name: 'rootfs.ext4.zst', path: ROOTFS, size: 20, sha256: SHA, role: 'rootfs', platform: 'any' }],
       },
       {
-        kind: 'image', product: 'moduline-headless', title: 'Moduline headless image', version: '2026.10.0',
+        product: 'moduline-headless', title: 'Moduline headless image', version: '2026.10.0',
         controllers: ['L4'], released: '2026-10-01', notes: '',
         files: [{ name: 'rootfs.ext4.zst', path: OLD_ROOTFS, size: 5, sha256: SHA, role: 'rootfs', platform: 'any' }],
       },
       {
-        kind: 'tool', product: 'flash-tools', title: 'Flash tools', version: '1.4.2',
-        controllers: [], released: '2026-09-15', notes: 'For Windows.',
-        files: [{ name: 'flash.ps1', path: FLASHER, size: 3, sha256: SHA, role: 'script', platform: 'windows' }],
+        product: 'moduline-hmi1', title: 'Moduline HMI1 image', version: '2026.11.0',
+        controllers: ['HMI1'], released: '2026-09-15', notes: 'Everything UUU needs.',
+        files: [{ name: 'moduline-hmi1-2026.11.0.zip', path: PACKAGE, size: 3, sha256: SHA, role: 'package', platform: 'any' }],
       },
     ],
   };
@@ -137,7 +138,7 @@ export async function publishSample(catalogue: Catalogue = sampleCatalogue()) {
   await env.IMAGES_BUCKET.put(CATALOGUE_KEY, catalogueText(catalogue), { httpMetadata: { contentType: 'application/json' } });
   await env.IMAGES_BUCKET.put(ROOTFS, ROOTFS_BYTES);
   await env.IMAGES_BUCKET.put(OLD_ROOTFS, 'old!!');
-  await env.IMAGES_BUCKET.put(FLASHER, 'ps1');
+  await env.IMAGES_BUCKET.put(PACKAGE, 'zip');
   await env.IMAGES_BUCKET.put(DRAFT, 'draft');
 }
 

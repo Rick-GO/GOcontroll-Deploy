@@ -7,19 +7,19 @@
 
 /**
  * @typedef {{ name: string, path: string, size: number, sha256: string, role: string, platform: string }} CatalogueFile
- * @typedef {{ kind: 'image' | 'tool', product: string, title: string, version: string, controllers: string[],
+ * @typedef {{ product: string, title: string, version: string, controllers: string[],
  *   released: string, notes: string, files: CatalogueFile[] }} CatalogueRelease
  * @typedef {{ format: number, updated: string | null, releases: CatalogueRelease[] }} Catalogue
  */
 
 /** Copy of FILE_ROLE_LABELS in src/images-format.ts (the source). @type {Readonly<Record<string, string>>} */
 export const FILE_ROLE_LABELS = Object.freeze({
+  package: 'Complete image',
   rootfs: 'Root file system',
   kernel: 'Kernel',
   bootloader: 'Bootloader',
   devicetree: 'Device tree',
   script: 'Flash script',
-  tool: 'Tool',
   docs: 'Documentation',
   other: 'Other',
 });
@@ -66,22 +66,22 @@ export const controllersText = (release) => (release.controllers.length ? `For t
 
 /**
  * True when a release is for `controller` ('' = all). An image without controllers is for every
- * controller (the contract allows an empty list for a tool only, so this is the safe reading).
+ * controller (the contract wants at least one, so this is the safe reading).
  * @param {CatalogueRelease} release @param {string} controller
  */
 export const isFor = (release, controller) => !controller || !release.controllers.length || release.controllers.includes(controller);
 
 /**
- * The releases of one kind grouped per product, in catalogue order (the Worker sorts: product,
- * then the newest release first), optionally only those for one controller.
- * @param {CatalogueRelease[]} releases @param {'image' | 'tool'} kind @param {string} [controller]
+ * The releases grouped per product, in catalogue order (the Worker sorts: product, then the newest
+ * release first), optionally only those for one controller.
+ * @param {CatalogueRelease[]} releases @param {string} [controller]
  * @returns {CatalogueRelease[][]}
  */
-export function productGroups(releases, kind, controller = '') {
+export function productGroups(releases, controller = '') {
   /** @type {Map<string, CatalogueRelease[]>} */
   const groups = new Map();
   for (const r of releases) {
-    if (r.kind !== kind || !isFor(r, controller)) continue;
+    if (!isFor(r, controller)) continue;
     const list = groups.get(r.product);
     if (list) list.push(r);
     else groups.set(r.product, [r]);
@@ -113,7 +113,7 @@ export function downloadTarget(path) {
   const prefix = '/download/';
   if (!path || !path.startsWith(prefix)) return '';
   const file = path.slice(prefix.length);
-  return /^(images|tools)\/[^/]+\/[^/]+\/[^/]+$/.test(file) ? file : '';
+  return /^images\/[^/]+\/[^/]+\/[^/]+$/.test(file) ? file : '';
 }
 
 /** The file name of a release file path. @param {string} path */

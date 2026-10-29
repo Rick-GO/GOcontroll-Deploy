@@ -5,7 +5,7 @@ import { env } from 'cloudflare:test';
 import { describe, expect, test } from 'vitest';
 import { PART_SIZE, expectedPartSize } from '../src/images';
 import { STATS_PREFIX, collectFinishedMonths, imagesStats } from '../src/images-stats';
-import { CATALOGUE_KEY, downloadLogKey, parseCatalogue } from '../src/images-format';
+import { CATALOGUE_KEY, catalogueText, downloadLogKey, parseCatalogue } from '../src/images-format';
 import worker from '../src/index';
 import { call, ok } from './helpers';
 
@@ -19,12 +19,12 @@ const version = () => `2026.${++n}.0`;
 
 function release(fields: Record<string, unknown> = {}) {
   return {
-    kind: 'image', product: 'moduline-headless', title: 'Moduline Debian trixie (headless)', version: version(),
+    product: 'moduline-headless', title: 'Moduline Debian trixie (headless)', version: version(),
     controllers: ['M1', 'L4'], released: '2026-10-28', notes: 'First image.\nFor L4 and M1.', ...fields,
   };
 }
 
-const base = (r: { kind: string; product: string; version: string }) => `/api/images/releases/${r.kind}/${r.product}/${r.version}`;
+const base = (r: { product: string; version: string }) => `/api/images/releases/${r.product}/${r.version}`;
 
 async function putPart(id: string, partNumber: number, bytes: Uint8Array<ArrayBuffer>, headers: Record<string, string> = {}) {
   const res = await worker.fetch(new Request(`${ORIGIN}/api/images/uploads/${id}/parts/${partNumber}`, {
@@ -34,7 +34,7 @@ async function putPart(id: string, partNumber: number, bytes: Uint8Array<ArrayBu
 }
 
 /** Upload one small file (one part) into a draft; returns the file record. */
-async function uploadFile(r: { kind: string; product: string; version: string }, name: string, content: string, role = 'rootfs') {
+async function uploadFile(r: { product: string; version: string }, name: string, content: string, role = 'rootfs') {
   const bytes = enc(content);
   const start = await ok('POST', `${base(r)}/files`, { name, size: bytes.length, role, platform: 'any' }, 201);
   expect(start).toMatchObject({ partSize: PART_SIZE, parts: 1 });
@@ -49,15 +49,22 @@ async function catalogue() {
 }
 
 describe('releases', () => {
-  test('a draft is made once; an image needs its controllers', async () => {
+  test('a draft is made once; an image needs its controllers; there is no other kind of release', async () => {
     const r = release();
     const made = await ok('POST', '/api/images/releases', r, 201);
     expect(made).toMatchObject({ status: 'draft', files: [], controllers: ['L4', 'M1'], created_by: ME });
+    expect(made.kind).toBeUndefined();
+    expect(await env.STATE.head(`images/releases/moduline-headless/${r.version}.json`)).not.toBeNull();
     expect((await call('POST', '/api/images/releases', r)).status).toBe(409);
     const none = await call('POST', '/api/images/releases', release({ controllers: [] }));
     expect(none.status).toBe(400);
     expect(none.body.field).toBe('controllers');
-    expect((await call('POST', '/api/images/releases', release({ kind: 'tool', product: 'flash-tools', controllers: [] }))).status).toBe(201);
+    // A tool release (until 0.7.0) is no more: `kind` is ignored, and a release without controllers is refused.
+    const tool = await call('POST', '/api/images/releases', release({ kind: 'tool', product: 'flash-tools', controllers: [] }));
+    expect(tool.status).toBe(400);
+    expect(tool.body.field).toBe('controllers');
+    // The URLs of 0.7.0 had the kind in them: no such route any more.
+    expect((await call('POST', `/api/images/releases/image/moduline-headless/${r.version}/publish`)).status).toBe(404);
     expect((await call('POST', '/api/images/releases', release({ product: 'Bad Name' }))).status).toBe(400);
     expect((await call('POST', '/api/images/releases', release({ version: '../x' }))).status).toBe(400);
     expect((await call('POST', '/api/images/releases', release({ released: '2026-13-01' }))).status).toBe(400);
@@ -80,8 +87,10 @@ describe('releases', () => {
     const cat = await env.IMAGES_BUCKET.get(CATALOGUE_KEY);
     const text = await cat!.text();
     expect(text).not.toContain('@');
+    expect(text).not.toContain('"kind"');
+    expect(JSON.parse(text).format).toBe(2);
     const entry = parseCatalogue(text).releases.find((x) => x.version === r.version)!;
-    expect(entry).toMatchObject({ kind: 'image', product: 'moduline-headless', controllers: ['L4', 'M1'], notes: r.notes });
+    expect(entry).toMatchObject({ product: 'moduline-headless', controllers: ['L4', 'M1'], notes: r.notes });
     expect(entry.files).toEqual([{ name: file.name, path: file.path, size: file.size, sha256: file.sha256, role: 'rootfs', platform: 'any' }]);
 
     // A published release keeps its files; its text can change, and the catalogue follows.
@@ -138,22 +147,49 @@ describe('releases', () => {
     expect(expectedPartSize(PART_SIZE * 2 + 5, 3)).toBe(5);
   });
 
-  test('file names without a path, roles and platforms from the list', async () => {
+  test('file names without a path, roles and platforms from the list; the complete image is a package', async () => {
     const r = release();
     await ok('POST', '/api/images/releases', r, 201);
     for (const name of ['../x', '.hidden', 'a/b', 'a b']) {
       expect((await call('POST', `${base(r)}/files`, { name, size: 1, role: 'other' })).status).toBe(400);
     }
     expect((await call('POST', `${base(r)}/files`, { name: 'x.bin', size: 1, role: 'firmware' })).status).toBe(400);
-    expect((await call('POST', `${base(r)}/files`, { name: 'x.bin', size: 1, role: 'tool', platform: 'amiga' })).status).toBe(400);
-    expect((await call('POST', `${base(r)}/files`, { name: 'x.bin', size: 0, role: 'tool' })).status).toBe(400);
+    expect((await call('POST', `${base(r)}/files`, { name: 'x.exe', size: 1, role: 'tool' })).status).toBe(400); // a role until 0.7.0
+    expect((await call('POST', `${base(r)}/files`, { name: 'x.bin', size: 1, role: 'other', platform: 'amiga' })).status).toBe(400);
+    expect((await call('POST', `${base(r)}/files`, { name: 'x.bin', size: 0, role: 'other' })).status).toBe(400);
+    const pkg = await uploadFile(r, 'moduline-headless-uuu.zip', 'zip with the image and the kernel script', 'package');
+    expect(pkg).toMatchObject({ role: 'package', path: `images/moduline-headless/${r.version}/moduline-headless-uuu.zip` });
+  });
+
+  test('manifest.json of format 1 is written as format 2; one of a newer format is never overwritten', async () => {
+    const r = release();
+    await ok('POST', '/api/images/releases', r, 201);
+    await uploadFile(r, 'image.zip', 'zip', 'package');
+    const before = await env.IMAGES_BUCKET.get(CATALOGUE_KEY);
+    const kept = before ? await before.text() : null;
+    try {
+      await env.IMAGES_BUCKET.put(CATALOGUE_KEY, catalogueText({ format: 3, updated: null, releases: [] }));
+      const refused = await call('POST', `${base(r)}/publish`);
+      expect(refused.status).toBe(409);
+      expect(refused.body.error).toMatch(/format 3/);
+      expect(JSON.parse(await (await env.IMAGES_BUCKET.get(CATALOGUE_KEY))!.text()).format).toBe(3);
+
+      await env.IMAGES_BUCKET.put(CATALOGUE_KEY, JSON.stringify({ format: 1, updated: null, releases: [] }));
+      await ok('POST', `${base(r)}/publish`);
+      const doc = JSON.parse(await (await env.IMAGES_BUCKET.get(CATALOGUE_KEY))!.text());
+      expect(doc.format).toBe(2);
+      expect(doc.releases.map((x: { version: string }) => x.version)).toContain(r.version);
+    } finally {
+      if (kept === null) await env.IMAGES_BUCKET.delete(CATALOGUE_KEY);
+      else await env.IMAGES_BUCKET.put(CATALOGUE_KEY, kept);
+    }
   });
 
   test('the overview lists the downloads images.gocontroll.tech logged, newest first', async () => {
     const now = new Date();
     for (const [i, email] of ['a@example.com', 'b@example.com'].entries()) {
       await env.IMAGES_BUCKET.put(downloadLogKey(new Date(now.getTime() - (2 - i) * 60_000), `r${i}`), '', {
-        customMetadata: { email, path: 'images/p/1/x.img', kind: 'image', product: 'p', version: '1', country: 'NL' },
+        customMetadata: { email, path: 'images/p/1/x.img', product: 'p', version: '1', country: 'NL' },
       });
     }
     const overview = await ok('GET', '/api/images');
@@ -168,13 +204,13 @@ describe('download counts (src/images-stats.ts)', () => {
   // A year of its own, after today: the overview of the other tests never stores these months.
   const at = (iso: string) => new Date(iso);
   const log = (iso: string, email: string, path: string, country = 'NL') => {
-    const [, kind, product, version] = /^(images|tools)\/([^/]+)\/([^/]+)\//.exec(path)!;
+    const [, product, version] = /^images\/([^/]+)\/([^/]+)\//.exec(path)!;
     return env.IMAGES_BUCKET.put(downloadLogKey(at(iso), `r${Math.random().toString(16).slice(2, 8)}`), '', {
-      customMetadata: { email, path, kind: kind === 'images' ? 'image' : 'tool', product, version, country },
+      customMetadata: { email, path, product, version, country },
     });
   };
   const A = 'images/stats-a/1.0/rootfs.img';
-  const B = 'tools/stats-b/2.0/flash.sh';
+  const B = 'images/stats-b/2.0/stats-b.zip';
 
   test('finished months are summed once without addresses and kept after the log expires; the month under way is live', async () => {
     await log('2031-08-03T10:00:00Z', 'a@example.com', A);
@@ -193,9 +229,9 @@ describe('download counts (src/images-stats.ts)', () => {
     ]);
     expect(stats.months[0].countries).toEqual({ NL: 1, '': 1 });
     expect(stats.months[2].files).toEqual({ [A]: 2 });
-    expect(stats.releases.filter((r) => r.release.includes('/stats-'))).toEqual([
-      { release: 'image/stats-a/1.0', total: 4, thisMonth: 2, lastMonth: 0 },
-      { release: 'tool/stats-b/2.0', total: 1, thisMonth: 0, lastMonth: 1 },
+    expect(stats.releases.filter((r) => r.release.startsWith('stats-'))).toEqual([
+      { release: 'stats-a/1.0', total: 4, thisMonth: 2, lastMonth: 0 },
+      { release: 'stats-b/2.0', total: 1, thisMonth: 0, lastMonth: 1 },
     ]);
     expect(stats.months.filter(ours).reduce((n, m) => n + m.downloads, 0)).toBe(5);
 
@@ -218,7 +254,7 @@ describe('download counts (src/images-stats.ts)', () => {
     expect((await collectFinishedMonths(env, at('2032-02-01T00:30:00Z'))).stored).not.toContain('2032-01');
     const early = await imagesStats(env, at('2032-02-01T00:30:00Z'));
     expect(early.months.find((m) => m.month === '2032-01')).toMatchObject({ downloads: 1, final: false });
-    expect(early.releases.find((r) => r.release === 'tool/stats-b/2.0')?.lastMonth).toBe(1);
+    expect(early.releases.find((r) => r.release === 'stats-b/2.0')?.lastMonth).toBe(1);
     expect((await collectFinishedMonths(env, at('2032-02-01T02:17:00Z'))).stored).toContain('2032-01');
   });
 

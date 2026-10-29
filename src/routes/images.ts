@@ -1,5 +1,5 @@
-// Linux images and tools for images.gocontroll.tech (src/images.ts): releases, their files (a
-// multipart upload per file) and publishing. Every write is JSON, except a part: its raw bytes
+// Linux images for images.gocontroll.tech (src/images.ts): releases, their files (a multipart
+// upload per file) and publishing. Every write is JSON, except a part: its raw bytes
 // (application/octet-stream, checked in src/index.ts).
 
 import { Hono } from 'hono';
@@ -12,8 +12,8 @@ import {
 export const images = new Hono<AppEnv>();
 
 const body = (req: Request) => req.json().catch(() => null);
-const ref = (p: Record<string, string>) => releaseRef(p.kind, p.product, p.version);
-const RELEASE = '/images/releases/:kind/:product/:version';
+const ref = (p: Record<string, string>) => releaseRef(p.product, p.version);
+const RELEASE = '/images/releases/:product/:version';
 
 images.get('/images', async (c) => c.json(await imagesOverview(c.env)));
 
