@@ -77,13 +77,14 @@
   `npx wrangler rollback 8d01606e-e198-4153-a180-e51a070f9e05 -c images/wrangler.toml`, dan
   `npx wrangler rollback b903561d-cc62-4181-8225-069824314a63` (0.9.1), na het verwijderen van releases met een type en van
   `manifest.json` (README → *Rolling back*).
-- **0.11.0 (2026-10-29, gecommit, nog niet gedeployd; wens gebruiker: "vaste opslagmap per release; type en versie worden
-  labels; geen bestanden verplaatsen")**: elke release heeft een eigen **sleutel** `<product>/<id>` = zijn **map**
+- **0.11.0 (2026-10-29, versie `2c77e8e1-cff3-44eb-b5b8-b7e7ea7d3887`; `gocontroll-images` versie
+  `5dfee268-5f81-4185-ace3-d8b1dbddc36d`; wens gebruiker: "vaste opslagmap per release; type en versie worden labels; geen
+  bestanden verplaatsen")**: elke release heeft een eigen **sleutel** `<product>/<id>` = zijn **map**
   `images/<sleutel>/`, vast bij het aanmaken (nieuw: `<product van de controller>/<12 hex>`; van vóór 0.11.0: de map die hij had,
   bijv. `moduline-hmi1/AV101_6.12.87`). Routes `/api/images/releases/:product/:id`, STATE `images/releases/<sleutel>.json`, auditlog
   `image-<product>` met versie `<id>`, downloadlog en tellingen per sleutel. *Edit…* wijzigt datum, notes, **type en versie**, ook
   gepubliceerd (manifest mee, map en bestanden blijven); controller + type + versie uniek (409). `manifest.json` **format 5** (per
-  release `folder`). Niets verplaatst, geen migratie. Deploy: `npm run deploy`, dan `npm run deploy:images`. Terug: eerst
+  release `folder`). Niets verplaatst, geen migratie; gedeployd met het manifest nog in format 3 (vier releases zonder type). Terug: eerst
   `npx wrangler rollback 74d51437-8b5e-45b7-a184-e9626ab475e3 -c images/wrangler.toml`, dan
   `npx wrangler rollback 9bdee976-0e87-48cd-9ffb-7096c8d3096d` (0.10.0); daarvoor in 0.11.0 nieuwe releases verwijderen, labels van
   oudere terugzetten naar hun map (type leeg, versie = laatste deel van de map) en `manifest.json` verwijderen (README → *Rolling

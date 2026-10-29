@@ -17,7 +17,7 @@ sign-in link).
 > Deploy 0.9.0 (2026-10-29, version `8d01606e-e198-4153-a180-e51a070f9e05`) a release is one controller and a version (`manifest.json` format 3): the page names the controller
 > once, on its card (*Moduline L4*), and a release shows only its version and date. Since Deploy 0.10.0 (2026-10-29,
 > version `74d51437-8b5e-45b7-a184-e9626ab475e3`) a release can have a type (e.g. *1.07 - AV123*), shown next to its version; every type is a system of its own
-> with its own *Latest* (`manifest.json` format 4). Deploy 0.11.0 (committed 2026-10-29, not deployed yet): every release names
+> with its own *Latest* (`manifest.json` format 4). Since Deploy 0.11.0 (2026-10-29, version `5dfee268-5f81-4185-ace3-d8b1dbddc36d`) every release names
 > its folder (`manifest.json` format 5), so type and version can be edited without moving a file; links stay as they are.
 
 ## How it works

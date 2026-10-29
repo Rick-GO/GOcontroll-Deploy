@@ -20,10 +20,10 @@ Images tab shows how often each release is downloaded. For the members of the En
 **`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> **0.11.0 (2026-10-29) is committed, not deployed yet**: every release has a folder of its own, fixed when it is made
-> (`images/<product>/<id>`, its key); type and version are labels that *Edit…* changes, of a published release too, without
-> moving or uploading a file (`manifest.json` format 5, [Images for customers](#images-for-customers-imagesgocontrolltech)).
-> The Worker, the API and the pages are deployed (0.10.0 on 2026-10-29, version `9bdee976`, `gocontroll-images` version `74d51437`:
+> The Worker, the API and the pages are deployed (0.11.0 on 2026-10-29, version `2c77e8e1`, `gocontroll-images` version `5dfee268`:
+> every release has a folder of its own, fixed when it is made (`images/<product>/<id>`, its key); type and version are labels
+> that *Edit…* changes, of a published release too, without moving or uploading a file (`manifest.json` format 5,
+> [Images for customers](#images-for-customers-imagesgocontrolltech)); 0.10.0 on 2026-10-29, version `9bdee976`, `gocontroll-images` version `74d51437`:
 > a release can have a **type** (e.g. `1.07 - AV123`), a variant of the controller that is a system of its own with its own latest
 > release; customers see it next to the version (`manifest.json` format 4, [Images for customers](#images-for-customers-imagesgocontrolltech));
 > 0.9.1 on 2026-10-29, version `b903561d`: an S1 application moves to another
@@ -834,9 +834,10 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
   manifest) and the root manifest before every publish is in its `publish-linux` log entry
   (`previous_manifest`); put them back with `npx wrangler r2 object put`, the root manifest last
   (`application/gzip` for the package, `application/json` for the manifests).
-- **0.11.0** (committed 2026-10-29, **not deployed yet**; a folder per release, type and version labels, `manifest.json` format 5,
-  routes `/api/images/releases/:product/:id`; no binding changed; no object moved: the releases of before keep their folders and
-  keys). Deploy it as always: `npm run deploy` (intranet), then `npm run deploy:images`. Back: **images.gocontroll.tech first**
+- **0.11.0** (version `2c77e8e1-cff3-44eb-b5b8-b7e7ea7d3887`, `gocontroll-images` version `5dfee268-5f81-4185-ace3-d8b1dbddc36d`;
+  2026-10-29; a folder per release, type and version labels, `manifest.json` format 5, routes `/api/images/releases/:product/:id`;
+  no binding changed; no object moved: the releases of before keep their folders and keys; deployed with the manifest still in
+  format 3, four releases without a type). Back: **images.gocontroll.tech first**
   (`npx wrangler rollback 74d51437-8b5e-45b7-a184-e9626ab475e3 -c images/wrangler.toml`), then this Worker to 0.10.0 with
   `npx wrangler rollback 9bdee976-0e87-48cd-9ffb-7096c8d3096d`. What that means once 0.11.0 has written something: 0.10.0 reads
   format 4 at most, so its download site shows nothing of a format-5 catalogue (safe) and its Images tab refuses to write over it
