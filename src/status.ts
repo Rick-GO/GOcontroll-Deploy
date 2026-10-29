@@ -347,6 +347,8 @@ export async function folderDetail(env: Env, appId: string, days = 30) {
     latest,
     distributionUrl,
     mixedHosts: named.mixedHosts,
+    // The bucket's distribution URLs (DISTRIBUTION_URLS): what an S1 folder can move to.
+    distributionUrls: bases,
     key: key ? keyInfo(key.value) : null,
     customer,
     controllers: {

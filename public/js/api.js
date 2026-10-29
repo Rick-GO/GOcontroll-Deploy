@@ -34,12 +34,13 @@
  * @typedef {{ appId: string, kind: 's1' | 'linux' | 'unknown', latest: string | null, distributionUrl: string | null,
  *   mixedHosts: boolean, key: KeyInfo | null, customer: FolderCustomer | null,
  *   controller?: string | null, controllerSource?: ControllerSource | null,
- *   controllers: ControllerCounts & { versions: { version: string | null, count: number }[] },
+ *   controllers: ControllerCounts & { versions: { version: string | null, count: number }[], hosts?: { url: string, count: number }[] },
  *   releases: Release[], linuxVersions: LinuxVersion[], otherObjects: { key: string, size: number, uploaded: string | null }[],
  *   downloads: Downloads, manifestError?: string, distributionUrls?: string[],
  *   package?: import('./package.js').PackageDefinition | null, packageSource?: 'manual' | null,
  *   latestVersionManifest?: any, latestVersionManifestError?: string | null }} FolderDetail
- *   distributionUrl: the host of the manifest's binary URLs, or the one chosen at New application
+ *   distributionUrl: the host of the manifest's binary URLs, or the one chosen at New application;
+ *   distributionUrls: the bucket's hosts it can move to (PUT …/distribution); controllers.hosts: the hosts its controllers report
  *   package: a Linux application's package definition; latestVersionManifest: the parsed v<latest>/manifest.json
  * @typedef {{ tarballKey: string, manifestKey: string, rootManifestKey: string, version: string, released: string,
  *   sha256: string, sizeBytes: number, previousLatest: string | null, latestVersion: string, replaced: boolean }} LinuxPublishResult

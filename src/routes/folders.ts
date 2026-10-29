@@ -1,6 +1,6 @@
 // The status of the bucket (overview, one folder, downloads) and what is set per folder
-// (application): a new folder, its settings (customer, controller), its public key, and the
-// protected delete.
+// (application): a new folder, its settings (customer, controller), its distribution host, its
+// public key, and the protected delete.
 
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -8,6 +8,7 @@ import type { AppEnv, Env } from '../env';
 import { distributionUrls, manifestKind, readManifest } from '../bucket';
 import { loadCustomer } from '../business';
 import { deleteFolder, deleteUnderWay } from '../delete';
+import { moveDistribution } from '../distribution';
 import { loadWindow } from '../downloads';
 import { KeyFormatError, checkedPublicKey } from '../keys';
 import { HttpError, parse } from '../lib/http';
@@ -145,6 +146,13 @@ folders.put('/folders/:appId/customer', async (c) => {
 // What its releases hold: the files (name in files/, destination, mode, owner, group) and the
 // post-install (none, restart services with the skill's post-install.sh.tmpl, or a script).
 // The browser builds the tarball and the version manifest from it.
+// The distribution host of an S1 application: every URL in its manifest moves (src/distribution.ts).
+folders.put('/folders/:appId/distribution', async (c) => {
+  const appId = folderParam(c.req.param('appId'));
+  const { distributionUrl } = parse(z.object({ distributionUrl: z.string({ message: 'Choose the distribution host.' }) }), await c.req.json().catch(() => null));
+  return c.json(await moveDistribution(c.env, c.get('user'), appId, distributionUrl));
+});
+
 folders.put('/folders/:appId/package', async (c) => {
   const appId = folderParam(c.req.param('appId'));
   const definition = normalisePackage(parse(PackageSchema, await c.req.json().catch(() => null)));

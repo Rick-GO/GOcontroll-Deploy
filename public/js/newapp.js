@@ -55,7 +55,7 @@ export async function newApplication(opts) {
         ${customers.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`, '', 'Customers are managed in the CRM.')}
       <div data-host>
       ${field('Distribution host', (id) => `<select id="${id}" name="distributionUrl">${dists.map((u, i) => `<option value="${esc(u)}"${i === 0 ? ' selected' : ''}>${esc(u)}</option>`).join('')}</select>`,
-        '', 'The binary URLs in its manifest start with it, and its controllers carry the same one. Both hosts serve the same bucket.')}
+        '', 'The binary URLs in its manifest start with it, and its controllers carry the same one. Both hosts serve the same bucket; it can be moved later on the application\'s page.')}
       </div>`,
     onOpen: (form) => {
       const appHint = /** @type {HTMLElement} */ (form.querySelector('[data-appid-hint]'));

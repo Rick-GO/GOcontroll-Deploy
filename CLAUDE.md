@@ -61,6 +61,12 @@
   `npx wrangler rollback dc1efb7b-089c-4d09-98db-514aa0609766 -c images/wrangler.toml`, dan
   `npx wrangler rollback fbebca17-acaf-4803-bc48-5f68a395d1bc` (0.8.0), na het verwijderen van releases van 0.9.0 en van
   `manifest.json` (README → *Rolling back*).
+- **0.9.1 (2026-10-29, versie `b903561d-cc62-4181-8225-069824314a63`; wens gebruiker)**: (1) een S1-applicatie gaat naar een andere
+  distributiehost met *Change…* naast *Distribution host* op zijn pagina (`PUT /api/folders/:appId/distribution`,
+  `src/distribution.ts`: §2.1 stap 2, elke URL in het manifest; `0x35` en `.cred` blijven bij de Deployment Tool); (2) Applications
+  toont niet meer de public key zelf, alleen Yes/No/n/a (de key staat op de applicatiepagina). Geen binding of data gewijzigd.
+  Terug naar 0.9.0: `npx wrangler rollback 5f6aa698-1fce-4102-96f5-b0026dcbaa78`; een verplaatst manifest blijft op zijn nieuwe host
+  (eerst terugzetten met *Change…*, of `previous_manifest` uit de logregel `distribution`).
 
 ## Architectuur
 - **Worker met static assets** (geen Pages), zelfde opzet als GOcontroll-Logistic: `run_worker_first = true`,
@@ -99,7 +105,8 @@
   `signing.js`).
 - S1 publiceren: binary eerst, dan manifest (etag-conditioneel, 409 bij race); onbekende manifestvelden blijven;
   `?v=` = eerste 16 hex van de payload-SHA-256; een bestaande map houdt de host die zijn manifest noemt (nooit twee
-  hosts, §2.1); een Linux-map (`versions[]` of settings M1/L4/HMI1) = 422 (die neemt Linux-releases); map met public key =
+  hosts, §2.1); van host wisselen alleen voor het hele manifest tegelijk (`src/distribution.ts`, etag-conditioneel, vorige manifest
+  in de logregel `distribution`); een Linux-map (`versions[]` of settings M1/L4/HMI1) = 422 (die neemt Linux-releases); map met public key =
   alleen gesigneerd met de private key daarvan: in de browser gesigneerd, door de Worker gecontroleerd (zie *Sleutels*).
 - **Alleen de beveiligde map-delete** (`DELETE /api/folders/:appId`, `src/delete.ts`) verwijdert objecten uit
   `gocontroll-deploy`, en altijd na archiveren naar `STATE` `deleted/<APP_ID>/<ts>/<key>` (grootte gecontroleerd).
@@ -210,6 +217,11 @@
   S1-controllers niet meetellen (`gocontroll-application` heeft er één L4 en één S1) → `null`. `kind` blijft voor de
   logica (wat het manifest is).
 - Settings-index staat in de custom metadata van `folders/*.json` (`index`); zonder die markering leest Deploy het object.
+- Applications toont per applicatie alleen óf er een public key is (sinds 0.9.1, wens gebruiker: niet de key zelf); de key staat
+  op de applicatiepagina (kopiëren, `.pub`). `/api/overview` geeft `publicKey` nog wel: de Key generator kiest daarmee de
+  applicaties zonder key.
+- Distributiehost (S1): *Change…* op de applicatiepagina zet elke URL van het manifest op een andere host uit
+  `DISTRIBUTION_URLS` (beide hosts = dezelfde bucket); een map zonder releases krijgt alleen de host in zijn settings.
 
 ## Linux-applicaties (M1, L4, HMI1)
 - Contract: `GOcontroll-Architecture/cloudflare/linux-application/spec.md`. Deploy is een **tweede producent** naast de

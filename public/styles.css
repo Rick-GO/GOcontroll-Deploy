@@ -614,8 +614,6 @@ input.drop-input:focus-visible + .btn { outline: 2px solid var(--brand); outline
 /* ── Keys (keys.js) ── */
 table.data a.cell-main { color: inherit; text-decoration: none; }
 table.data a.cell-main:hover { color: var(--brand); text-decoration: underline; }
-.keycell { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
-.keycell .mono { overflow-wrap: anywhere; }
 .cell-btns { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 .cell-btns .btn.sm { margin: 0; }
 

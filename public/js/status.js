@@ -1,14 +1,14 @@
 // @ts-check
 // Applications (#/applications): the deployments at a glance. KPI tiles; the customers with their
-// applications (App IDs, each a folder in the bucket) and the public key of each, to copy for
-// provisioning; the applications no customer was found for; at the bottom New application.
+// applications (App IDs, each a folder in the bucket) and whether each has a public key (the key
+// itself is on the application's page); the applications no customer was found for; at the
+// bottom New application.
 // The search and the filter work on the page itself, without a reload, and stay in the
 // address (#/applications?q=&show=) so Back returns to the same list.
 
 import { api } from './api.js';
 import { fmtBytes, fmtCount, fmtDateTime, plural } from './format.js';
-import { copyButton, esc, hydrateIcons } from './lib.js';
-import { shortKey } from './key.js';
+import { esc, hydrateIcons } from './lib.js';
 import { newApplication } from './newapp.js';
 import { applicationHref } from './routes.js';
 import { badge, controllerBadge, controllerOf, flavour, setHero, stale, wireRowLinks } from './ui.js';
@@ -36,7 +36,7 @@ export async function renderStatus(ctx, params) {
   ctx.flash = null;
   setHero({
     title: 'Applications',
-    lede: "Firmware in GOcontroll's distribution bucket, per customer and App ID: releases, public keys, the controllers on each App ID and how often they download.",
+    lede: "Firmware in GOcontroll's distribution bucket, per customer and App ID: releases, whether each has a public key, the controllers on each App ID and how often they download.",
   });
   /** @type {Overview} */
   const data = await api('GET', '/overview');
@@ -146,19 +146,13 @@ function folderLists(d, q, show) {
     <p class="hint muted">The customer of a folder is the one assigned by hand on its page, or else the customer most of its controllers belong to, or else the customer of the project provisioned with that App ID.</p>`;
 }
 
-let keyCells = 0;
-
 /**
- * The public key of an application, short, with Copy for the whole (for provisioning); "No" for an
- * S1 application without one; "n/a" for a Linux application without one (not signed).
+ * Whether an application has a public key; the key itself is on its page (to copy or download).
+ * "No" for an S1 application without one; "n/a" for a Linux application without one (not signed).
  * @param {FolderSummary} f
  */
 function keyCell(f) {
-  if (f.publicKey) {
-    const id = `st-pk-${++keyCells}`;
-    return `<span class="keycell"><span class="mono" title="${esc(f.publicKey)}">${esc(shortKey(f.publicKey))}</span>
-      ${copyButton(id, `public key of ${f.appId}`)}<span id="${id}" hidden>${esc(f.publicKey)}</span></span>`;
-  }
+  if (f.hasKey) return badge('Yes', 'ok', 'Open the application for its public key');
   return flavour(f) !== 's1'
     ? '<span class="muted" title="Only S1 binaries are signed; go-deploy checks the SHA-256 of a Linux package">n/a</span>'
     : badge('No', 'warn', 'No public key: its releases go out unsigned');

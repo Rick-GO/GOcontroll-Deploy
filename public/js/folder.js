@@ -1,6 +1,7 @@
 // @ts-check
 // One application (#/applications/<APP_ID>; a folder in the bucket): its customer and controller
-// type (both can be set by hand), then by what goes into it:
+// type (both can be set by hand) and, for S1, its distribution host (to move), then by what goes
+// into it:
 //   S1             New release (release.js: signed GOCO binaries), the releases with what their
 //                  headers say;
 //   M1, L4, HMI1   the Package card (pkgcard.js), New release (linux-release.js: go-deploy
@@ -15,7 +16,7 @@ import { fmtBytes, fmtCount, fmtDateTime, fmtDay, fmtDayShort, hostOf, plural, s
 import { esc, field, hydrateIcons, toast } from './lib.js';
 import { keyPanel, wireKeyPanel } from './key.js';
 import { dangerPanel, deleteFolder } from './danger.js';
-import { newApplication } from './newapp.js';
+import { DEFAULT_DISTRIBUTION_URLS, newApplication } from './newapp.js';
 import { mountLinuxRelease } from './linux-release.js';
 import { compareLinuxVersions } from './package.js';
 import { mountPackageCard } from './pkgcard.js';
@@ -80,6 +81,7 @@ export async function renderFolder(ctx, appId, after = {}) {
     summary.innerHTML = summaryHtml(d, releases);
     summary.querySelector('[data-act="customer"]')?.addEventListener('click', () => changeCustomer(d, applySettings));
     summary.querySelector('[data-act="controller"]')?.addEventListener('click', () => changeController(d, applySettings));
+    summary.querySelector('[data-act="host"]')?.addEventListener('click', () => changeHost(d, () => renderFolder(ctx, appId)));
   };
   /** New settings from the Worker: redraw in place, or the whole page when what goes into the folder changes. @param {FolderSettings} s */
   const applySettings = async (s) => {
@@ -169,7 +171,7 @@ function summaryHtml(d, releases) {
   return `
     ${d.mixedHosts ? `<div class="notice warn">The binary URLs in this manifest name more than one host. A controller carries one distribution URL and
       installs only binaries under that host, so not every controller can install every release. Move the App ID to one host
-      (GOcontroll-Deployment-Tool, <span class="mono">worker/README.md</span>).</div>` : ''}
+      with Change… next to Distribution host.</div>` : ''}
     ${d.manifestError ? `<div class="notice err">The manifest cannot be read: ${esc(d.manifestError)}</div>` : ''}
     <dl class="facts">
       <div class="span-2"><dt>Customer</dt><dd>${customerText(d.customer)} <button type="button" class="link-btn" data-act="customer">Change…</button></dd></div>
@@ -182,9 +184,52 @@ function summaryHtml(d, releases) {
       <div><dt>Last upload</dt><dd>${esc(fmtDateTime(uploads[uploads.length - 1]))}</dd></div>
       <div><dt>${flavour(d) === 'linux' ? 'Downloads by controllers' : 'Distribution host'}</dt><dd>${d.distributionUrl
         ? `<span class="mono">${esc(hostOf(d.distributionUrl))}</span>`
-        : flavour(d) === 'linux' ? 'Through the Moduline dashboard (signed route)' : '—'}</dd></div>
+        : flavour(d) === 'linux' ? 'Through the Moduline dashboard (signed route)' : '—'}${canMoveHost(d)
+        ? ' <button type="button" class="link-btn" data-act="host">Change…</button>' : ''}</dd></div>
       <div><dt>Controllers</dt><dd>${c?.total ? `${fmtCount(c.total)} · ${fmtCount(c.online)} online · ${fmtCount(c.upToDate)} up to date` : 'None report this App ID'}</dd></div>
     </dl>`;
+}
+
+/** The bucket's distribution URLs, the first the default. @param {FolderDetail} d */
+const hostChoices = (d) => (d.distributionUrls?.length ? d.distributionUrls : DEFAULT_DISTRIBUTION_URLS);
+
+/** Whether an S1 folder with a host can move to another one. @param {FolderDetail} d */
+const canMoveHost = (d) => flavour(d) === 's1' && Boolean(d.distributionUrl) && !d.manifestError
+  && (d.mixedHosts || hostChoices(d).some((u) => u !== d.distributionUrl));
+
+/**
+ * Move an S1 application to another distribution host (cloud-r2-distribution.md §2.1, step 2): every
+ * URL in its manifest. Its controllers (CONFIG 0x35) and its .cred file follow with the Deployment Tool.
+ * @param {FolderDetail} d @param {() => Promise<unknown>} done
+ */
+async function changeHost(d, done) {
+  const choices = hostChoices(d);
+  const pick = choices.find((u) => u !== d.distributionUrl) ?? choices[0];
+  const hosts = d.controllers?.hosts ?? [];
+  /** @type {{ moved: number, to: string } | null} */
+  let out = null;
+  const ok = await formDialog({
+    title: `Distribution host of ${d.appId}`,
+    submitLabel: 'Move',
+    narrow: true,
+    body: `${field('Distribution host', (id) => `<select id="${id}" name="distributionUrl">${choices.map((u) => `<option value="${esc(u)}"${u === pick ? ' selected' : ''}>${esc(u)}${
+        u === d.distributionUrl ? ' (now)' : ''}</option>`).join('')}</select>`)}
+      <p class="text">Every URL in the manifest moves to this host in one go. The binaries stay where they are (both hosts serve the same bucket), and so
+        do their signatures and <span class="mono">?v=</span>. The previous manifest is kept in the log; moving back works the same way.</p>
+      <div class="notice warn">The Deployment Tool installs a release only under the controller's own distribution URL (CONFIG 0x35). Give the
+        controllers of this App ID the new host, and set <span class="mono">distribution_url</span> in its .cred file to it.</div>
+      ${hosts.length ? `<p class="hint">The controllers report: ${hosts.map((h) => `<span class="mono">${esc(hostOf(h.url))}</span> (${fmtCount(h.count)})`).join(', ')}.</p>` : ''}`,
+    submit: async (form) => {
+      const to = String(formValues(form).distributionUrl ?? '');
+      /** @type {{ moved: number }} */
+      const res = await api('PUT', `${folderPath(d.appId)}/distribution`, { distributionUrl: to });
+      out = { moved: res.moved, to };
+    },
+  });
+  if (!ok || !out) return;
+  const { moved, to } = /** @type {{ moved: number, to: string }} */ (out);
+  toast(`${d.appId} is on ${hostOf(to)}${moved ? ` (${plural(moved, 'URL')} moved)` : ''}.`);
+  await done();
 }
 
 /** Instead of New release, for a controller type Deploy does not publish for. @param {FolderDetail} d */
