@@ -13,7 +13,9 @@ sign-in link).
 > `TURNSTILE_SITE_KEY`, secret in `IMAGES_TURNSTILE_SECRET`, checked on 2026-10-28: siteverify accepts it). Not yet seen:
 > a real link mailed and opened. There are no images yet either; the page shows "No images have been published yet."
 > until there are. Since Deploy 0.8.0 (2026-10-29, version `dc1efb7b-089c-4d09-98db-514aa0609766`) there are controller
-> images only: no tool releases, no `tools/`, `manifest.json` format 2, and the file role *Complete image* (`package`).
+> images only: no tool releases, no `tools/`, `manifest.json` format 2, and the file role *Complete image* (`package`). Since
+> Deploy 0.9.0 (2026-10-29) a release is one controller and a version (`manifest.json` format 3): the page names the controller
+> once, on its card (*Moduline L4*), and a release shows only its version and date.
 
 ## How it works
 
@@ -37,9 +39,11 @@ sign-in link).
 
 The contract between the two Workers — the bucket layout, the catalogue format, which files may be
 served, the download log, the sign-in mail — is **`../src/images-format.ts`** (no imports, bundled by
-both). It is not repeated here. In short: `manifest.json` (format 2), `images/<product>/<version>/<file>`,
+both). It is not repeated here. In short: `manifest.json` (format 3: per release `controller`, `version`,
+`released`, `notes`, `files`), `images/<product>/<version>/<file>` (`<product>` = the controller's, `moduline-l4`),
 `downloads/<yyyy>/<mm>/<time>-<random>.json`, `access-mails/<hmac>`. A `manifest.json` of a newer format
-than this Worker knows shows nothing (`parseCatalogue`).
+than this Worker knows shows nothing (`parseCatalogue`); a release of format 2 is read as the controller
+of its `product` (its title and controllers are dropped).
 
 ### Every request, in this order (`src/index.ts`)
 
@@ -132,12 +136,13 @@ Plain ES modules with `// @ts-check` and JSDoc, no framework, no build step, as 
   signing out (`signInNotice`).
 - **`index.html` + `app.js`**: header with the logo, "Downloads", the signed-in address and *Sign out*
   (`/sign-out`); the anthracite hero; **Controller images** with a filter All / L4 / M1 / HMI1 (kept in
-  the address, `#M1`); *Verify your download*. Per product its releases newest first, the
-  newest open, older ones collapsed (`<details>`); per release the version, release date (en-GB),
-  controllers, notes as plain text and the files: name, role (e.g. *Complete image*), platform (not
+  the address, `#M1`); *Verify your download*. Per controller one card (*Moduline L4*, `releaseTitle`)
+  with its releases newest first, the newest open, older ones collapsed (`<details>`); per release the
+  version and the release date (en-GB; not the controller again), notes as plain text and the files: name, role (e.g. *Complete image*), platform (not
   when `any`), size, SHA-256 with *Copy*, *Download*.
 - **`download.html` + `download.js`**: `/download/<path>`, the link to give a customer for one file
-  (Deploy's Images tab copies it): the release, the file card, "Your download has started" (it starts
+  (Deploy's Images tab copies it): the release (*Moduline L4 <version>*, released …), the file card,
+  "Your download has started" (it starts
   once when the page opens; the browser stays on the page), and the checksum commands with the file's
   own name. A file that is not published (any more): a notice and a link to all downloads.
 - **`ui.js`**: the DOM helpers, the file card and loading the catalogue (401 → to `/sign-in`, back
@@ -210,7 +215,9 @@ curl -sI http://images.gocontroll.tech/             # 301 to https://
 ```
 
 **Rolling back**: `npx wrangler deployments list -c images/wrangler.toml` →
-`npx wrangler rollback <version-id> -c images/wrangler.toml`. The version before controller images only
+`npx wrangler rollback <version-id> -c images/wrangler.toml`. The version before one controller per release
+(Deploy 0.9.0) is `dc1efb7b-089c-4d09-98db-514aa0609766` (`manifest.json` format 2: it shows nothing of a format-3
+catalogue; roll back before the intranet Worker). The version before controller images only
 (Deploy 0.8.0) is `340e55ee-9f89-4059-9d7c-da0925762cf8` (images and tools, `manifest.json` format 1: it shows
 nothing of a format-2 catalogue; roll back before the intranet Worker, `../README.md` → *Rolling back*). The
 version before the e-mail sign-in is `9a2c1639-79b6-4057-9c8e-b5b98b4483cd` (Access with one-time PIN, 503

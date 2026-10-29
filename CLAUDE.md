@@ -51,6 +51,15 @@
   eerst `npx wrangler rollback 340e55ee-9f89-4059-9d7c-da0925762cf8 -c images/wrangler.toml`, dan
   `npx wrangler rollback d9953f95-a736-40d8-9f1b-51c0526ddc8a` (0.7.0); releases van 0.8.0 ziet 0.7.0 niet (format 1 vraagt
   `kind`), dus die eerst terugtrekken en verwijderen.
+- **0.9.0 (2026-10-29, wens gebruiker: "te veel dubbele informatie")**: een release = **één controller** (L4/M1/HMI1) + versie,
+  met datum en notes. Formulier *New release*: controller, releasedatum (standaard vandaag), versie, notes; **geen product- en
+  geen titelveld**: product (`moduline-l4`) en naam (*Moduline L4*) volgen uit de controller (`CONTROLLER_PRODUCTS`,
+  `controllerTitle`). Portaal: per controller één kaart, per release alleen versie en datum ("For the L4" en de productnaam
+  weg). `manifest.json` **format 3** (zonder `product`, `title`, `controllers`), routes `/api/images/releases/:controller/:version`;
+  STATE-keys, bucketpaden, downloadlog en tellingen ongewijzigd. Images-spec 3.0.0. Terug: eerst
+  `npx wrangler rollback dc1efb7b-089c-4d09-98db-514aa0609766 -c images/wrangler.toml`, dan
+  `npx wrangler rollback fbebca17-acaf-4803-bc48-5f68a395d1bc` (0.8.0), na het verwijderen van releases van 0.9.0 en van
+  `manifest.json` (README → *Rolling back*).
 
 ## Architectuur
 - **Worker met static assets** (geen Pages), zelfde opzet als GOcontroll-Logistic: `run_worker_first = true`,
@@ -147,17 +156,21 @@
 
 ## Images voor klanten (`src/images.ts`, tab Images, `images/`)
 - Formaat en bucketindeling: **`src/images-format.ts`** (geen imports; door beide Workers gebundeld). Contract
-  `GOcontroll-Architecture/cloudflare/images/spec.md` (≥ 2.0.0). Deploy is de **enige schrijver** van releases en
+  `GOcontroll-Architecture/cloudflare/images/spec.md` (≥ 3.0.0). Deploy is de **enige schrijver** van releases en
   `manifest.json`; `images.gocontroll.tech` (Worker `gocontroll-images`, `images/`) is de enige lezer en schrijft alleen
   `downloads/` en `access-mails/` (het uurplafond van 5 links per adres, sleutel = HMAC van het adres, lifecycle 1 dag).
-- **Alleen controller-images** (sinds 0.8.0, wens gebruiker): een release heeft geen soort, alles staat onder `images/`, een
-  image is voor minstens één van L4/M1/HMI1. Bestandsrollen `FILE_ROLES`, waarvan **`package`** = *Complete image* (zip met alles
+- **Alleen controller-images** (sinds 0.8.0, wens gebruiker): een release heeft geen soort, alles staat onder `images/`.
+- **Eén controller per release** (sinds 0.9.0, wens gebruiker): `controller` is de enige bron; `product` (map, downloadlog,
+  tellingen, STATE-key) = `productOf(controller)` en de naam voor klanten = `controllerTitle` (*Moduline L4*), nergens
+  opgeslagen in een release. Een record van 0.8.0 (`product`, `title`, `controllers`) leest als de controller van zijn product
+  (`asRelease`/`asUpload`) en wordt bij de volgende wijziging in de nieuwe vorm geschreven; geen datamigratie. Bestandsrollen `FILE_ROLES`, waarvan **`package`** = *Complete image* (zip met alles
   wat UUU nodig heeft: de volledige image en een script voor alleen de kernel; `.zip` raadt de pagina als `package`). Een rol
   die het contract niet kent (bijv. `tool` van vóór 0.8.0) leest als `other`. Labels: bron `src/images-format.ts`, kopieën in
   `public/js/release-helpers.js` (`test/pages.test.ts`) en `images/public/format.js` (`images/test/page.test.ts`).
-- `manifest.json` is **format 2** (`CATALOGUE_FORMAT`). Een nieuwer format: de download-site toont niets (`parseCatalogue`)
-  en Deploy schrijft er nooit overheen (409); een format-1-manifest wordt bij de volgende publicatie format 2.
-- Release = concept in `STATE` `images/releases/<product>/<versie>.json` (auditlog App ID `image-<product>`); bestanden staan al in de bucket, maar de
+- `manifest.json` is **format 3** (`CATALOGUE_FORMAT`). Een nieuwer format: de download-site toont niets (`parseCatalogue`)
+  en Deploy schrijft er nooit overheen (409); een ouder format wordt gelezen (een format-2-release als de controller van zijn
+  `product`) en bij de volgende publicatie of terugtrekking format 3.
+- Release = concept in `STATE` `images/releases/<product>/<versie>.json` (product van de controller; auditlog App ID `image-<product>`); bestanden staan al in de bucket, maar de
   download-Worker serveert alleen wat `manifest.json` noemt. Publiceren/terugtrekken = `manifest.json` etag-conditioneel
   herschrijven. In `manifest.json` nooit e-mailadressen of concepten (`catalogueEntry`). Alleen een concept verliest
   bestanden of wordt verwijderd (geen archief: images worden opnieuw gebouwd).

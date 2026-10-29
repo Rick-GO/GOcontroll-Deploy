@@ -12,8 +12,8 @@ import {
 export const images = new Hono<AppEnv>();
 
 const body = (req: Request) => req.json().catch(() => null);
-const ref = (p: Record<string, string>) => releaseRef(p.product, p.version);
-const RELEASE = '/images/releases/:product/:version';
+const ref = (p: Record<string, string>) => releaseRef(p.controller, p.version);
+const RELEASE = '/images/releases/:controller/:version';
 
 images.get('/images', async (c) => c.json(await imagesOverview(c.env)));
 

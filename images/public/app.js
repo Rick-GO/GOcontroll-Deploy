@@ -1,6 +1,6 @@
 // @ts-check
 // The download page of images.gocontroll.tech: reads GET /api/catalogue and lists the published
-// images (filtered per controller), each product with its releases newest first. Without
+// images (filtered per controller), per controller its releases newest first. Without
 // a session the Worker sends the browser to /sign-in before this page loads; a session that ends
 // while the page is open does the same (ui.js loadCatalogue).
 //
@@ -8,7 +8,7 @@
 // setAttribute), never as HTML: no innerHTML or insertAdjacentHTML anywhere in this file
 // (images/test/page.test.ts checks it). The CSP allows no inline script or style either.
 
-import { CONTROLLERS, controllersText, formatDate, productGroups } from './format.js';
+import { CONTROLLERS, controllerGroups, formatDate, releaseTitle } from './format.js';
 import { byId, fileItem, h, icon, loadCatalogue, showWho, wireCopyButtons } from './ui.js';
 
 /** @typedef {import('./format.js').Catalogue} Catalogue */
@@ -28,20 +28,19 @@ function currentController() {
 // ── Rendering ────────────────────────────────────────────────────────────────
 
 /**
+ * One release: its version and date (the card above names the controller).
  * @param {CatalogueRelease} release @param {boolean} latest @param {boolean} open
- * @param {string} productTitle
  */
-function releaseItem(release, latest, open, productTitle) {
+function releaseItem(release, latest, open) {
   const date = formatDate(release.released);
   const summary = h('summary', {},
     icon('chevron-right'),
     h('span', { class: 'rel-line' },
       h('span', { class: 'rel-version' }, `Version ${release.version}`),
       latest ? h('span', { class: 'badge latest' }, 'Latest') : null),
-    h('span', { class: 'rel-meta' }, [date ? `Released ${date}` : '', controllersText(release)].filter(Boolean).join(' · ')));
+    date ? h('span', { class: 'rel-meta' }, `Released ${date}`) : null);
 
   const body = h('div', { class: 'release-body' },
-    release.title !== productTitle ? h('p', { class: 'rel-title' }, release.title) : null,
     release.notes.trim() ? h('p', { class: 'notes' }, release.notes.trim()) : null,
     release.files.length
       ? h('ul', { class: 'files', 'aria-label': `Files of version ${release.version}` }, ...release.files.map(fileItem))
@@ -50,15 +49,13 @@ function releaseItem(release, latest, open, productTitle) {
   return h('details', { class: 'release', open }, summary, body);
 }
 
-/** @param {CatalogueRelease[]} releases  one product, newest first */
+/** @param {CatalogueRelease[]} releases  one controller, newest first */
 function productCard(releases) {
   const [newest] = releases;
-  const titleId = `product-${newest.product}`;
+  const titleId = `product-${newest.controller}`;
   return h('article', { class: 'product', 'aria-labelledby': titleId },
-    h('header', { class: 'product-head' },
-      h('h3', { id: titleId }, newest.title),
-      h('span', { class: 'product-id' }, newest.product)),
-    h('div', { class: 'releases' }, ...releases.map((r, i) => releaseItem(r, i === 0, i === 0, newest.title))));
+    h('header', { class: 'product-head' }, h('h3', { id: titleId }, releaseTitle(newest))),
+    h('div', { class: 'releases' }, ...releases.map((r, i) => releaseItem(r, i === 0, i === 0))));
 }
 
 /** @param {HTMLElement} container @param {CatalogueRelease[][]} groups @param {string} emptyText */
@@ -72,7 +69,7 @@ function render() {
   for (const button of document.querySelectorAll('[data-controller]')) {
     button.setAttribute('aria-pressed', String(button.getAttribute('data-controller') === controller));
   }
-  renderSection(byId('images'), productGroups(catalogue.releases, controller),
+  renderSection(byId('images'), controllerGroups(catalogue.releases, controller),
     controller ? `No images for the ${controller} have been published yet.` : 'No images have been published yet.');
 }
 

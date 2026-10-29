@@ -33,17 +33,17 @@ describe('GET /api/catalogue', () => {
     const body = await res.json<any>();
     expect(body.email).toBe('customer@example.com');
     expect(body.catalogue).toEqual(parseCatalogue(catalogueText(sampleCatalogue())));
-    expect(body.catalogue.format).toBe(2);
-    expect(body.catalogue.releases.map((r: any) => `${r.product} ${r.version}`)).toEqual([
-      'moduline-headless 2026.11.0', 'moduline-headless 2026.10.0', 'moduline-hmi1 2026.11.0',
+    expect(body.catalogue.format).toBe(3);
+    expect(body.catalogue.releases.map((r: any) => `${r.controller} ${r.version}`)).toEqual([
+      'L4 2026.11.0', 'L4 2026.10.0', 'HMI1 2026.11.0',
     ]);
-    expect(body.catalogue.releases.every((r: any) => !('kind' in r))).toBe(true);
+    for (const r of body.catalogue.releases) expect(Object.keys(r).sort()).toEqual(['controller', 'files', 'notes', 'released', 'version']);
     expect(body.catalogue.releases[2].files[0]).toMatchObject({ path: PACKAGE, role: 'package' });
   });
 
   test('a broken entry is left out; a manifest that is not JSON is a 503, never a guess', async () => {
     const doc = sampleCatalogue() as any;
-    doc.releases.push({ product: '../etc', version: '1', files: [] });
+    doc.releases.push({ product: '../etc', version: '1', files: [] }, { controller: 'L5', version: '1', files: [] }, { controller: 'L4', version: '../x', files: [] });
     doc.releases[0].files.push({ name: 'x.bin', path: 'downloads/x.bin', size: 1, sha256: '', role: 'rootfs', platform: 'any' });
     await env.IMAGES_BUCKET.put(CATALOGUE_KEY, JSON.stringify(doc));
     const body = await (await signedIn('/api/catalogue')).json<any>();
@@ -57,9 +57,9 @@ describe('GET /api/catalogue', () => {
   });
 
   test('a newer format than this reader knows: nothing at all; a tool of format 1 has no files here', async () => {
-    await publishSample({ ...sampleCatalogue(), format: 3 });
+    await publishSample({ ...sampleCatalogue(), format: 4 });
     const newer = await (await signedIn('/api/catalogue')).json<any>();
-    expect(newer.catalogue).toMatchObject({ format: 3, releases: [] });
+    expect(newer.catalogue).toMatchObject({ format: 4, releases: [] });
     expect((await signedIn(`/files/${ROOTFS}`)).status).toBe(404);
 
     // Format 1 also had tool releases under tools/ (never published): such a file is never served.
@@ -68,9 +68,25 @@ describe('GET /api/catalogue', () => {
     await env.IMAGES_BUCKET.put(CATALOGUE_KEY, JSON.stringify(old));
     await env.IMAGES_BUCKET.put('tools/flash-tools/1.4.2/flash.ps1', 'ps1');
     const parsed = await (await signedIn('/api/catalogue')).json<any>();
-    expect(parsed.catalogue.releases[0].files).toEqual([]);
+    expect(parsed.catalogue.releases).toEqual([]);
     expect((await signedIn('/files/tools/flash-tools/1.4.2/flash.ps1')).status).toBe(404);
     expect((await signedIn('/download/tools/flash-tools/1.4.2/flash.ps1')).status).toBe(404);
+  });
+
+  test('a release of format 2 (product, title, controllers) is read as the image of its controller and served', async () => {
+    const path = 'images/moduline-l4/6.12.87/moduline-l4-306-d_2026-10-29_6.12.87.zip';
+    await env.IMAGES_BUCKET.put(path, 'zip');
+    await env.IMAGES_BUCKET.put(CATALOGUE_KEY, JSON.stringify({ format: 2, updated: '2026-10-29T12:55:22.464Z', releases: [
+      { product: 'moduline-l4', title: 'Moduline L4', version: '6.12.87', controllers: ['L4'], released: '2026-10-29', notes: '',
+        files: [{ name: 'moduline-l4-306-d_2026-10-29_6.12.87.zip', path, size: 3, sha256: 'b'.repeat(64), role: 'package', platform: 'any' }] },
+      { product: 'moduline-headless', title: 'Not a controller', version: '1', controllers: ['L4'], released: '', notes: '', files: [] },
+    ] }));
+    const body = await (await signedIn('/api/catalogue')).json<any>();
+    expect(body.catalogue.format).toBe(2);
+    expect(body.catalogue.releases).toEqual([{ controller: 'L4', version: '6.12.87', released: '2026-10-29', notes: '',
+      files: [{ name: 'moduline-l4-306-d_2026-10-29_6.12.87.zip', path, size: 3, sha256: 'b'.repeat(64), role: 'package', platform: 'any' }] }]);
+    expect(await (await signedIn(`/files/${path}`)).text()).toBe('zip');
+    expect((await downloadLog()).at(-1)?.customMetadata).toMatchObject({ path, product: 'moduline-l4', version: '6.12.87' });
   });
 });
 
@@ -96,10 +112,10 @@ describe('GET /files/<path>', () => {
   test('a draft, the log, manifest.json, unknown paths and path tricks are 404', async () => {
     await env.IMAGES_BUCKET.put('downloads/2026/10/x.json', '');
     const paths = [
-      DRAFT, CATALOGUE_KEY, 'downloads/2026/10/x.json', 'images/moduline-headless/2026.11.0/', 'images/moduline-headless/2026.11.0/nope.bin',
+      DRAFT, CATALOGUE_KEY, 'downloads/2026/10/x.json', 'images/moduline-l4/2026.11.0/', 'images/moduline-l4/2026.11.0/nope.bin',
       '', 'images', ROOTFS.toUpperCase(), `${ROOTFS}/`, `${ROOTFS}%00`,
-      ROOTFS.replace(/\//g, '%2F'), ROOTFS.replace('rootfs', '%72ootfs'), `images/moduline-headless/2026.11.0/..%2F..%2F..%2F${CATALOGUE_KEY}`,
-      `images/moduline-headless/2026.11.0/%2e%2e/2026.12.0/rootfs.ext4.zst`, `images/x/../../${CATALOGUE_KEY}`,
+      ROOTFS.replace(/\//g, '%2F'), ROOTFS.replace('rootfs', '%72ootfs'), `images/moduline-l4/2026.11.0/..%2F..%2F..%2F${CATALOGUE_KEY}`,
+      `images/moduline-l4/2026.11.0/%2e%2e/2026.12.0/rootfs.ext4.zst`, `images/x/../../${CATALOGUE_KEY}`,
     ];
     for (const path of paths) {
       const res = await signedIn(`/files/${path}`);
@@ -210,7 +226,7 @@ describe('the download log', () => {
     expect(log[0].key.slice(10, 17)).toBe(new Date().toISOString().slice(0, 7).replace('-', '/'));
     expect(log[0].size).toBe(0);
     expect(log[0].customMetadata).toEqual({
-      email: 'customer@example.com', path: ROOTFS, product: 'moduline-headless', version: '2026.11.0', country: 'NL',
+      email: 'customer@example.com', path: ROOTFS, product: 'moduline-l4', version: '2026.11.0', country: 'NL',
     });
 
     await signedIn(`/files/${PACKAGE}`);

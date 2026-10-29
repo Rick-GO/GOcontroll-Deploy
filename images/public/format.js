@@ -3,12 +3,12 @@
 // catalogue. No DOM here, so images/test/page.test.ts runs it as it is.
 //
 // The browser cannot import ../../src/images-format.ts (TypeScript, outside the site). The source
-// of the types and the two label maps below is that file; page.test.ts fails when they drift apart.
+// of the types, the two label maps and the name of a controller's images below is that file;
+// page.test.ts fails when they drift apart.
 
 /**
  * @typedef {{ name: string, path: string, size: number, sha256: string, role: string, platform: string }} CatalogueFile
- * @typedef {{ product: string, title: string, version: string, controllers: string[],
- *   released: string, notes: string, files: CatalogueFile[] }} CatalogueRelease
+ * @typedef {{ controller: string, version: string, released: string, notes: string, files: CatalogueFile[] }} CatalogueRelease
  * @typedef {{ format: number, updated: string | null, releases: CatalogueRelease[] }} Catalogue
  */
 
@@ -55,36 +55,26 @@ export function formatDate(date) {
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 }
 
-/** "L4, M1 and HMI1"; '' for none. @param {string[]} items */
-export function joinList(items) {
-  if (items.length < 2) return items.join('');
-  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
-}
+/** The name of a controller's images, as controllerTitle in src/images-format.ts: "Moduline L4". @param {CatalogueRelease} release */
+export const releaseTitle = (release) => `Moduline ${release.controller}`;
 
-/** Which controllers a release is for, as a sentence part. @param {CatalogueRelease} release */
-export const controllersText = (release) => (release.controllers.length ? `For the ${joinList(release.controllers)}` : 'For every controller');
+/** True when a release is the image of `controller` ('' = all). @param {CatalogueRelease} release @param {string} controller */
+export const isFor = (release, controller) => !controller || release.controller === controller;
 
 /**
- * True when a release is for `controller` ('' = all). An image without controllers is for every
- * controller (the contract wants at least one, so this is the safe reading).
- * @param {CatalogueRelease} release @param {string} controller
- */
-export const isFor = (release, controller) => !controller || !release.controllers.length || release.controllers.includes(controller);
-
-/**
- * The releases grouped per product, in catalogue order (the Worker sorts: product, then the newest
- * release first), optionally only those for one controller.
+ * The releases grouped per controller, in catalogue order (the Worker sorts: L4, M1, HMI1, then the
+ * newest release first), optionally only those of one controller.
  * @param {CatalogueRelease[]} releases @param {string} [controller]
  * @returns {CatalogueRelease[][]}
  */
-export function productGroups(releases, controller = '') {
+export function controllerGroups(releases, controller = '') {
   /** @type {Map<string, CatalogueRelease[]>} */
   const groups = new Map();
   for (const r of releases) {
     if (!isFor(r, controller)) continue;
-    const list = groups.get(r.product);
+    const list = groups.get(r.controller);
     if (list) list.push(r);
-    else groups.set(r.product, [r]);
+    else groups.set(r.controller, [r]);
   }
   return [...groups.values()];
 }

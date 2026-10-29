@@ -2,7 +2,7 @@
 // Images (#/images): Linux images for the Moduline L4, M1 and HMI1, for customers on
 // images.gocontroll.tech (bucket gocontroll-images, src/images.ts).
 //
-// A release (an image: product + version) starts as a draft. Its files are uploaded straight
+// A release (the image of one controller in one version) starts as a draft. Its files are uploaded straight
 // into the bucket in parts of the Worker's partSize, three at a time, each part retried a few times;
 // at the end the Worker joins them and reads the SHA-256 from the stored file. Customers see a
 // release only once it is published (manifest.json); Withdraw takes it away again. Drafts can lose
@@ -20,10 +20,10 @@ import { badge, confirmDialog, formDialog, formValues, setHero, stale } from './
 /**
  * @typedef {import('./ui.js').Ctx} Ctx
  * @typedef {{ name: string, path: string, size: number, sha256: string, role: string, platform: string, uploaded_at: string, uploaded_by: string }} ImageFile
- * @typedef {{ product: string, title: string, version: string, controllers: string[], released: string, notes: string,
+ * @typedef {{ controller: string, product: string, version: string, released: string, notes: string,
  *   files: ImageFile[], status: 'draft' | 'published', created_at: string, created_by: string, updated_at: string, updated_by: string,
  *   published_at?: string | null, published_by?: string | null, inCatalogue: boolean }} Release
- * @typedef {{ id: string, key: string, product: string, version: string, name: string, size: number, parts: number, started_at: string, started_by: string }} Upload
+ * @typedef {{ id: string, key: string, controller: string, version: string, name: string, size: number, parts: number, started_at: string, started_by: string }} Upload
  * @typedef {{ at: string, email: string, path: string, product: string, version: string, country: string }} Download
  * @typedef {{ month: string, downloads: number, addresses: number, releases: Record<string, number>, files: Record<string, number>,
  *   countries: Record<string, number>, final: boolean }} MonthStats
@@ -37,10 +37,12 @@ const CONTROLLERS = ['L4', 'M1', 'HMI1'];
 const PARALLEL_PARTS = 3;
 const PART_ATTEMPTS = 4;
 
-/** @param {{ product: string, version: string }} r */
-const base = (r) => `/images/releases/${encodeURIComponent(r.product)}/${encodeURIComponent(r.version)}`;
-/** How a release is named in the stats and on its card. @param {{ product: string, version: string }} r */
+/** @param {{ controller: string, version: string }} r */
+const base = (r) => `/images/releases/${encodeURIComponent(r.controller)}/${encodeURIComponent(r.version)}`;
+/** How a release is named in the download counts (product/version, product = the controller's, from the API). @param {{ product: string, version: string }} r */
 const releaseId = (r) => `${r.product}/${r.version}`;
+/** The name customers see, as controllerTitle in src/images-format.ts. @param {{ controller: string }} r */
+const titleOf = (r) => `Moduline ${r.controller}`;
 
 /** The release date field's default: today, local. */
 function today() {
@@ -87,7 +89,7 @@ export async function renderImages(ctx) {
   hydrateIcons(ctx.view);
 
   ctx.view.querySelector('[data-new]')?.addEventListener('click', async () => {
-    if (await releaseDialog(data, null)) reload();
+    if (await releaseDialog(null)) reload();
   });
   ctx.view.querySelectorAll('[data-abort]').forEach((b) => b.addEventListener('click', () => act(b, async () => {
     const id = /** @type {HTMLElement} */ (b).dataset.abort ?? '';
@@ -122,13 +124,12 @@ function unfinished(uploads) {
 /** @param {Release} r @param {Overview} d */
 function releaseCard(r, d) {
   const draft = r.status === 'draft';
-  const uploading = d.uploads.some((u) => u.product === r.product && u.version === r.version);
-  return `<article class="img-release" data-release="${esc(releaseId(r))}">
+  const uploading = d.uploads.some((u) => u.controller === r.controller && u.version === r.version);
+  return `<article class="img-release" data-release="${esc(`${r.controller}/${r.version}`)}">
     <header class="img-head">
-      <div><h3>${esc(r.title)} <span class="mono muted">${esc(r.version)}</span></h3>
+      <div><h3>${esc(titleOf(r))} <span class="mono muted">${esc(r.version)}</span></h3>
         <div class="cell-sub mono">images/${esc(r.product)}/${esc(r.version)}</div></div>
-      <div class="badges">${draft ? badge('Draft', 'warn', 'Not visible to customers') : badge('Published', 'ok', `Since ${fmtDateTime(r.published_at ?? '')} by ${r.published_by ?? ''}`)}
-        ${r.controllers.map((c) => badge(c, 'info')).join(' ')}</div>
+      <div class="badges">${draft ? badge('Draft', 'warn', 'Not visible to customers') : badge('Published', 'ok', `Since ${fmtDateTime(r.published_at ?? '')} by ${r.published_by ?? ''}`)}</div>
     </header>
     <p class="muted">Release date ${esc(fmtDay(r.released))} · made by ${esc(r.created_by)} · last change ${esc(fmtDateTime(r.updated_at))} by ${esc(r.updated_by)}${downloadLine(r, d)}</p>
     ${r.notes ? `<p class="pre">${esc(r.notes)}</p>` : ''}
@@ -174,7 +175,7 @@ function customerLink(d, f) {
 /** Counts per release (all time, this and last month) and per month. @param {Overview} d */
 function downloadCounts(d) {
   const s = d.stats;
-  const titles = new Map(d.releases.map((r) => [releaseId(r), `${r.title} ${r.version}`]));
+  const titles = new Map(d.releases.map((r) => [releaseId(r), `${titleOf(r)} ${r.version}`]));
   const perRelease = s.releases.length
     ? `<div class="table-wrap"><table class="data cards">
       <thead><tr><th>Release</th><th class="num">In all</th><th class="num">This month</th><th class="num">Last month</th></tr></thead>
@@ -225,14 +226,14 @@ function downloads(list) {
 
 /** @param {HTMLElement} card @param {Overview} data @param {() => void} reload */
 function wireCard(card, data, reload) {
-  const [product, version] = (card.dataset.release ?? '').split('/');
-  const r = /** @type {Release} */ (data.releases.find((x) => x.product === product && x.version === version));
+  const [controller, version] = (card.dataset.release ?? '').split('/');
+  const r = /** @type {Release} */ (data.releases.find((x) => x.controller === controller && x.version === version));
   const q = (/** @type {string} */ sel) => card.querySelector(sel);
 
-  q('[data-edit]')?.addEventListener('click', async () => { if (await releaseDialog(data, r)) reload(); });
+  q('[data-edit]')?.addEventListener('click', async () => { if (await releaseDialog(r)) reload(); });
   const publish = q('[data-publish]');
   publish?.addEventListener('click', () => act(publish, async () => {
-    const ok = await confirmDialog(`Publish ${r.title} ${r.version}?`,
+    const ok = await confirmDialog(`Publish ${titleOf(r)} ${r.version}?`,
       `<p>Customers can download its ${plural(r.files.length, 'file')} on ${esc(data.publicUrl.replace(/^https:\/\//, ''))} right away.</p>`, 'Publish');
     if (!ok) return;
     await api('POST', `${base(r)}/publish`);
@@ -241,7 +242,7 @@ function wireCard(card, data, reload) {
   }));
   const withdraw = q('[data-withdraw]');
   withdraw?.addEventListener('click', () => act(withdraw, async () => {
-    const ok = await confirmDialog(`Withdraw ${r.title} ${r.version}?`,
+    const ok = await confirmDialog(`Withdraw ${titleOf(r)} ${r.version}?`,
       '<p>Customers can no longer see or download it. The files stay; it becomes a draft again, which you can change and publish again.</p>', 'Withdraw', true);
     if (!ok) return;
     await api('POST', `${base(r)}/withdraw`);
@@ -250,7 +251,7 @@ function wireCard(card, data, reload) {
   }));
   const del = q('[data-delete]');
   del?.addEventListener('click', () => act(del, async () => {
-    const ok = await confirmDialog(`Delete the draft ${r.title} ${r.version}?`,
+    const ok = await confirmDialog(`Delete the draft ${titleOf(r)} ${r.version}?`,
       `<p>Its ${plural(r.files.length, 'file')} are deleted from the bucket. This cannot be undone.</p>`, 'Delete draft', true);
     if (!ok) return;
     await api('DELETE', base(r));
@@ -386,36 +387,29 @@ async function uploadFile(r, file, role, platform, progress) {
 // ── New release / Edit ───────────────────────────────────────────────────────
 
 /**
- * @param {Overview} data @param {Release | null} r  null: a new release
+ * New release: the controller (one), the version, the date and the notes; what customers see as its
+ * name follows from the controller ("Moduline L4"). Edit: the date and the notes only.
+ * @param {Release | null} r  null: a new release
  * @returns {Promise<boolean>}
  */
-function releaseDialog(data, r) {
-  const products = [...new Set(data.releases.map((x) => x.product))].sort();
-  const listId = uniqueId('products');
+function releaseDialog(r) {
   const body = `<div class="form-grid two">
-    ${r ? `<p class="span-2 muted"><span class="mono">${esc(r.product)} ${esc(r.version)}</span> (cannot be changed)</p>` : `
-    ${field('Product', (id) => `<input id="${id}" name="product" list="${listId}" required maxlength="64" class="mono" placeholder="e.g. moduline-headless" pattern="[a-z0-9][a-z0-9._\\-]*">
-      <datalist id="${listId}">${products.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>`, '', 'Lower case, digits and . _ -. Releases of one product are listed together, newest first.')}
-    ${field('Version', (id) => `<input id="${id}" name="version" required maxlength="64" class="mono" placeholder="e.g. 2026.11.0">`)}`}
-    ${field('Title', (id) => `<input id="${id}" name="title" required maxlength="120" value="${esc(r?.title ?? '')}" placeholder="e.g. Moduline Debian trixie (headless)">`, 'span-2', 'What customers see.')}
-    <fieldset class="span-2"><legend>Controllers</legend><div class="checks">${CONTROLLERS.map((c) => `
-      <label class="check"><input type="checkbox" name="ctl-${c}"${r?.controllers.includes(c) ? ' checked' : ''}> ${c}</label>`).join('')}</div>
-      <p class="hint">At least one.</p></fieldset>
+    ${r ? `<p class="span-2 muted">${esc(titleOf(r))} · <span class="mono">${esc(r.version)}</span> (cannot be changed)</p>` : `
+    <fieldset class="span-2"><legend>Controller</legend><div class="checks seg" role="radiogroup" aria-label="Controller">${CONTROLLERS.map((c) => `
+      <label class="check"><input type="radio" name="controller" value="${c}" required> ${c}</label>`).join('')}</div></fieldset>`}
     ${field('Release date', (id) => `<input type="date" id="${id}" name="released" required value="${esc(r?.released ?? today())}">`)}
+    ${r ? '' : field('Version', (id) => `<input id="${id}" name="version" required maxlength="64" class="mono" placeholder="e.g. 2026-10-29_6.12.87">`)}
     ${field('Notes', (id) => `<textarea id="${id}" name="notes" rows="5" maxlength="4000" placeholder="What is new, how to install it">${esc(r?.notes ?? '')}</textarea>`, 'span-2', 'Plain text, shown to customers.')}
   </div>`;
   return formDialog({
-    title: r ? `Edit ${r.title} ${r.version}` : 'New release',
+    title: r ? `Edit ${titleOf(r)} ${r.version}` : 'New release',
     submitLabel: r ? 'Save' : 'Create draft',
     body,
     submit: async (form) => {
       const v = formValues(form);
-      const payload = {
-        title: v.title, released: v.released, notes: v.notes,
-        controllers: CONTROLLERS.filter((c) => v[`ctl-${c}`]),
-      };
+      const payload = { released: v.released, notes: v.notes };
       if (r) await api('PATCH', base(r), payload);
-      else await api('POST', '/images/releases', { ...payload, product: String(v.product).trim(), version: String(v.version).trim() });
+      else await api('POST', '/images/releases', { ...payload, controller: v.controller, version: String(v.version).trim() });
       toast(r ? 'Saved.' : 'Draft created. Add its files.');
     },
   });

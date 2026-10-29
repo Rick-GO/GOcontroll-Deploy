@@ -3,7 +3,7 @@
 // runs here), and the catalogue never reaches them as HTML.
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { FILE_ROLE_LABELS, FILE_ROLES, IMAGE_CONTROLLERS, LINK_TTL_SECONDS, PLATFORM_LABELS, PLATFORMS, SESSION_TTL_SECONDS, type CatalogueRelease } from '../../src/images-format';
+import { controllerTitle, FILE_ROLE_LABELS, FILE_ROLES, IMAGE_CONTROLLERS, LINK_TTL_SECONDS, PLATFORM_LABELS, PLATFORMS, SESSION_TTL_SECONDS, type CatalogueRelease } from '../../src/images-format';
 import * as format from '../public/format.js';
 import appSource from '../public/app.js?raw';
 import downloadHtml from '../public/download.html?raw';
@@ -93,6 +93,13 @@ describe('the pages and their assets', () => {
     expect(indexHtml).toContain('id="images"');
   });
 
+  test('nothing twice: the card names the controller, a release only its version and date', () => {
+    for (const source of [appSource, downloadSource]) {
+      expect(source).not.toMatch(/controllersText|For the |product-id|rel-title|\.title\b(?! =)/);
+    }
+    expect(downloadHtml).not.toContain('file-sub');
+  });
+
   test('catalogue text never goes into a page as HTML', () => {
     for (const source of [appSource, formatSource, uiSource, signInSource, downloadSource]) {
       const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, ''); // without comments
@@ -119,25 +126,21 @@ describe('format.js', () => {
     expect(format.formatDate('2026-10-28T23:30:00.000Z')).toBe('28 October 2026');
     expect(format.formatDate('')).toBe('');
     expect(format.formatDate(null)).toBe('');
-    expect(format.joinList(['L4'])).toBe('L4');
-    expect(format.joinList(['L4', 'M1', 'HMI1'])).toBe('L4, M1 and HMI1');
   });
 
-  const rel = (product: string, version: string, controllers: string[]): CatalogueRelease => ({
-    product, title: product, version, controllers: controllers as CatalogueRelease['controllers'], released: '2026-11-01', notes: '', files: [],
+  const rel = (controller: CatalogueRelease['controller'], version: string): CatalogueRelease => ({
+    controller, version, released: '2026-11-01', notes: '', files: [],
   });
 
-  test('releases grouped per product in catalogue order, filtered per controller', () => {
-    const releases = [
-      rel('a', '2', ['L4', 'M1']), rel('a', '1', ['L4']), rel('b', '1', ['HMI1']), rel('c', '1', []),
-    ];
-    const ids = (groups: { product: string; version: string }[][]) => groups.map((g) => g.map((r) => `${r.product}${r.version}`));
-    expect(ids(format.productGroups(releases))).toEqual([['a2', 'a1'], ['b1'], ['c1']]);
-    expect(ids(format.productGroups(releases, 'M1'))).toEqual([['a2'], ['c1']]);
-    expect(ids(format.productGroups(releases, 'HMI1'))).toEqual([['b1'], ['c1']]);
-    expect(ids(format.productGroups([]))).toEqual([]);
-    expect(format.controllersText(releases[0])).toBe('For the L4 and M1');
-    expect(format.controllersText(releases[3])).toBe('For every controller');
+  test('releases grouped per controller in catalogue order, filtered per controller; the name from the controller', () => {
+    const releases = [rel('L4', '2'), rel('L4', '1'), rel('M1', '1'), rel('HMI1', '1')];
+    const ids = (groups: { controller: string; version: string }[][]) => groups.map((g) => g.map((r) => `${r.controller}-${r.version}`));
+    expect(ids(format.controllerGroups(releases))).toEqual([['L4-2', 'L4-1'], ['M1-1'], ['HMI1-1']]);
+    expect(ids(format.controllerGroups(releases, 'M1'))).toEqual([['M1-1']]);
+    expect(ids(format.controllerGroups(releases, 'HMI1'))).toEqual([['HMI1-1']]);
+    expect(ids(format.controllerGroups([]))).toEqual([]);
+    for (const c of IMAGE_CONTROLLERS) expect(format.releaseTitle(rel(c, '1'))).toBe(controllerTitle(c));
+    expect(format.releaseTitle(releases[0])).toBe('Moduline L4');
   });
 });
 
@@ -161,10 +164,10 @@ describe('format.js: signing in and the download page', () => {
   });
 
   test('findFile and the verify commands with the name filled in', () => {
-    const catalogue = { format: 2, updated: null, releases: [{ product: 'p', title: 'P', version: '1', controllers: [], released: '', notes: '',
-      files: [{ name: 'a.img', path: 'images/p/1/a.img', size: 1, sha256: '', role: 'rootfs', platform: 'any' }] }] };
-    expect(format.findFile(catalogue, 'images/p/1/a.img')?.file.name).toBe('a.img');
-    expect(format.findFile(catalogue, 'images/p/1/b.img')).toBeNull();
+    const catalogue = { format: 3, updated: null, releases: [{ controller: 'L4', version: '1', released: '', notes: '',
+      files: [{ name: 'a.img', path: 'images/moduline-l4/1/a.img', size: 1, sha256: '', role: 'rootfs', platform: 'any' }] }] };
+    expect(format.findFile(catalogue, 'images/moduline-l4/1/a.img')?.file.name).toBe('a.img');
+    expect(format.findFile(catalogue, 'images/moduline-l4/1/b.img')).toBeNull();
     expect(format.verifyCommands('a.img').map((c) => c.command)).toEqual(['sha256sum a.img', 'shasum -a 256 a.img', 'Get-FileHash -Algorithm SHA256 .\\a.img']);
   });
 });

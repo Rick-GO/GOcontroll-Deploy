@@ -14,7 +14,8 @@
 //                                                   no drafts)
 //   images/<product>/<version>/<file>               a file of a controller image: the complete image as
 //                                                   one zip for UUU (role package), or a part of it
-//                                                   (rootfs, kernel, bootloader, …)
+//                                                   (rootfs, kernel, bootloader, …); <product> follows
+//                                                   from the controller (CONTROLLER_PRODUCTS)
 //   downloads/<yyyy>/<mm>/<iso time>-<random>.json  one download, written by images.gocontroll.tech;
 //                                                   who and what is in the custom metadata (DownloadMeta)
 //   access-mails/<hmac of the address>              the sign-in links mailed to one address in the last
@@ -37,18 +38,33 @@
 
 export const CATALOGUE_KEY = 'manifest.json';
 /**
- * Format 2 (since 2026-10-29): every release is a controller image, without `kind`, its files under
- * images/. Format 1 also had tool releases (`kind`, tools/); none was ever published. A manifest of a
- * newer format than this is read as empty: a reader that does not know it shows nothing.
+ * Format 3 (since 2026-10-29, Deploy 0.9.0): a release is one controller's image, named by `controller`
+ * and `version` only; its product folder follows from the controller, there is no title. Format 2 had
+ * `product`, `title` and `controllers` (still read: the controller from the product, CONTROLLER_PRODUCTS);
+ * format 1 also had tool releases (never published). A manifest of a newer format than this is read as
+ * empty: a reader that does not know it shows nothing, and Deploy never writes over it.
  */
-export const CATALOGUE_FORMAT = 2;
+export const CATALOGUE_FORMAT = 3;
 export const DOWNLOAD_LOG_PREFIX = 'downloads/';
 /** The top folder of every release in the bucket. */
 export const RELEASES_DIR = 'images';
 
-/** The Linux controllers an image is for (order as shown). */
+/** The Linux controllers; a release is the image of one of them (order as shown). */
 export const IMAGE_CONTROLLERS = ['L4', 'M1', 'HMI1'] as const;
 export type ImageController = (typeof IMAGE_CONTROLLERS)[number];
+
+/**
+ * The product of each controller: its folder under images/, and the `product` of the download log and
+ * the counts. Derived, never stored in a release: the controller is the one source.
+ */
+export const CONTROLLER_PRODUCTS: Readonly<Record<ImageController, string>> = { L4: 'moduline-l4', M1: 'moduline-m1', HMI1: 'moduline-hmi1' };
+export const productOf = (controller: ImageController): string => CONTROLLER_PRODUCTS[controller];
+/** The controller whose product this is (format 2 and older records named the product); null for any other. */
+export function controllerOfProduct(product: unknown): ImageController | null {
+  return IMAGE_CONTROLLERS.find((c) => CONTROLLER_PRODUCTS[c] === product) ?? null;
+}
+/** The name customers see for a controller's images. */
+export const controllerTitle = (controller: ImageController): string => `Moduline ${controller}`;
 
 /**
  * What a file in a release is. `package`: a zip with everything UUU needs to install the image, the
@@ -72,9 +88,9 @@ export const PLATFORMS = ['any', 'windows', 'linux', 'macos'] as const;
 export type Platform = (typeof PLATFORMS)[number];
 export const PLATFORM_LABELS: Readonly<Record<Platform, string>> = { any: 'Any', windows: 'Windows', linux: 'Linux', macos: 'macOS' };
 
-/** A product: one line of releases (e.g. moduline-headless, moduline-display). */
+/** The shape of a product folder (the products themselves: CONTROLLER_PRODUCTS). */
 export const PRODUCT_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-/** A version: e.g. 2026.11.0, 1.4.2-rc1. Never "." or "..": it starts with a letter or digit. */
+/** A version: e.g. 2026-10-29_6.12.87, 2026.11.0, 1.4.2-rc1. Never "." or "..": it starts with a letter or digit. */
 export const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$/;
 /** A file name in a release: no path, no leading dot. */
 export const FILE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
@@ -83,7 +99,7 @@ export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface CatalogueFile {
   name: string;
-  path: string;        // the object key, e.g. images/moduline-headless/2026.11.0/rootfs.ext4.zst
+  path: string;        // the object key, e.g. images/moduline-l4/2026-10-29_6.12.87/moduline-l4.zip
   size: number;        // bytes
   sha256: string;      // 64 lower-case hex, computed by Deploy from the stored object
   role: FileRole;
@@ -91,10 +107,8 @@ export interface CatalogueFile {
 }
 
 export interface CatalogueRelease {
-  product: string;
-  title: string;
+  controller: ImageController;     // whose image this is; its product folder is productOf(controller)
   version: string;
-  controllers: ImageController[];  // at least one (Deploy refuses an image without)
   released: string;                // YYYY-MM-DD
   notes: string;                   // plain text; the page shows it as text, never as HTML
   files: CatalogueFile[];
@@ -110,14 +124,14 @@ export interface Catalogue {
 export interface DownloadMeta {
   email: string;
   path: string;
-  product: string;
+  product: string;   // productOf(controller), as in the path
   version: string;
   country: string;
 }
 
 /** The folder of a release in the bucket, with a trailing slash. */
-export const releasePrefix = (product: string, version: string): string =>
-  `${RELEASES_DIR}/${product}/${version}/`;
+export const releasePrefix = (controller: ImageController, version: string): string =>
+  `${RELEASES_DIR}/${productOf(controller)}/${version}/`;
 
 export const emptyCatalogue = (): Catalogue => ({ format: CATALOGUE_FORMAT, updated: null, releases: [] });
 
@@ -141,10 +155,10 @@ export function compareLooseVersions(a: string, b: string): number {
   return 0;
 }
 
-/** Catalogue order: product, then the newest release first. */
+/** Catalogue order: controller (L4, M1, HMI1), then the newest release first. */
 export function sortReleases(releases: CatalogueRelease[]): CatalogueRelease[] {
   return [...releases].sort((a, b) =>
-    a.product.localeCompare(b.product)
+    IMAGE_CONTROLLERS.indexOf(a.controller) - IMAGE_CONTROLLERS.indexOf(b.controller)
     || b.released.localeCompare(a.released)
     || compareLooseVersions(b.version, a.version));
 }
@@ -155,7 +169,9 @@ const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => (lis
 /**
  * Read manifest.json. A release or file that does not hold up is left out (never served), so a
  * broken entry cannot open a path outside its release. A newer format than CATALOGUE_FORMAT gives
- * no releases at all (`format` says which it was). Throws only when the text is not JSON.
+ * no releases at all (`format` says which it was). A release of format 2 (no `controller`) takes
+ * the controller of its `product`; its `title` and `controllers` are dropped. Throws only when the
+ * text is not JSON.
  */
 export function parseCatalogue(text: string): Catalogue {
   const doc = JSON.parse(text) as Record<string, unknown>;
@@ -165,9 +181,10 @@ export function parseCatalogue(text: string): Catalogue {
   if (out.format > CATALOGUE_FORMAT) return out;
   const releases = Array.isArray(doc?.releases) ? doc.releases : [];
   for (const r of releases as Record<string, unknown>[]) {
-    if (!r || !isString(r.product) || !PRODUCT_RE.test(r.product)
-      || !isString(r.version) || !VERSION_RE.test(r.version)) continue;
-    const prefix = releasePrefix(r.product, r.version);
+    if (!r || !isString(r.version) || !VERSION_RE.test(r.version)) continue;
+    const controller = oneOf(IMAGE_CONTROLLERS, r.controller) ? r.controller : controllerOfProduct(r.product);
+    if (!controller) continue;
+    const prefix = releasePrefix(controller, r.version);
     const files: CatalogueFile[] = [];
     for (const f of (Array.isArray(r.files) ? r.files : []) as Record<string, unknown>[]) {
       if (!f || !isString(f.name) || !FILE_NAME_RE.test(f.name) || f.path !== prefix + f.name) continue;
@@ -181,10 +198,8 @@ export function parseCatalogue(text: string): Catalogue {
       });
     }
     out.releases.push({
-      product: r.product,
-      title: isString(r.title) && r.title.trim() ? r.title : r.product,
+      controller,
       version: r.version,
-      controllers: (Array.isArray(r.controllers) ? r.controllers : []).filter((c): c is ImageController => oneOf(IMAGE_CONTROLLERS, c)),
       released: isString(r.released) && DATE_RE.test(r.released) ? r.released : '',
       notes: isString(r.notes) ? r.notes : '',
       files,

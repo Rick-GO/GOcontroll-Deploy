@@ -3,8 +3,9 @@
 // signed in with their e-mail address. This Worker is the only one that writes releases and
 // manifest.json; the bucket layout and the catalogue format are in src/images-format.ts.
 //
-// A release (an image for L4/M1/HMI1: product + version) is first a draft: its files are uploaded
-// into the bucket under images/<product>/<version>/ but customers cannot get them, because
+// A release (the image of one controller, L4/M1/HMI1, in one version) is first a draft: its files are
+// uploaded into the bucket under images/<product>/<version>/ (the product follows from the controller,
+// CONTROLLER_PRODUCTS) but customers cannot get them, because
 // images.gocontroll.tech serves only what manifest.json names. Publish puts the release in
 // manifest.json; Withdraw takes it out again (the files stay). Only a draft can lose files or be
 // deleted.
@@ -16,8 +17,11 @@
 // (crypto.DigestStream), so the checksum customers see is that of what they will download.
 //
 // What is kept in STATE (gocontroll-deploy-state):
-//   images/releases/<product>/<version>.json   the release: metadata, files, draft/published, who
+//   images/releases/<product>/<version>.json   the release: controller, version, date, notes, files,
+//                                              draft/published, who
 //   images/uploads/<id>.json                   an upload under way (R2 upload ID, part count)
+// Records of 0.8.0 named product, title and controllers instead of the controller: read as the
+// controller of their product (asRelease, asUpload), written back in this shape at the next change.
 // Every change is in the audit log (log/…, action images-*, App ID image-<product>). R2 aborts an
 // upload that is never completed after 7 days; its record here is shown until someone aborts it.
 
@@ -28,8 +32,8 @@ import { imagesStats, type ImagesStats } from './images-stats';
 import { HttpError, parse } from './lib/http';
 import { audit, listAll, readJson, writeJson, type Versioned } from './state';
 import {
-  CATALOGUE_FORMAT, CATALOGUE_KEY, DOWNLOAD_LOG_PREFIX, FILE_NAME_RE, FILE_ROLES, IMAGE_CONTROLLERS, PLATFORMS, PRODUCT_RE, VERSION_RE,
-  catalogueText, emptyCatalogue, parseCatalogue, releasePrefix, sortReleases,
+  CATALOGUE_FORMAT, CATALOGUE_KEY, DOWNLOAD_LOG_PREFIX, FILE_NAME_RE, FILE_ROLES, IMAGE_CONTROLLERS, PLATFORMS, VERSION_RE,
+  catalogueText, controllerOfProduct, controllerTitle, emptyCatalogue, parseCatalogue, productOf, releasePrefix, sortReleases,
   type Catalogue, type CatalogueRelease, type DownloadMeta, type FileRole, type ImageController, type Platform,
 } from './images-format';
 
@@ -52,10 +56,8 @@ export interface ImageFile {
 }
 
 export interface ImageRelease {
-  product: string;
-  title: string;
+  controller: ImageController;
   version: string;
-  controllers: ImageController[];
   released: string;
   notes: string;
   files: ImageFile[];
@@ -72,7 +74,7 @@ interface UploadRecord {
   id: string;
   upload_id: string;    // R2's
   key: string;          // object key
-  product: string;
+  controller: ImageController;
   version: string;
   name: string;
   size: number;
@@ -84,18 +86,41 @@ interface UploadRecord {
   started_by: string;
 }
 
-const recordKey = (product: string, version: string) => `images/releases/${product}/${version}.json`;
-/** The App ID of a release's entries in the audit log. */
-const logId = (product: string) => `image-${product}`;
+const recordKey = (controller: ImageController, version: string) => `images/releases/${productOf(controller)}/${version}.json`;
+/** The App ID of a release's entries in the audit log (as in 0.8.0: image-moduline-l4). */
+const logId = (controller: ImageController) => `image-${productOf(controller)}`;
 const uploadKey = (id: string) => `images/uploads/${id}.json`;
 const UPLOAD_ID = /^[0-9a-f]{32}$/;
 
-export interface ReleaseRef { product: string; version: string }
+export interface ReleaseRef { controller: ImageController; version: string }
 
-/** The product and version of a release in a URL; 404 for anything else. */
-export function releaseRef(product: string | undefined, version: string | undefined): ReleaseRef {
-  if (!PRODUCT_RE.test(product ?? '') || !VERSION_RE.test(version ?? '')) throw new HttpError(404, 'Not found.');
-  return { product: product!, version: version! };
+const isController = (v: unknown): v is ImageController => (IMAGE_CONTROLLERS as readonly unknown[]).includes(v);
+
+/** The controller and version of a release in a URL; 404 for anything else. */
+export function releaseRef(controller: string | undefined, version: string | undefined): ReleaseRef {
+  if (!isController(controller) || !VERSION_RE.test(version ?? '')) throw new HttpError(404, 'Not found.');
+  return { controller, version: version! };
+}
+
+type Stored<T> = Partial<T> & { product?: unknown; title?: unknown; controllers?: unknown };
+
+/** The controller of a stored record: its own, or (a record of 0.8.0) the controller of its product. */
+const controllerOf = (raw: { controller?: unknown; product?: unknown }) => (isController(raw.controller) ? raw.controller : controllerOfProduct(raw.product));
+
+/** A release record in this version's shape; null when its controller cannot be told. */
+function asRelease(raw: Stored<ImageRelease>): ImageRelease | null {
+  const controller = controllerOf(raw);
+  if (!controller) return null;
+  const { product: _product, title: _title, controllers: _controllers, ...rest } = raw;
+  return { ...(rest as ImageRelease), controller };
+}
+
+/** An upload record in this version's shape; null when its controller cannot be told. */
+function asUpload(raw: Stored<UploadRecord>): UploadRecord | null {
+  const controller = controllerOf(raw);
+  if (!controller) return null;
+  const { product: _product, ...rest } = raw;
+  return { ...(rest as UploadRecord), controller };
 }
 
 export function uploadParam(id: string | undefined): string {
@@ -109,10 +134,11 @@ export const expectedPartSize = (size: number, n: number) => (n < partsOf(size) 
 
 // ── Reading ──────────────────────────────────────────────────────────────────
 
-async function loadRelease(env: Env, product: string, version: string): Promise<Versioned<ImageRelease>> {
-  const rec = await readJson<ImageRelease>(env.STATE, recordKey(product, version));
-  if (!rec) throw new HttpError(404, 'This release does not exist.');
-  return rec;
+async function loadRelease(env: Env, controller: ImageController, version: string): Promise<Versioned<ImageRelease>> {
+  const rec = await readJson<Stored<ImageRelease>>(env.STATE, recordKey(controller, version));
+  const release = rec ? asRelease(rec.value) : null;
+  if (!rec || !release || release.controller !== controller) throw new HttpError(404, 'This release does not exist.');
+  return { value: release, etag: rec.etag };
 }
 
 async function readCatalogue(env: Env): Promise<{ catalogue: Catalogue; etag: string | null }> {
@@ -134,7 +160,8 @@ async function readCatalogue(env: Env): Promise<{ catalogue: Catalogue; etag: st
 export interface DownloadView { at: string; email: string; path: string; product: string; version: string; country: string }
 
 export interface ImagesOverview {
-  releases: (ImageRelease & { inCatalogue: boolean })[];
+  /** product: productOf(controller), the folder of its files and the key of its download counts. */
+  releases: (ImageRelease & { product: string; inCatalogue: boolean })[];
   uploads: Omit<UploadRecord, 'upload_id'>[];
   downloads: DownloadView[];
   stats: ImagesStats;
@@ -166,13 +193,15 @@ export async function imagesOverview(env: Env, now = new Date()): Promise<Images
     if (!(err instanceof HttpError)) throw err;
     out.catalogueError = err.message;
   }
-  const listed = new Set(catalogue.releases.map((r) => `${r.product}/${r.version}`));
-  const read = await Promise.all(records.filter((o) => o.key.endsWith('.json')).map((o) => readJson<ImageRelease>(env.STATE, o.key)));
-  out.releases = read.filter((r): r is Versioned<ImageRelease> => r !== null)
-    .map((r) => ({ ...r.value, inCatalogue: listed.has(`${r.value.product}/${r.value.version}`) }))
-    .sort((a, b) => a.product.localeCompare(b.product) || b.released.localeCompare(a.released) || b.created_at.localeCompare(a.created_at));
-  const ups = await Promise.all(uploads.filter((o) => o.key.endsWith('.json')).map((o) => readJson<UploadRecord>(env.STATE, o.key)));
-  out.uploads = ups.filter((u): u is Versioned<UploadRecord> => u !== null).map(({ value: { upload_id: _, ...rest } }) => rest);
+  const listed = new Set(catalogue.releases.map((r) => `${r.controller}/${r.version}`));
+  const read = await Promise.all(records.filter((o) => o.key.endsWith('.json')).map((o) => readJson<Stored<ImageRelease>>(env.STATE, o.key)));
+  out.releases = read.map((r) => (r ? asRelease(r.value) : null)).filter((r): r is ImageRelease => r !== null)
+    .map((r) => ({ ...r, product: productOf(r.controller), inCatalogue: listed.has(`${r.controller}/${r.version}`) }))
+    .sort((a, b) => IMAGE_CONTROLLERS.indexOf(a.controller) - IMAGE_CONTROLLERS.indexOf(b.controller)
+      || b.released.localeCompare(a.released) || b.created_at.localeCompare(a.created_at));
+  const ups = await Promise.all(uploads.filter((o) => o.key.endsWith('.json')).map((o) => readJson<Stored<UploadRecord>>(env.STATE, o.key)));
+  out.uploads = ups.map((u) => (u ? asUpload(u.value) : null)).filter((u): u is UploadRecord => u !== null)
+    .map(({ upload_id: _, ...rest }) => rest);
   return out;
 }
 
@@ -194,26 +223,17 @@ async function recentDownloads(env: Env, now: Date): Promise<DownloadView[]> {
 // ── Releases ─────────────────────────────────────────────────────────────────
 
 const ReleaseFields = {
-  title: z.string({ message: 'Fill in the title.' }).trim().min(1, 'Fill in the title.').max(120, 'The title is at most 120 characters.'),
-  controllers: z.array(z.enum(IMAGE_CONTROLLERS), { message: `Choose from ${IMAGE_CONTROLLERS.join(', ')}.` }).max(IMAGE_CONTROLLERS.length),
   released: z.string({ message: 'Fill in the release date.' }).regex(/^\d{4}-\d{2}-\d{2}$/, 'Fill in the release date.'),
   notes: z.string().max(MAX_NOTES, `The notes are at most ${MAX_NOTES} characters.`).default(''),
 };
 
 const CreateBody = z.object({
-  product: z.string({ message: 'Fill in the product.' }).trim().regex(PRODUCT_RE, 'A product is lower-case letters, digits and . _ -, starting with a letter or digit (at most 64).'),
+  controller: z.enum(IMAGE_CONTROLLERS, { message: `Choose the controller: ${IMAGE_CONTROLLERS.join(', ')}.` }),
   version: z.string({ message: 'Fill in the version.' }).trim().regex(VERSION_RE, 'A version is letters, digits and . _ + -, starting with a letter or digit (at most 64).'),
   ...ReleaseFields,
 });
 
 const UpdateBody = z.object(ReleaseFields);
-
-/** An image is for at least one controller; in the order of IMAGE_CONTROLLERS. */
-function checkControllers(controllers: ImageController[]): ImageController[] {
-  const set = new Set(controllers);
-  if (!set.size) throw new HttpError(400, 'Choose the controllers this image is for.', 'controllers');
-  return IMAGE_CONTROLLERS.filter((c) => set.has(c));
-}
 
 function checkDate(value: string): string {
   const d = new Date(`${value}T00:00:00Z`);
@@ -225,10 +245,8 @@ export async function createRelease(env: Env, user: User, body: unknown): Promis
   const b = parse(CreateBody, body);
   const at = new Date().toISOString();
   const release: ImageRelease = {
-    product: b.product,
-    title: b.title,
+    controller: b.controller,
     version: b.version,
-    controllers: checkControllers(b.controllers),
     released: checkDate(b.released),
     notes: b.notes.trim(),
     files: [],
@@ -238,84 +256,80 @@ export async function createRelease(env: Env, user: User, body: unknown): Promis
     updated_at: at,
     updated_by: user.email,
   };
-  const leftovers = await env.IMAGES_BUCKET.list({ prefix: releasePrefix(b.product, b.version), limit: 1 });
+  const leftovers = await env.IMAGES_BUCKET.list({ prefix: releasePrefix(b.controller, b.version), limit: 1 });
   if (leftovers.objects.length) throw new HttpError(409, 'The bucket already holds files for this version. Choose another version.', 'version');
-  if (!(await writeJson(env.STATE, recordKey(b.product, b.version), release, 'absent'))) {
-    throw new HttpError(409, `${b.product} ${b.version} already exists.`, 'version');
+  if (!(await writeJson(env.STATE, recordKey(b.controller, b.version), release, 'absent'))) {
+    throw new HttpError(409, `${controllerTitle(b.controller)} ${b.version} already exists.`, 'version');
   }
-  await audit(env, { action: 'images-create', app_id: logId(b.product), version: b.version, actor: user.email });
+  await audit(env, { action: 'images-create', app_id: logId(b.controller), version: b.version, actor: user.email });
   return release;
 }
 
-/** Change the title, controllers, date or notes; a published release is updated in manifest.json too. */
+/** Change the date or the notes; a published release is updated in manifest.json too. */
 export async function updateRelease(env: Env, user: User, ref: ReleaseRef, body: unknown): Promise<ImageRelease> {
   const b = parse(UpdateBody, body);
-  const rec = await loadRelease(env, ref.product, ref.version);
+  const rec = await loadRelease(env, ref.controller, ref.version);
   const release: ImageRelease = {
     ...rec.value,
-    title: b.title,
-    controllers: checkControllers(b.controllers),
     released: checkDate(b.released),
     notes: b.notes.trim(),
     updated_at: new Date().toISOString(),
     updated_by: user.email,
   };
-  if (!(await writeJson(env.STATE, recordKey(ref.product, ref.version), release, { etag: rec.etag }))) {
+  if (!(await writeJson(env.STATE, recordKey(ref.controller, ref.version), release, { etag: rec.etag }))) {
     throw new HttpError(409, 'This release was changed a moment ago. Reload the page.');
   }
   if (release.status === 'published') await updateCatalogue(env, (releases) => [...without(releases, ref), catalogueEntry(release)]);
-  await audit(env, { action: 'images-update', app_id: logId(ref.product), version: ref.version, actor: user.email });
+  await audit(env, { action: 'images-update', app_id: logId(ref.controller), version: ref.version, actor: user.email });
   return release;
 }
 
 /** Delete a draft: its files in the bucket, its unfinished uploads and the record. */
 export async function deleteRelease(env: Env, user: User, ref: ReleaseRef): Promise<void> {
-  const rec = await loadRelease(env, ref.product, ref.version);
+  const rec = await loadRelease(env, ref.controller, ref.version);
   if (rec.value.status !== 'draft') throw new HttpError(409, 'Withdraw this release first: customers can still download it.');
   for (const up of await uploadsOf(env, ref)) await abortUpload(env, up);
-  const objects = await listAll(env.IMAGES_BUCKET, { prefix: releasePrefix(ref.product, ref.version) });
+  const objects = await listAll(env.IMAGES_BUCKET, { prefix: releasePrefix(ref.controller, ref.version) });
   for (let i = 0; i < objects.length; i += 1000) await env.IMAGES_BUCKET.delete(objects.slice(i, i + 1000).map((o) => o.key));
-  await env.STATE.delete(recordKey(ref.product, ref.version));
-  await audit(env, { action: 'images-delete', app_id: logId(ref.product), version: ref.version, actor: user.email, files: objects.map((o) => o.key) });
+  await env.STATE.delete(recordKey(ref.controller, ref.version));
+  await audit(env, { action: 'images-delete', app_id: logId(ref.controller), version: ref.version, actor: user.email, files: objects.map((o) => o.key) });
 }
 
 export async function publishRelease(env: Env, user: User, ref: ReleaseRef): Promise<ImageRelease> {
-  const rec = await loadRelease(env, ref.product, ref.version);
+  const rec = await loadRelease(env, ref.controller, ref.version);
   if (!rec.value.files.length) throw new HttpError(409, 'Upload at least one file first.');
   if ((await uploadsOf(env, ref)).length) throw new HttpError(409, 'An upload of this release is not finished. Finish or abort it first.');
   const at = new Date().toISOString();
   const release: ImageRelease = { ...rec.value, status: 'published', published_at: at, published_by: user.email, updated_at: at, updated_by: user.email };
-  if (!(await writeJson(env.STATE, recordKey(ref.product, ref.version), release, { etag: rec.etag }))) {
+  if (!(await writeJson(env.STATE, recordKey(ref.controller, ref.version), release, { etag: rec.etag }))) {
     throw new HttpError(409, 'This release was changed a moment ago. Reload the page.');
   }
   await updateCatalogue(env, (releases) => [...without(releases, ref), catalogueEntry(release)]);
-  await audit(env, { action: 'images-publish', app_id: logId(ref.product), version: ref.version, actor: user.email, files: release.files.map((f) => f.path) });
+  await audit(env, { action: 'images-publish', app_id: logId(ref.controller), version: ref.version, actor: user.email, files: release.files.map((f) => f.path) });
   return release;
 }
 
 export async function withdrawRelease(env: Env, user: User, ref: ReleaseRef): Promise<ImageRelease> {
-  const rec = await loadRelease(env, ref.product, ref.version);
+  const rec = await loadRelease(env, ref.controller, ref.version);
   // Out of the catalogue first: if the record write fails after, the release is still not downloadable.
   await updateCatalogue(env, (releases) => without(releases, ref));
   const at = new Date().toISOString();
   const release: ImageRelease = { ...rec.value, status: 'draft', updated_at: at, updated_by: user.email };
-  if (!(await writeJson(env.STATE, recordKey(ref.product, ref.version), release, { etag: rec.etag }))) {
+  if (!(await writeJson(env.STATE, recordKey(ref.controller, ref.version), release, { etag: rec.etag }))) {
     throw new HttpError(409, 'This release was changed a moment ago. Reload the page.');
   }
-  await audit(env, { action: 'images-withdraw', app_id: logId(ref.product), version: ref.version, actor: user.email });
+  await audit(env, { action: 'images-withdraw', app_id: logId(ref.controller), version: ref.version, actor: user.email });
   return release;
 }
 
 const without = (releases: CatalogueRelease[], ref: ReleaseRef) =>
-  releases.filter((r) => !(r.product === ref.product && r.version === ref.version));
+  releases.filter((r) => !(r.controller === ref.controller && r.version === ref.version));
 
 /** What customers see of a release: no e-mail addresses, no draft state. */
 export function catalogueEntry(r: ImageRelease): CatalogueRelease {
   return {
-    product: r.product,
-    title: r.title,
+    controller: r.controller,
     version: r.version,
-    controllers: r.controllers,
     released: r.released,
     notes: r.notes,
     files: r.files.map((f) => ({ name: f.name, path: f.path, size: f.size, sha256: f.sha256, role: f.role, platform: f.platform })),
@@ -348,9 +362,9 @@ const StartBody = z.object({
 
 async function uploadsOf(env: Env, ref: ReleaseRef): Promise<UploadRecord[]> {
   const objects = await listAll(env.STATE, { prefix: 'images/uploads/' });
-  const all = await Promise.all(objects.map((o) => readJson<UploadRecord>(env.STATE, o.key)));
-  return all.filter((u): u is Versioned<UploadRecord> => u !== null).map((u) => u.value)
-    .filter((u) => u.product === ref.product && u.version === ref.version);
+  const all = await Promise.all(objects.map((o) => readJson<Stored<UploadRecord>>(env.STATE, o.key)));
+  return all.map((u) => (u ? asUpload(u.value) : null)).filter((u): u is UploadRecord => u !== null)
+    .filter((u) => u.controller === ref.controller && u.version === ref.version);
 }
 
 function randomId(): string {
@@ -359,17 +373,17 @@ function randomId(): string {
 
 export async function startUpload(env: Env, user: User, ref: ReleaseRef, body: unknown): Promise<{ id: string; partSize: number; parts: number }> {
   const b = parse(StartBody, body);
-  const rec = await loadRelease(env, ref.product, ref.version);
+  const rec = await loadRelease(env, ref.controller, ref.version);
   if (rec.value.status !== 'draft') throw new HttpError(409, 'Withdraw this release before you change its files.');
   if (rec.value.files.some((f) => f.name === b.name)) throw new HttpError(409, `${b.name} is in this release already. Remove it first to upload it again.`, 'name');
   if ((await uploadsOf(env, ref)).some((u) => u.name === b.name)) throw new HttpError(409, `${b.name} is being uploaded already. Abort that upload first.`, 'name');
-  const key = releasePrefix(ref.product, ref.version) + b.name;
+  const key = releasePrefix(ref.controller, ref.version) + b.name;
   const upload = await env.IMAGES_BUCKET.createMultipartUpload(key, { httpMetadata: { contentType: 'application/octet-stream' } });
   const record: UploadRecord = {
     id: randomId(),
     upload_id: upload.uploadId,
     key,
-    product: ref.product,
+    controller: ref.controller,
     version: ref.version,
     name: b.name,
     size: b.size,
@@ -385,9 +399,10 @@ export async function startUpload(env: Env, user: User, ref: ReleaseRef, body: u
 }
 
 async function loadUpload(env: Env, id: string): Promise<UploadRecord> {
-  const rec = await readJson<UploadRecord>(env.STATE, uploadKey(id));
-  if (!rec) throw new HttpError(404, 'This upload does not exist any more. Start it again.');
-  return rec.value;
+  const rec = await readJson<Stored<UploadRecord>>(env.STATE, uploadKey(id));
+  const up = rec ? asUpload(rec.value) : null;
+  if (!up) throw new HttpError(404, 'This upload does not exist any more. Start it again.');
+  return up;
 }
 
 /** One part, streamed from the request into R2. The size must be exactly what this part has. */
@@ -427,13 +442,13 @@ export async function completeUpload(env: Env, user: User, id: string, body: unk
     uploaded_at: new Date().toISOString(), uploaded_by: user.email,
   };
   for (let attempt = 0; ; attempt++) {
-    const rec = await loadRelease(env, up.product, up.version);
+    const rec = await loadRelease(env, up.controller, up.version);
     const release: ImageRelease = { ...rec.value, files: [...rec.value.files.filter((f) => f.name !== file.name), file], updated_at: file.uploaded_at, updated_by: user.email };
-    if (await writeJson(env.STATE, recordKey(up.product, up.version), release, { etag: rec.etag })) break;
+    if (await writeJson(env.STATE, recordKey(up.controller, up.version), release, { etag: rec.etag })) break;
     if (attempt + 1 >= ATTEMPTS) throw new HttpError(409, 'The release changed while this file was saved. Reload the page.');
   }
   await env.STATE.delete(uploadKey(id));
-  await audit(env, { action: 'images-upload', app_id: logId(up.product), version: up.version, actor: user.email, file: up.key, size: stored.size, sha256 });
+  await audit(env, { action: 'images-upload', app_id: logId(up.controller), version: up.version, actor: user.email, file: up.key, size: stored.size, sha256 });
   return file;
 }
 
@@ -459,21 +474,21 @@ async function abortUpload(env: Env, up: UploadRecord): Promise<void> {
 export async function cancelUpload(env: Env, user: User, id: string): Promise<void> {
   const up = await loadUpload(env, id);
   await abortUpload(env, up);
-  await audit(env, { action: 'images-abort', app_id: logId(up.product), version: up.version, actor: user.email, file: up.key });
+  await audit(env, { action: 'images-abort', app_id: logId(up.controller), version: up.version, actor: user.email, file: up.key });
 }
 
 /** Remove a file from a draft (and from the bucket). */
 export async function removeFile(env: Env, user: User, ref: ReleaseRef, name: string): Promise<ImageRelease> {
   if (!FILE_NAME_RE.test(name)) throw new HttpError(404, 'Not found.');
   for (let attempt = 0; ; attempt++) {
-    const rec = await loadRelease(env, ref.product, ref.version);
+    const rec = await loadRelease(env, ref.controller, ref.version);
     if (rec.value.status !== 'draft') throw new HttpError(409, 'Withdraw this release before you change its files.');
     const file = rec.value.files.find((f) => f.name === name);
     if (!file) throw new HttpError(404, 'This file is not in the release.');
     const release: ImageRelease = { ...rec.value, files: rec.value.files.filter((f) => f.name !== name), updated_at: new Date().toISOString(), updated_by: user.email };
-    if (await writeJson(env.STATE, recordKey(ref.product, ref.version), release, { etag: rec.etag })) {
+    if (await writeJson(env.STATE, recordKey(ref.controller, ref.version), release, { etag: rec.etag })) {
       await env.IMAGES_BUCKET.delete(file.path);
-      await audit(env, { action: 'images-remove-file', app_id: logId(ref.product), version: ref.version, actor: user.email, file: file.path, sha256: file.sha256 });
+      await audit(env, { action: 'images-remove-file', app_id: logId(ref.controller), version: ref.version, actor: user.email, file: file.path, sha256: file.sha256 });
       return release;
     }
     if (attempt + 1 >= ATTEMPTS) throw new HttpError(409, 'This release was changed a moment ago. Reload the page.');

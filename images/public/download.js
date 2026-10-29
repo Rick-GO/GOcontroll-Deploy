@@ -6,7 +6,7 @@
 //
 // Texts go into the page as text only (images/test/page.test.ts).
 
-import { controllersText, downloadTarget, findFile, formatDate, verifyCommands } from './format.js';
+import { downloadTarget, findFile, formatDate, releaseTitle, verifyCommands } from './format.js';
 import { byId, fileItem, h, loadCatalogue, showWho, wireCopyButtons } from './ui.js';
 
 const path = downloadTarget(window.location.pathname);
@@ -35,11 +35,10 @@ async function load() {
   }
   const { release, file } = hit;
   document.title = `${file.name} · GOcontroll Downloads`;
-  byId('title').textContent = `${release.title} ${release.version}`;
+  byId('title').textContent = `${releaseTitle(release)} ${release.version}`;
   const date = formatDate(release.released);
-  byId('lede').textContent = [date ? `Released ${date}` : '', controllersText(release)].filter(Boolean).join(' · ');
+  byId('lede').textContent = date ? `Released ${date}` : '';
   byId('file-title').textContent = file.name;
-  byId('file-sub').textContent = `${release.title}, version ${release.version}`;
   byId('file-list').replaceChildren(fileItem(file));
   byId('started').textContent = 'Your download has started. If it does not, use the Download button.';
   byId('verify-list').replaceChildren(...verifyCommands(file.name).map((c) =>
