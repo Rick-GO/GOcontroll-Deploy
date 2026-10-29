@@ -16,7 +16,7 @@ import { listAll, readJson, writeJson } from './state';
 export const STATS_PREFIX = 'images/stats/';
 const MONTHS_PER_RUN = 6;
 
-/** The downloads of one month. Keys of `releases`: `<product>/<version>`; of `countries`: ISO code, '' = unknown. */
+/** The downloads of one month. Keys of `releases`: the release's key `<product>/<id>` (its folder; product and version of the log); of `countries`: ISO code, '' = unknown. */
 export interface MonthStats {
   month: string;                     // YYYY-MM (UTC)
   downloads: number;

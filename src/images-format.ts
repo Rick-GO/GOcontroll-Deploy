@@ -12,10 +12,12 @@
 //   manifest.json                                   the published catalogue (Catalogue below); what
 //                                                   customers see, nothing else (no e-mail addresses,
 //                                                   no drafts)
-//   images/<product>/<version>/<file>               a file of a controller image: the complete image as
+//   images/<product>/<id>/<file>                    a file of a controller image: the complete image as
 //                                                   one zip for UUU (role package), or a part of it
-//                                                   (rootfs, kernel, bootloader, …); <product> follows
-//                                                   from the controller and the type (productOf)
+//                                                   (rootfs, kernel, bootloader, …). images/<product>/<id>
+//                                                   is the release's folder, fixed when it is made (its
+//                                                   key <product>/<id>); type and version are labels and
+//                                                   can change, the folder never does
 //   downloads/<yyyy>/<mm>/<iso time>-<random>.json  one download, written by images.gocontroll.tech;
 //                                                   who and what is in the custom metadata (DownloadMeta)
 //   access-mails/<hmac of the address>              the sign-in links mailed to one address in the last
@@ -38,14 +40,15 @@
 
 export const CATALOGUE_KEY = 'manifest.json';
 /**
- * Format 4 (since 2026-10-29, Deploy 0.10.0): a release is the image of one controller and one type of
- * it (`type`, '' = none: the controller is one system) in one version; its product folder follows from
- * controller and type (productOf), there is no title. Format 3 had no `type` (read as ''); format 2 had
- * `product`, `title` and `controllers` (read: the controller of the product); format 1 also had tool
- * releases (never published). A manifest of a newer format than this is read as empty: a reader that
- * does not know it shows nothing, and Deploy never writes over it.
+ * Format 5 (since 2026-10-29, Deploy 0.11.0): a release is the image of one controller, optionally one
+ * type of it, in one version, and names its own `folder` (images/<product>/<id>, fixed when it is made):
+ * type and version are labels that can change. Format 4 and older had no `folder`: it was
+ * images/<productOf(controller, type)>/<version> (legacyFolder), and is read so. Format 3 had no `type`
+ * (read as ''); format 2 had `product`, `title` and `controllers` (read: the controller of the product);
+ * format 1 also had tool releases (never published). A manifest of a newer format than this is read as
+ * empty: a reader that does not know it shows nothing, and Deploy never writes over it.
  */
-export const CATALOGUE_FORMAT = 4;
+export const CATALOGUE_FORMAT = 5;
 export const DOWNLOAD_LOG_PREFIX = 'downloads/';
 /** The top folder of every release in the bucket. */
 export const RELEASES_DIR = 'images';
@@ -54,7 +57,7 @@ export const RELEASES_DIR = 'images';
 export const IMAGE_CONTROLLERS = ['L4', 'M1', 'HMI1'] as const;
 export type ImageController = (typeof IMAGE_CONTROLLERS)[number];
 
-/** The product of each controller without a type: its folder under images/. */
+/** The product of each controller: the first part of the folder of its new releases (images/<product>/<id>). */
 export const CONTROLLER_PRODUCTS: Readonly<Record<ImageController, string>> = { L4: 'moduline-l4', M1: 'moduline-m1', HMI1: 'moduline-hmi1' };
 
 /**
@@ -81,13 +84,14 @@ export function typeSlug(type: string): string {
 }
 
 /**
- * The product of a release: its folder under images/, the key of its record in Deploy's state, and the
- * `product` of the download log and the counts. Derived, never stored in a release: controller and type
- * are the one source. "moduline-hmi1", or with a type "moduline-hmi1-107-av123". Two types with the same
- * slug would share a folder: Deploy refuses the second.
+ * The product folder a release of format 4 and older had: "moduline-hmi1", or with a type
+ * "moduline-hmi1-107-av123" (Deploy 0.10.0). Since format 5 a release names its folder itself.
  */
 export const productOf = (controller: ImageController, type = ''): string =>
   (type ? `${CONTROLLER_PRODUCTS[controller]}-${typeSlug(type)}` : CONTROLLER_PRODUCTS[controller]);
+/** The folder of a release of format 4 and older, which had none of its own. */
+export const legacyFolder = (controller: ImageController, type: string, version: string): string =>
+  `${RELEASES_DIR}/${productOf(controller, type)}/${version}`;
 /** The controller whose product (without a type) this is (format 2 named the product); null for any other. */
 export function controllerOfProduct(product: unknown): ImageController | null {
   return IMAGE_CONTROLLERS.find((c) => CONTROLLER_PRODUCTS[c] === product) ?? null;
@@ -120,8 +124,10 @@ export const PLATFORMS = ['any', 'windows', 'linux', 'macos'] as const;
 export type Platform = (typeof PLATFORMS)[number];
 export const PLATFORM_LABELS: Readonly<Record<Platform, string>> = { any: 'Any', windows: 'Windows', linux: 'Linux', macos: 'macOS' };
 
-/** The shape of a product folder (the products themselves: CONTROLLER_PRODUCTS). */
+/** The shape of the first part of a folder (the products: CONTROLLER_PRODUCTS, with a type suffix before format 5). */
 export const PRODUCT_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+/** The shape of the second part of a folder: a release id since format 5 (12 hex), a version before. */
+export const FOLDER_ID_RE = /^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$/;
 /** A version: e.g. 6.12.87, 2026-10-29_6.12.87, 1.4.2-rc1. Never "." or "..": it starts with a letter or digit. */
 export const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$/;
 /** A file name in a release: no path, no leading dot. */
@@ -139,9 +145,10 @@ export interface CatalogueFile {
 }
 
 export interface CatalogueRelease {
+  folder: string;                  // images/<product>/<id>: where its files are; fixed, its key is <product>/<id>
   controller: ImageController;     // whose image this is
-  type: string;                    // which type of the controller ('' = none); folder productOf(controller, type)
-  version: string;
+  type: string;                    // label: which type of the controller ('' = none)
+  version: string;                 // label
   released: string;                // YYYY-MM-DD
   notes: string;                   // plain text; the page shows it as text, never as HTML
   files: CatalogueFile[];
@@ -157,14 +164,23 @@ export interface Catalogue {
 export interface DownloadMeta {
   email: string;
   path: string;
-  product: string;   // productOf(controller, type), as in the path
+  product: string;   // with `version`: the two parts of the release's folder (its key), as in the path; not its labels
   version: string;
   country: string;
 }
 
-/** The folder of a release in the bucket, with a trailing slash. */
-export const releasePrefix = (controller: ImageController, type: string, version: string): string =>
-  `${RELEASES_DIR}/${productOf(controller, type)}/${version}/`;
+/** Whether `folder` has the shape of a release's folder: images/<product>/<id>. */
+export function isReleaseFolder(folder: string): boolean {
+  const parts = folder.split('/');
+  return parts.length === 3 && parts[0] === RELEASES_DIR && PRODUCT_RE.test(parts[1]) && FOLDER_ID_RE.test(parts[2]);
+}
+
+/** The controller a folder belongs to: its product is the controller's, or (0.10.0) starts with it and a dash. */
+export function controllerOfFolder(folder: string): ImageController | null {
+  if (!isReleaseFolder(folder)) return null;
+  const product = folder.split('/')[1];
+  return IMAGE_CONTROLLERS.find((c) => product === CONTROLLER_PRODUCTS[c] || product.startsWith(`${CONTROLLER_PRODUCTS[c]}-`)) ?? null;
+}
 
 export const emptyCatalogue = (): Catalogue => ({ format: CATALOGUE_FORMAT, updated: null, releases: [] });
 
@@ -203,9 +219,10 @@ const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => (lis
 /**
  * Read manifest.json. A release or file that does not hold up is left out (never served), so a
  * broken entry cannot open a path outside its release. A newer format than CATALOGUE_FORMAT gives
- * no releases at all (`format` says which it was). A release without `type` (format 3 and older)
- * has none; one of format 2 (no `controller`) takes the controller of its `product`, its `title` and
- * `controllers` are dropped. Throws only when the text is not JSON.
+ * no releases at all (`format` says which it was). A release without `folder` (format 4 and older) has
+ * legacyFolder; a folder must belong to the release's controller and to one release only. A release
+ * without `type` (format 3 and older) has none; one of format 2 (no `controller`) takes the controller
+ * of its `product`, its `title` and `controllers` are dropped. Throws only when the text is not JSON.
  */
 export function parseCatalogue(text: string): Catalogue {
   const doc = JSON.parse(text) as Record<string, unknown>;
@@ -214,12 +231,16 @@ export function parseCatalogue(text: string): Catalogue {
   if (typeof doc?.format === 'number' && Number.isSafeInteger(doc.format) && doc.format > 0) out.format = doc.format;
   if (out.format > CATALOGUE_FORMAT) return out;
   const releases = Array.isArray(doc?.releases) ? doc.releases : [];
+  const folders = new Set<string>();
   for (const r of releases as Record<string, unknown>[]) {
     if (!r || !isString(r.version) || !VERSION_RE.test(r.version)) continue;
     const controller = oneOf(IMAGE_CONTROLLERS, r.controller) ? r.controller : controllerOfProduct(r.product);
     const type = normaliseType(r.type);
     if (!controller || type === null || type !== (r.type ?? '')) continue;
-    const prefix = releasePrefix(controller, type, r.version);
+    const folder = r.folder === undefined ? legacyFolder(controller, type, r.version) : r.folder;
+    if (!isString(folder) || controllerOfFolder(folder) !== controller || folders.has(folder)) continue;
+    folders.add(folder);
+    const prefix = `${folder}/`;
     const files: CatalogueFile[] = [];
     for (const f of (Array.isArray(r.files) ? r.files : []) as Record<string, unknown>[]) {
       if (!f || !isString(f.name) || !FILE_NAME_RE.test(f.name) || f.path !== prefix + f.name) continue;
@@ -233,6 +254,7 @@ export function parseCatalogue(text: string): Catalogue {
       });
     }
     out.releases.push({
+      folder,
       controller,
       type,
       version: r.version,
@@ -263,11 +285,11 @@ export function downloadLogKey(at: Date, random: string): string {
   return `${DOWNLOAD_LOG_PREFIX}${iso.slice(0, 4)}/${iso.slice(5, 7)}/${iso}-${random}.json`;
 }
 
-/** Whether `path` has the shape of a file of a release: images/<product>/<version>/<file>. */
+/** Whether `path` has the shape of a file of a release: images/<product>/<id>/<file> (a file in a release folder). */
 export function isReleaseFilePath(path: string): boolean {
   const parts = path.split('/');
   return parts.length === 4 && parts[0] === RELEASES_DIR
-    && PRODUCT_RE.test(parts[1]) && VERSION_RE.test(parts[2]) && FILE_NAME_RE.test(parts[3]);
+    && PRODUCT_RE.test(parts[1]) && FOLDER_ID_RE.test(parts[2]) && FILE_NAME_RE.test(parts[3]);
 }
 
 // ── Signing in on images.gocontroll.tech ─────────────────────────────────────

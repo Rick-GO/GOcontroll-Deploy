@@ -17,7 +17,8 @@ sign-in link).
 > Deploy 0.9.0 (2026-10-29, version `8d01606e-e198-4153-a180-e51a070f9e05`) a release is one controller and a version (`manifest.json` format 3): the page names the controller
 > once, on its card (*Moduline L4*), and a release shows only its version and date. Since Deploy 0.10.0 (2026-10-29,
 > version `74d51437-8b5e-45b7-a184-e9626ab475e3`) a release can have a type (e.g. *1.07 - AV123*), shown next to its version; every type is a system of its own
-> with its own *Latest* (`manifest.json` format 4).
+> with its own *Latest* (`manifest.json` format 4). Deploy 0.11.0 (committed 2026-10-29, not deployed yet): every release names
+> its folder (`manifest.json` format 5), so type and version can be edited without moving a file; links stay as they are.
 
 ## How it works
 
@@ -41,13 +42,18 @@ sign-in link).
 
 The contract between the two Workers — the bucket layout, the catalogue format, which files may be
 served, the download log, the sign-in mail — is **`../src/images-format.ts`** (no imports, bundled by
-both). It is not repeated here. In short: `manifest.json` (format 4: per release `controller`, `type` ('' =
-none), `version`, `released`, `notes`, `files`), `images/<product>/<version>/<file>` (`<product>` =
-`productOf(controller, type)`: `moduline-l4`, `moduline-hmi1-107-av123`),
+both). It is not repeated here. In short: `manifest.json` (format 5: per release `folder`, `controller`,
+`type` ('' = none), `version`, `released`, `notes`, `files`), `images/<product>/<id>/<file>` (the release's
+folder, fixed when it is made: `moduline-hmi1/3f9c2a7b1e04`, or the folder a release of before had,
+`moduline-hmi1/AV101_6.12.87`; type and version are labels),
 `downloads/<yyyy>/<mm>/<time>-<random>.json`, `access-mails/<hmac>`. A `manifest.json` of a newer format
-than this Worker knows shows nothing (`parseCatalogue`); a release of format 3 has no type; one of format
-2 is read as the controller of its `product` (its title and controllers are dropped); a type that is not
-kept as Deploy writes it (`normaliseType`) leaves the release out.
+than this Worker knows shows nothing (`parseCatalogue`). A release of format 4 and older has no `folder`:
+it is `images/<productOf(controller, type)>/<version>` (`legacyFolder`). A folder must be a release folder
+of the release's controller and belong to one release only, and a file must be in it, or it is left out.
+A release of format 3 has no type; one of format 2 is read as the controller of its `product` (its title
+and controllers are dropped); a type that is not kept as Deploy writes it (`normaliseType`) leaves the
+release out. The download log names a release by its folder (`product`, `version` = its two parts), so
+its counts stay together when its labels change.
 
 ### Every request, in this order (`src/index.ts`)
 
@@ -222,7 +228,9 @@ curl -sI http://images.gocontroll.tech/             # 301 to https://
 ```
 
 **Rolling back**: `npx wrangler deployments list -c images/wrangler.toml` →
-`npx wrangler rollback <version-id> -c images/wrangler.toml`. The version before types (Deploy 0.10.0) is
+`npx wrangler rollback <version-id> -c images/wrangler.toml`. The version before folders of their own (Deploy
+0.11.0) is `74d51437-8b5e-45b7-a184-e9626ab475e3` (`manifest.json` format 4: it shows nothing of a format-5
+catalogue; roll back before the intranet Worker, `../README.md` → *Rolling back*). The version before types (Deploy 0.10.0) is
 `8d01606e-e198-4153-a180-e51a070f9e05` (`manifest.json` format 3: it shows nothing of a format-4 catalogue;
 roll back before the intranet Worker). The version before one controller per release
 (Deploy 0.9.0) is `dc1efb7b-089c-4d09-98db-514aa0609766` (`manifest.json` format 2: it shows nothing of a format-3

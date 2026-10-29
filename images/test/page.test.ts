@@ -129,7 +129,7 @@ describe('format.js', () => {
   });
 
   const rel = (controller: CatalogueRelease['controller'], version: string, type = ''): CatalogueRelease => ({
-    controller, type, version, released: '2026-11-01', notes: '', files: [],
+    folder: `images/moduline-${controller.toLowerCase()}/${version}`, controller, type, version, released: '2026-11-01', notes: '', files: [],
   });
 
   test('every type is a system of its own: its newest release is the latest (and open), per controller and type', () => {
@@ -188,7 +188,7 @@ describe('format.js: signing in and the download page', () => {
   });
 
   test('findFile and the verify commands with the name filled in', () => {
-    const catalogue = { format: 4, updated: null, releases: [{ controller: 'L4', type: '', version: '1', released: '', notes: '',
+    const catalogue = { format: 5, updated: null, releases: [{ folder: 'images/moduline-l4/1', controller: 'L4', type: '', version: '1', released: '', notes: '',
       files: [{ name: 'a.img', path: 'images/moduline-l4/1/a.img', size: 1, sha256: '', role: 'rootfs', platform: 'any' }] }] };
     expect(format.findFile(catalogue, 'images/moduline-l4/1/a.img')?.file.name).toBe('a.img');
     expect(format.findFile(catalogue, 'images/moduline-l4/1/b.img')).toBeNull();

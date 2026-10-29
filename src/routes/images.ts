@@ -12,8 +12,8 @@ import {
 export const images = new Hono<AppEnv>();
 
 const body = (req: Request) => req.json().catch(() => null);
-const ref = (p: Record<string, string>) => releaseRef(p.product, p.version);
-const RELEASE = '/images/releases/:product/:version'; // product = the release's folder: controller + type
+const ref = (p: Record<string, string>) => releaseRef(p.product, p.id);
+const RELEASE = '/images/releases/:product/:id'; // the release's key = its folder images/<product>/<id>
 
 images.get('/images', async (c) => c.json(await imagesOverview(c.env)));
 

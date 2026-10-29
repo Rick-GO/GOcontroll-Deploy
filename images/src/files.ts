@@ -19,7 +19,7 @@
 // whole file, or a range from byte 0) and gets the bytes. Never a HEAD, a 304, or a range further
 // into the file, so a resumed or chunked download counts once.
 
-import { downloadLogKey, findPublishedFile, productOf, RELEASES_DIR, type Catalogue, type CatalogueFile, type CatalogueRelease, type DownloadMeta } from '../../src/images-format';
+import { downloadLogKey, findPublishedFile, RELEASES_DIR, type Catalogue, type CatalogueFile, type CatalogueRelease, type DownloadMeta } from '../../src/images-format';
 import type { Env } from './env';
 import { secure } from './headers';
 import { notFound, plainPage } from './respond';
@@ -146,15 +146,20 @@ export async function serveFile(request: Request, env: Env, ctx: ExecutionContex
   return new Response(object.body, { status: 200, headers });
 }
 
-/** One empty object per download; who and what in its custom metadata (DownloadMeta). */
+/**
+ * One empty object per download; who and what in its custom metadata (DownloadMeta). `product` and
+ * `version` are the two parts of the release's folder (its key, images/<product>/<id>), not its labels,
+ * so the counts of a release stay together when its type or version is edited.
+ */
 async function logDownload(env: Env, request: Request, email: string, release: CatalogueRelease, file: CatalogueFile): Promise<void> {
   const random = Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => b.toString(16).padStart(2, '0')).join('');
   const country = (request.cf as IncomingRequestCfProperties | undefined)?.country;
+  const [, product, id] = release.folder.split('/');
   const meta: DownloadMeta = {
     email,
     path: file.path,
-    product: productOf(release.controller, release.type),
-    version: release.version,
+    product,
+    version: id,
     country: typeof country === 'string' ? country : '',
   };
   try {

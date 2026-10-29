@@ -33,11 +33,11 @@ describe('GET /api/catalogue', () => {
     const body = await res.json<any>();
     expect(body.email).toBe('customer@example.com');
     expect(body.catalogue).toEqual(parseCatalogue(catalogueText(sampleCatalogue())));
-    expect(body.catalogue.format).toBe(4);
+    expect(body.catalogue.format).toBe(5);
     expect(body.catalogue.releases.map((r: any) => `${r.controller} ${r.version}`)).toEqual([
       'L4 2026.11.0', 'L4 2026.10.0', 'HMI1 2026.11.0',
     ]);
-    for (const r of body.catalogue.releases) expect(Object.keys(r).sort()).toEqual(['controller', 'files', 'notes', 'released', 'type', 'version']);
+    for (const r of body.catalogue.releases) expect(Object.keys(r).sort()).toEqual(['controller', 'files', 'folder', 'notes', 'released', 'type', 'version']);
     expect(body.catalogue.releases.map((r: any) => r.type)).toEqual(['', '', '1.07 - AV123']);
     expect(body.catalogue.releases[2].files[0]).toMatchObject({ path: PACKAGE, role: 'package' });
   });
@@ -58,9 +58,9 @@ describe('GET /api/catalogue', () => {
   });
 
   test('a newer format than this reader knows: nothing at all; a tool of format 1 has no files here', async () => {
-    await publishSample({ ...sampleCatalogue(), format: 5 });
+    await publishSample({ ...sampleCatalogue(), format: 6 });
     const newer = await (await signedIn('/api/catalogue')).json<any>();
-    expect(newer.catalogue).toMatchObject({ format: 5, releases: [] });
+    expect(newer.catalogue).toMatchObject({ format: 6, releases: [] });
     expect((await signedIn(`/files/${ROOTFS}`)).status).toBe(404);
 
     // Format 1 also had tool releases under tools/ (never published): such a file is never served.
@@ -84,7 +84,7 @@ describe('GET /api/catalogue', () => {
     ] }));
     const body = await (await signedIn('/api/catalogue')).json<any>();
     expect(body.catalogue.format).toBe(2);
-    expect(body.catalogue.releases).toEqual([{ controller: 'L4', type: '', version: '6.12.87', released: '2026-10-29', notes: '',
+    expect(body.catalogue.releases).toEqual([{ folder: 'images/moduline-l4/6.12.87', controller: 'L4', type: '', version: '6.12.87', released: '2026-10-29', notes: '',
       files: [{ name: 'moduline-l4-306-d_2026-10-29_6.12.87.zip', path, size: 3, sha256: 'b'.repeat(64), role: 'package', platform: 'any' }] }]);
     expect(await (await signedIn(`/files/${path}`)).text()).toBe('zip');
     expect((await downloadLog()).at(-1)?.customMetadata).toMatchObject({ path, product: 'moduline-l4', version: '6.12.87' });
@@ -101,7 +101,7 @@ describe('GET /api/catalogue', () => {
     for (const r of live) await env.IMAGES_BUCKET.put(r.files[0].path, 'zip');
     await env.IMAGES_BUCKET.put(CATALOGUE_KEY, JSON.stringify({ format: 3, updated: '2026-10-29T13:43:36.525Z', releases: live }, null, 2));
     const body = await (await signedIn('/api/catalogue')).json<any>();
-    expect(body.catalogue.releases).toEqual(live.map((r) => ({ ...r, type: '' })));
+    expect(body.catalogue.releases).toEqual(live.map((r) => ({ ...r, type: '', folder: r.files[0].path.split('/').slice(0, 3).join('/') })));
     for (const r of live) {
       expect((await signedIn(`/files/${r.files[0].path}`)).status, r.files[0].path).toBe(200);
       expect((await signedIn(`/download/${r.files[0].path}`)).status, r.files[0].path).toBe(200);
@@ -109,6 +109,27 @@ describe('GET /api/catalogue', () => {
     // A type the manifest does not keep as Deploy writes it (not trimmed): the release is left out, never guessed.
     await env.IMAGES_BUCKET.put(CATALOGUE_KEY, JSON.stringify({ format: 4, updated: null, releases: [{ ...live[0], type: ' 3.06 - D ' }] }));
     expect((await (await signedIn('/api/catalogue')).json<any>()).catalogue.releases).toEqual([]);
+  });
+
+  test('format 5: a release names its folder; labels can be anything, the files stay where the folder says', async () => {
+    const path = 'images/moduline-hmi1/AV101_6.12.87/moduline-hmi1-107-av101_2026-10-29_6.12.87.zip';
+    await env.IMAGES_BUCKET.put(path, 'zip');
+    const good = { folder: 'images/moduline-hmi1/AV101_6.12.87', controller: 'HMI1', type: '1.07 - AV101', version: '6.12.87', released: '2026-10-29', notes: '',
+      files: [{ name: 'moduline-hmi1-107-av101_2026-10-29_6.12.87.zip', path, size: 3, sha256: 'd'.repeat(64), role: 'package', platform: 'any' }] };
+    const broken = [
+      { ...good, folder: 'images/moduline-l4/AV101_6.12.87', version: 'x1' },        // the folder of another controller
+      { ...good, folder: 'downloads/2026/10', version: 'x2' },                        // not a release folder
+      { ...good, folder: 'images/moduline-hmi1/AV101_6.12.87/..', version: 'x3' },   // no tricks
+      { ...good, type: '1.07 - AV123' },                                              // the same folder twice: the second is left out
+    ];
+    await env.IMAGES_BUCKET.put(CATALOGUE_KEY, JSON.stringify({ format: 5, updated: null, releases: [good, ...broken] }));
+    const body = await (await signedIn('/api/catalogue')).json<any>();
+    expect(body.catalogue.releases).toEqual([good]);
+    expect(await (await signedIn(`/files/${path}`)).text()).toBe('zip');
+    // A file that is not in the release's folder is never served.
+    await env.IMAGES_BUCKET.put(CATALOGUE_KEY, JSON.stringify({ format: 5, updated: null, releases: [{ ...good, files: [{ ...good.files[0], path: ROOTFS }] }] }));
+    expect((await (await signedIn('/api/catalogue')).json<any>()).catalogue.releases[0].files).toEqual([]);
+    expect((await signedIn(`/files/${path}`)).status).toBe(404);
   });
 });
 
@@ -254,7 +275,7 @@ describe('the download log', () => {
     await signedIn(`/files/${PACKAGE}`);
     const pkg = (await downloadLog()).find((o) => o.customMetadata?.path === PACKAGE);
     expect(pkg?.customMetadata).toEqual({
-      email: 'customer@example.com', path: PACKAGE, product: 'moduline-hmi1-107-av123', version: '2026.11.0', country: '',
+      email: 'customer@example.com', path: PACKAGE, product: 'moduline-hmi1', version: '3f9c2a7b1e04', country: '',
     });
   });
 

@@ -8,7 +8,7 @@
 
 /**
  * @typedef {{ name: string, path: string, size: number, sha256: string, role: string, platform: string }} CatalogueFile
- * @typedef {{ controller: string, type: string, version: string, released: string, notes: string, files: CatalogueFile[] }} CatalogueRelease
+ * @typedef {{ folder: string, controller: string, type: string, version: string, released: string, notes: string, files: CatalogueFile[] }} CatalogueRelease
  * @typedef {{ format: number, updated: string | null, releases: CatalogueRelease[] }} Catalogue
  */
 

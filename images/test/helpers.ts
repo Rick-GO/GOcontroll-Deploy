@@ -103,27 +103,28 @@ export function askForLink(body: unknown, init: { origin?: string; contentType?:
 export const ROOTFS = 'images/moduline-l4/2026.11.0/rootfs.ext4.zst';
 export const ROOTFS_BYTES = '0123456789abcdefghij'; // 20 bytes
 export const OLD_ROOTFS = 'images/moduline-l4/2026.10.0/rootfs.ext4.zst';
-/** The complete image for UUU (role package) of another controller. */
-export const PACKAGE = 'images/moduline-hmi1-107-av123/2026.11.0/moduline-hmi1-107-av123-2026.11.0.zip';
+/** The complete image for UUU (role package) of another controller, in a folder of 0.11.0 (images/<product>/<id>). */
+export const PACKAGE_FOLDER = 'images/moduline-hmi1/3f9c2a7b1e04';
+export const PACKAGE = `${PACKAGE_FOLDER}/moduline-hmi1-107-av123-2026.11.0.zip`;
 /** In the bucket, but its release is a draft: not in manifest.json. */
 export const DRAFT = 'images/moduline-l4/2026.12.0/rootfs.ext4.zst';
 const SHA = 'a'.repeat(64);
 
 export function sampleCatalogue(): Catalogue {
   return {
-    format: 4,
+    format: 5,
     updated: '2026-10-28T09:00:00.000Z',
     releases: [
       {
-        controller: 'L4', type: '', version: '2026.11.0', released: '2026-11-01', notes: 'Kernel 6.12.\n<b>Not HTML</b>',
+        folder: 'images/moduline-l4/2026.11.0', controller: 'L4', type: '', version: '2026.11.0', released: '2026-11-01', notes: 'Kernel 6.12.\n<b>Not HTML</b>',
         files: [{ name: 'rootfs.ext4.zst', path: ROOTFS, size: 20, sha256: SHA, role: 'rootfs', platform: 'any' }],
       },
       {
-        controller: 'L4', type: '', version: '2026.10.0', released: '2026-10-01', notes: '',
+        folder: 'images/moduline-l4/2026.10.0', controller: 'L4', type: '', version: '2026.10.0', released: '2026-10-01', notes: '',
         files: [{ name: 'rootfs.ext4.zst', path: OLD_ROOTFS, size: 5, sha256: SHA, role: 'rootfs', platform: 'any' }],
       },
       {
-        controller: 'HMI1', type: '1.07 - AV123', version: '2026.11.0', released: '2026-09-15', notes: 'Everything UUU needs.',
+        folder: PACKAGE_FOLDER, controller: 'HMI1', type: '1.07 - AV123', version: '2026.11.0', released: '2026-09-15', notes: 'Everything UUU needs.',
         files: [{ name: 'moduline-hmi1-107-av123-2026.11.0.zip', path: PACKAGE, size: 3, sha256: SHA, role: 'package', platform: 'any' }],
       },
     ],

@@ -77,6 +77,17 @@
   `npx wrangler rollback 8d01606e-e198-4153-a180-e51a070f9e05 -c images/wrangler.toml`, dan
   `npx wrangler rollback b903561d-cc62-4181-8225-069824314a63` (0.9.1), na het verwijderen van releases met een type en van
   `manifest.json` (README → *Rolling back*).
+- **0.11.0 (2026-10-29, gecommit, nog niet gedeployd; wens gebruiker: "vaste opslagmap per release; type en versie worden
+  labels; geen bestanden verplaatsen")**: elke release heeft een eigen **sleutel** `<product>/<id>` = zijn **map**
+  `images/<sleutel>/`, vast bij het aanmaken (nieuw: `<product van de controller>/<12 hex>`; van vóór 0.11.0: de map die hij had,
+  bijv. `moduline-hmi1/AV101_6.12.87`). Routes `/api/images/releases/:product/:id`, STATE `images/releases/<sleutel>.json`, auditlog
+  `image-<product>` met versie `<id>`, downloadlog en tellingen per sleutel. *Edit…* wijzigt datum, notes, **type en versie**, ook
+  gepubliceerd (manifest mee, map en bestanden blijven); controller + type + versie uniek (409). `manifest.json` **format 5** (per
+  release `folder`). Niets verplaatst, geen migratie. Deploy: `npm run deploy`, dan `npm run deploy:images`. Terug: eerst
+  `npx wrangler rollback 74d51437-8b5e-45b7-a184-e9626ab475e3 -c images/wrangler.toml`, dan
+  `npx wrangler rollback 9bdee976-0e87-48cd-9ffb-7096c8d3096d` (0.10.0); daarvoor in 0.11.0 nieuwe releases verwijderen, labels van
+  oudere terugzetten naar hun map (type leeg, versie = laatste deel van de map) en `manifest.json` verwijderen (README → *Rolling
+  back*).
 
 ## Architectuur
 - **Worker met static assets** (geen Pages), zelfde opzet als GOcontroll-Logistic: `run_worker_first = true`,
@@ -174,27 +185,31 @@
 
 ## Images voor klanten (`src/images.ts`, tab Images, `images/`)
 - Formaat en bucketindeling: **`src/images-format.ts`** (geen imports; door beide Workers gebundeld). Contract
-  `GOcontroll-Architecture/cloudflare/images/spec.md` (≥ 4.0.0). Deploy is de **enige schrijver** van releases en
+  `GOcontroll-Architecture/cloudflare/images/spec.md` (≥ 5.0.0). Deploy is de **enige schrijver** van releases en
   `manifest.json`; `images.gocontroll.tech` (Worker `gocontroll-images`, `images/`) is de enige lezer en schrijft alleen
   `downloads/` en `access-mails/` (het uurplafond van 5 links per adres, sleutel = HMAC van het adres, lifecycle 1 dag).
 - **Alleen controller-images** (sinds 0.8.0, wens gebruiker): een release heeft geen soort, alles staat onder `images/`.
-- **Eén controller per release** (sinds 0.9.0, wens gebruiker), **met optioneel één type** (sinds 0.10.0): `controller` + `type`
-  zijn de enige bron; `product` (map, downloadlog, tellingen, STATE-key, API-sleutel) = `productOf(controller, type)`
-  (`moduline-l4`; met type `moduline-hmi1-107-av123`, `typeSlug`: kleine letters, punten weg, andere scheidingen een streepje) en
-  de naam voor klanten = `controllerTitle` op de kaart (*Moduline HMI1*), het type naast de versie, `releaseName` op de
-  downloadpagina (*Moduline HMI1 · 1.07 - AV123*); nergens opgeslagen in een release. Type = vrije tekst (`normaliseType`: max.
-  40 printbare ASCII-tekens, met een letter of cijfer); twee typen met dezelfde slug = 409 (`checkTypeFolder`). Elk type is een
-  eigen systeem: per controller + type de nieuwste open en *Latest* (`latestPerType`). Een record zonder type (0.9.x) heeft geen
+- **Eén controller per release** (sinds 0.9.0), **optioneel één type** (sinds 0.10.0), **eigen map** (sinds 0.11.0, wens
+  gebruiker): controller, type en versie zijn **labels**, samen uniek per controller (`checkLabels`, 409); type en versie te
+  wijzigen, de controller niet. De identiteit is de **sleutel** `<product>/<id>` (`ReleaseRef`) = de map `images/<sleutel>/`, vast
+  bij het aanmaken: nieuw `CONTROLLER_PRODUCTS[controller]/<12 hex>` (`newId`), van vóór 0.11.0 de map die het record had (de
+  STATE-key; manifest format 4 en ouder: `legacyFolder`). Nooit iets verplaatsen: bestand = `<map>/<naam>`. De naam voor klanten =
+  `controllerTitle` op de kaart (*Moduline HMI1*), het type naast de versie, `releaseName` op de downloadpagina (*Moduline HMI1 ·
+  1.07 - AV123*). Type = vrije tekst (`normaliseType`: max. 40 printbare ASCII-tekens, met een letter of cijfer); een type dat
+  een bestaand type van de controller anders gespeld is (zelfde `typeSlug`) = 409. Elk type is een eigen systeem: per controller +
+  type de nieuwste open en *Latest* (`latestPerType`). Een record zonder type (0.9.x) heeft geen
   type; een record van 0.8.0 (`product`, `title`, `controllers`) leest als de controller van zijn product (`asRelease`/`asUpload`)
   en wordt bij de volgende wijziging in de nieuwe vorm geschreven; geen datamigratie.
 - Bestandsrollen `FILE_ROLES`, waarvan **`package`** = *Complete image* (zip met alles
   wat UUU nodig heeft: de volledige image en een script voor alleen de kernel; `.zip` raadt de pagina als `package`). Een rol
   die het contract niet kent (bijv. `tool` van vóór 0.8.0) leest als `other`. Labels: bron `src/images-format.ts`, kopieën in
   `public/js/release-helpers.js` (`test/pages.test.ts`) en `images/public/format.js` (`images/test/page.test.ts`).
-- `manifest.json` is **format 4** (`CATALOGUE_FORMAT`). Een nieuwer format: de download-site toont niets (`parseCatalogue`)
-  en Deploy schrijft er nooit overheen (409); een ouder format wordt gelezen (format 3: geen type; format 2: de controller van
-  zijn `product`) en bij de volgende publicatie of terugtrekking format 4.
-- Release = concept in `STATE` `images/releases/<product>/<versie>.json` (product van controller + type; auditlog App ID `image-<product>`); bestanden staan al in de bucket, maar de
+- `manifest.json` is **format 5** (`CATALOGUE_FORMAT`; per release `folder`). Een nieuwer format: de download-site toont niets
+  (`parseCatalogue`) en Deploy schrijft er nooit overheen (409); een ouder format wordt gelezen (format 4 en ouder: map
+  `legacyFolder`; format 3: geen type; format 2: de controller van zijn `product`) en bij de volgende publicatie, wijziging van
+  een gepubliceerde release of terugtrekking format 5. Een map moet bij de controller horen en uniek zijn; een bestand moet erin
+  staan. Downloadlog: `product`/`version` = de twee delen van de map (de sleutel), niet de labels.
+- Release = concept in `STATE` `images/releases/<sleutel>.json` (auditlog App ID `image-<product>`, versie `<id>`, met de labels); bestanden staan al in de bucket, maar de
   download-Worker serveert alleen wat `manifest.json` noemt. Publiceren/terugtrekken = `manifest.json` etag-conditioneel
   herschrijven. In `manifest.json` nooit e-mailadressen of concepten (`catalogueEntry`). Alleen een concept verliest
   bestanden of wordt verwijderd (geen archief: images worden opnieuw gebouwd).

@@ -1,6 +1,6 @@
 {
   "name": "gocontroll-deploy-intranet",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "private": true,
   "type": "module",
   "description": "GOcontroll Deploy at deploy.gocontroll.tools: publish S1 firmware (signed in the browser), Linux applications, module firmware (firmware.gocontroll.tech) and images for customers (images.gocontroll.tech); signing key pairs",
