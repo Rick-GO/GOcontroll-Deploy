@@ -10,7 +10,9 @@
 //   2. The file published is the one git holds at HEAD, never the work tree's copy: a Windows
 //      checkout (core.autocrlf) has CRLF where git and the CI have LF, so its SHA-256 would differ.
 //      A file that is not committed, or differs from the commit, cannot be published: commit it
-//      first. HEAD not on origin (as of the last fetch) is said loudly. Loose files are converted
+//      first. Choosing the folder asks GitHub whether HEAD is the newest commit of its branch
+//      (src/github.ts checkGitHub): GitHub ahead (pull first), HEAD not pushed, or both, is said
+//      loudly; without GitHub, from origin/<branch> as of the last fetch. Loose files are converted
 //      to LF.
 //   3. Release date: the tag's RELEASE_DATE when tag v<version> exists (the safety net uses it),
 //      otherwise the date of the .srec file. Changelog: the tag's text, otherwise typed, with the
@@ -33,7 +35,7 @@ import { dirFromFiles, dirFromHandle, GitError, openRepo } from './git.js';
 import { act, copyButton, esc, hydrateIcons, saveBlob, toast, uniqueId } from './lib.js';
 import {
   annotationMatches, changelogFromTag, compareVersions, githubSlug, githubUrl, localDay, parseSrecName, previousTag, releaseDateFromTag,
-  safetyNetFindings, tagAnnotation, toLf,
+  safetyNetFindings, syncState, tagAnnotation, toLf,
 } from './release-helpers.js';
 import { parseSrec } from './source.js';
 import { badge, confirmDialog, formDialog, setHero, stale } from './ui.js';
@@ -56,10 +58,17 @@ import { badge, confirmDialog, formDialog, setHero, stale } from './ui.js';
  * @typedef {{ repo: string, head: Head | null, tags: Tag[], gitError: string | null,
  *   log: (opts: { from: string, exclude?: string, max?: number }) => Promise<Commit[]>,
  *   fileAt: ((commit: string, path: string) => Promise<Uint8Array | null>) | null,
- *   pushed: boolean | null, github: string | null, slug: string | null, findings: string[],
- *   githubCheck?: { readable: boolean, error: string | null } | null }} RepoInfo
- *   githubCheck: whether Deploy can tag and release in slug (GET /api/firmware/github)
- *   pushed: HEAD is on origin/<branch> (true), is not (false), or that cannot be told (null)
+ *   reaches: ((from: string, target: string) => Promise<boolean | null>) | null,
+ *   pushed: boolean | null, trackingNewer: boolean | null, github: string | null, slug: string | null, findings: string[],
+ *   githubCheck?: { readable: boolean, error: string | null, sync?: GitHubSync | null, syncError?: string | null } | null,
+ *   sync?: Sync | null }} RepoInfo
+ *   githubCheck: whether Deploy can tag and release in slug, and HEAD against its branch there (GET /api/firmware/github)
+ *   pushed: HEAD is on its branch (true), is not (false), or that cannot be told (null): from origin/<branch>
+ *     as of the last fetch, then from GitHub when Deploy could ask (sync)
+ *   trackingNewer: origin/<branch> (as of the last fetch) has commits HEAD does not have
+ *   sync: HEAD against the newest commit of its branch, said above the files
+ * @typedef {import('./release-helpers.js').GitHubSync} GitHubSync
+ * @typedef {import('./release-helpers.js').Sync} Sync
  * @typedef {{ released: string, changelog: string, replace: boolean, names: Record<string, string> }} GroupValues
  * @typedef {{ dryRun: boolean, hwId: string, version: string, file: string, url: string, sha256: string, date: string, changelog: string,
  *   moduleName: string, latest: string, latestBefore: string | null, objectWritten: boolean, replacedRelease: boolean,
@@ -240,7 +249,10 @@ async function fromDir(name, dir) {
   }
   if (!found.length) throw new Error(`${name} has no .srec files in a -BOOT folder. Choose the module's repository, or the .srec files themselves.`);
   /** @type {RepoInfo} */
-  const repo = { repo: name, head: null, tags: [], gitError: null, log: async () => [], fileAt: null, pushed: null, github: null, slug: null, findings: [] };
+  const repo = {
+    repo: name, head: null, tags: [], gitError: null, log: async () => [], fileAt: null, reaches: null,
+    pushed: null, trackingNewer: null, github: null, slug: null, findings: [],
+  };
   try {
     const r = await openRepo(dir);
     if (!r) {
@@ -250,12 +262,15 @@ async function fromDir(name, dir) {
       repo.tags = await r.tags();
       repo.log = (opts) => r.log(opts);
       repo.fileAt = (commit, path) => r.fileAt(commit, path);
+      repo.reaches = (from, target) => r.reaches(from, target);
       const remoteUrl = await r.remoteUrl();
       repo.github = githubUrl(remoteUrl);
       repo.slug = githubSlug(remoteUrl);
       if (r.head.branch) {
         const remote = await r.remoteBranch(r.head.branch).catch(() => null);
         repo.pushed = remote ? await r.reaches(remote, r.head.commit) : null;
+        const reached = remote ? await r.reaches(r.head.commit, remote).catch(() => null) : null;
+        repo.trackingNewer = reached === null ? null : !reached;
       }
     }
   } catch (err) {
@@ -325,8 +340,24 @@ async function drawCandidates(ctx, out, data, repo, found) {
     bad: badge('Cannot be used', 'err'),
   })[c.status];
   if (repo?.slug && data.github?.configured) {
-    repo.githubCheck = await api('GET', `/firmware/github?repo=${encodeURIComponent(repo.slug)}`)
-      .catch((err) => ({ readable: false, error: errorText(err) }));
+    // Every time a folder is chosen: can Deploy tag there, and is HEAD the newest commit on GitHub?
+    const q = new URLSearchParams({ repo: repo.slug });
+    if (repo.head) q.set('commit', repo.head.commit);
+    if (repo.head?.branch) q.set('branch', repo.head.branch);
+    repo.githubCheck = await api('GET', `/firmware/github?${q}`)
+      .catch((err) => ({ readable: false, error: errorText(err), syncError: errorText(err) }));
+  }
+  if (repo?.head) {
+    const github = repo.githubCheck?.sync ?? null;
+    const headReachesGithub = github?.state === 'not-on-github' && github.head && repo.reaches
+      ? await repo.reaches(repo.head.commit, github.head.sha).catch(() => null) : null;
+    repo.sync = syncState({
+      github, headReachesGithub, branch: repo.head.branch, pushed: repo.pushed, trackingNewer: repo.trackingNewer,
+      reason: !data.github?.configured ? 'GitHub is not set up (DEPLOY_GITHUB_TOKEN)'
+        : !repo.slug ? 'origin is not a GitHub repository'
+        : repo.githubCheck?.syncError ?? null,
+    });
+    repo.pushed = repo.sync.pushed;
   }
   const safety = /** @type {any} */ (repo)?.safetyNet;
   if (repo && safety) {
@@ -334,7 +365,8 @@ async function drawCandidates(ctx, out, data, repo, found) {
   }
 
   out.innerHTML = `
-    ${repo ? `<div class="notice${repo.gitError || repo.pushed === false ? ' warn' : ''}">${repoLine(repo)}</div>` : '<div class="notice warn">Files chosen without their repository: Deploy cannot check that they are the committed files (it converts CRLF to LF), and you write the changelog yourself.</div>'}
+    ${repo ? `<div class="notice${repo.gitError ? ' warn' : ''}">${repoLine(repo)}</div>` : '<div class="notice warn">Files chosen without their repository: Deploy cannot check that they are the committed files (it converts CRLF to LF), and you write the changelog yourself.</div>'}
+    ${repo?.sync ? syncNotice(repo.sync, /** @type {Head} */ (repo.head)) : ''}
     ${repo?.findings.length ? `<div class="notice warn"><strong>The safety net</strong> (this repository's publish-firmware.yml, which pushing the tag starts):
       <ul class="plain-list">${repo.findings.map((f) => `<li>${esc(f)}</li>`).join('')}</ul></div>` : ''}
     <div class="section-label">Files found</div>
@@ -479,14 +511,44 @@ function repoLine(repo) {
   if (repo.gitError) return `<strong>${esc(repo.repo)}</strong>: ${esc(repo.gitError)}`;
   const head = /** @type {Head} */ (repo.head);
   const versionTags = repo.tags.filter((t) => /^v\d+\.\d+\.\d+$/.test(t.name)).length;
-  const pushed = !head.branch ? ' · detached HEAD: check yourself that this commit is on origin.'
-    : repo.pushed === false ? ` · <strong>HEAD is not on origin/${esc(head.branch)}</strong> (as of the last fetch): push it before you publish, so the tag points to a commit everyone has.`
-    : repo.pushed === null ? ` · there is no origin/${esc(head.branch)} in this clone: check yourself that HEAD is pushed.`
-    : ` · pushed to origin/${esc(head.branch)}`;
   const github = !repo.githubCheck ? ''
     : repo.githubCheck.readable ? ` · GitHub: Deploy can tag and release in ${esc(repo.slug ?? '')}`
     : ` · <strong>GitHub</strong>: ${esc(repo.githubCheck.error ?? 'not reachable')}`;
-  return `<strong>${esc(repo.repo)}</strong> · ${head.branch ? `branch <span class="mono">${esc(head.branch)}</span>` : 'detached HEAD'} at <span class="mono">${esc(head.commit.slice(0, 7))}</span> · ${plural(versionTags, 'version tag')}${pushed}${github}`;
+  return `<strong>${esc(repo.repo)}</strong> · ${head.branch ? `branch <span class="mono">${esc(head.branch)}</span>` : 'detached HEAD'} at <span class="mono">${esc(head.commit.slice(0, 7))}</span> · ${plural(versionTags, 'version tag')}${github}`;
+}
+
+/**
+ * Whether HEAD is the newest commit of its branch: from GitHub, else from origin/<branch> as of the
+ * last fetch. Anything but up to date is a warning: publish from an old HEAD and the files, the
+ * suggested changelog and the tag all follow that old commit.
+ * @param {Sync} s @param {Head} head
+ */
+function syncNotice(s, head) {
+  const branch = esc(s.branch ?? '');
+  const where = s.source === 'github' ? `<span class="mono">${branch}</span> on GitHub` : `<span class="mono">origin/${branch}</span>`;
+  const asOf = s.source === 'fetch' ? ` (as of the last fetch: Deploy could not ask GitHub${s.reason ? `, ${esc(s.reason)}` : ''})` : '';
+  const commits = (/** @type {number | null} */ n) => (n === null ? 'commits' : plural(n, 'commit'));
+  const newest = s.head ? ` The newest is <span class="mono">${esc(s.head.sha.slice(0, 7))}</span> “${esc(s.head.subject)}”${s.head.date ? `, ${esc(fmtDateTime(s.head.date))}` : ''}.` : '';
+  const again = 'and choose the folder again: Deploy publishes the files as this clone holds them at HEAD, suggests the changelog from its history and tags that commit.';
+  const warn = (/** @type {string} */ html) => `<div class="notice warn">${html}</div>`;
+  switch (s.state) {
+    case 'up-to-date':
+      return s.source === 'github'
+        ? `<div class="notice ok">HEAD <span class="mono">${esc(head.commit.slice(0, 7))}</span> is the newest commit of ${where}.</div>`
+        : `<div class="notice">HEAD is the newest commit of ${where}${asOf}. Run <span class="mono">git pull</span> first to be sure.</div>`;
+    case 'github-newer':
+      return warn(`<strong>${where} has newer commits than HEAD</strong>${asOf}: ${commits(s.githubNewer)} after HEAD.${newest} Pull them first (<span class="mono">git pull</span>) ${again}`);
+    case 'local-newer':
+      return warn(`<strong>HEAD is not on ${where} yet</strong>${asOf}${s.localNewer ? `: ${plural(s.localNewer, 'commit')} of this clone ${s.localNewer === 1 ? 'is' : 'are'} not there` : ''}. Push before you publish, so the tag points to a commit everyone has.`);
+    case 'diverged':
+      return warn(`<strong>This clone and ${where} have both moved on</strong>${asOf}: ${where} has ${commits(s.githubNewer)} that HEAD does not have${s.localNewer ? `, and HEAD has ${plural(s.localNewer, 'commit')} that ${s.localNewer === 1 ? 'is' : 'are'} not there` : ', and HEAD has commits that are not there'}.${newest} Pull (merge or rebase) and push first, ${again}`);
+    case 'no-branch':
+      return warn(`<strong>Branch <span class="mono">${branch}</span> is not on GitHub</strong>: push it before you publish, so the tag points to a commit everyone has.`);
+    default:
+      return warn(s.source === 'github' ? `<strong>${esc(s.reason ?? 'HEAD could not be compared with GitHub')}</strong>: push and pull first, then choose the folder again.`
+        : !s.branch ? `<strong>Detached HEAD</strong>, and Deploy could not ask GitHub${s.reason ? ` (${esc(s.reason)})` : ''}: check yourself that this commit is pushed and that nothing newer is on GitHub.`
+        : `<strong>There is no <span class="mono">origin/${branch}</span> in this clone</strong>, and Deploy could not ask GitHub${s.reason ? ` (${esc(s.reason)})` : ''}: check yourself that HEAD is pushed and up to date.`);
+  }
 }
 
 /** The module's name on firmware.gocontroll.tech, or that of its type. @param {FwOverview} d @param {string} hwId */
@@ -526,7 +588,10 @@ function cannotRelease(data, repo, plans) {
   if (!data.github?.configured) return 'GitHub is not set up yet (the token DEPLOY_GITHUB_TOKEN); the commands follow after publishing.';
   if (!repo?.head || !repo.slug) return 'Deploy knows the GitHub repository and commit only when you choose the repository folder.';
   if (repo.githubCheck && !repo.githubCheck.readable) return `${repo.githubCheck.error ?? 'GitHub cannot be reached.'} The commands follow after publishing.`;
-  if (repo.pushed !== true) return `HEAD is not on origin${repo.head.branch ? `/${repo.head.branch}` : ''} (as far as this clone knows): push it first, then publish again or use the commands.`;
+  if (repo.pushed !== true) {
+    return repo.sync?.source === 'github' ? `HEAD is not on ${repo.sync.branch} on GitHub: push it first, then publish again or use the commands.`
+      : `HEAD is not on origin${repo.head.branch ? `/${repo.head.branch}` : ''} (as far as this clone knows): push it first, then publish again or use the commands.`;
+  }
   const older = plans.filter((p) => JSON.parse(p.moduleManifest).releases?.[0]?.sw_version !== p.version);
   if (older.length && /** @type {any} */ (repo).safetyNet?.workflow) {
     return `${older[0].version} is not the highest version of ${older.map((p) => p.hwId).join(', ')}: pushing its tag starts this repository's publish workflow, which would put it first, so controllers would flash the older firmware.`;
@@ -652,7 +717,9 @@ async function githubRelease(box, version, list, repo, replaceTag = false) {
 
 /** What the dry runs say will be written, and per version whether Deploy tags and releases it. @param {Map<string, PublishAnswer[]>} byVersion @param {FwOverview} data @param {RepoInfo | null} repo */
 function reviewBody(byVersion, data, repo) {
-  return `${repo?.pushed === false ? '<div class="notice warn">HEAD is not on origin yet: push it before the tag is set.</div>' : ''}
+  const behind = repo?.sync?.state === 'github-newer' || repo?.sync?.state === 'diverged';
+  return `${behind ? `<div class="notice warn">${esc(repo?.sync?.source === 'github' ? `${repo.sync.branch} on GitHub` : `origin/${repo?.sync?.branch}`)} has newer commits than the HEAD these files come from (${esc(repo?.head?.commit.slice(0, 7) ?? '')}): pull first, unless you mean to publish this older commit.</div>` : ''}
+    ${repo?.pushed === false ? '<div class="notice warn">HEAD is not on GitHub yet: push it before the tag is set.</div>' : ''}
     ${[...byVersion.entries()].map(([version, list]) => {
       const why = cannotRelease(data, repo, list);
       return `<div class="fw-group">

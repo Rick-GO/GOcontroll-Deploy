@@ -13,8 +13,11 @@ firmware.get('/firmware', async (c) => {
   return c.json({ ...overview, github: { configured: Boolean(token), repos: c.env.GITHUB_REPOS || '' } });
 });
 
-// Whether Deploy can tag and release in a repository (read only).
-firmware.get('/firmware/github', async (c) => c.json(await checkGitHub(c.env, c.req.query('repo') ?? '')));
+// Whether Deploy can tag and release in a repository, and how the chosen clone's HEAD stands against
+// its branch on GitHub (read only).
+firmware.get('/firmware/github', async (c) => c.json(await checkGitHub(c.env, c.req.query('repo') ?? '', {
+  branch: c.req.query('branch') ?? null, commit: c.req.query('commit') ?? null,
+})));
 
 // Tag v<version> and the GitHub release of a publish (src/github.ts).
 firmware.post('/firmware/releases', async (c) => c.json(await tagAndRelease(c.env, c.get('user'), await c.req.json().catch(() => null))));

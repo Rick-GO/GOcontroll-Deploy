@@ -99,6 +99,43 @@ export function githubSlug(url) {
 }
 
 /**
+ * @typedef {{ branch: string, head: { sha: string, date: string | null, subject: string } | null,
+ *   state: 'up-to-date' | 'github-newer' | 'local-newer' | 'diverged' | 'not-on-github' | 'no-branch',
+ *   githubNewer: number | null, localNewer: number | null }} GitHubSync  GitHub's answer (src/github.ts)
+ * @typedef {{ source: 'github' | 'fetch', branch: string | null, head: GitHubSync['head'],
+ *   state: 'up-to-date' | 'github-newer' | 'local-newer' | 'diverged' | 'no-branch' | 'unknown',
+ *   githubNewer: number | null, localNewer: number | null, pushed: boolean | null, reason: string | null }} Sync
+ *   source: GitHub itself, or the clone's origin/<branch> as of its last fetch (GitHub could not be asked: reason)
+ */
+
+/**
+ * Whether the chosen clone's HEAD is the newest commit of its branch. GitHub's answer when Deploy
+ * could ask; when GitHub does not know HEAD at all, the clone's own history decides: HEAD reaching
+ * GitHub's newest commit means only HEAD moved on, otherwise both did. Without GitHub, from
+ * origin/<branch> as of the last fetch (pushed: HEAD is on it; trackingNewer: it has commits HEAD
+ * lacks). `pushed` in the result is whether HEAD is on the branch, the best this knows.
+ * @param {{ github: GitHubSync | null, headReachesGithub: boolean | null, branch: string | null,
+ *   pushed: boolean | null, trackingNewer: boolean | null, reason: string | null }} x
+ * @returns {Sync}
+ */
+export function syncState({ github, headReachesGithub, branch, pushed, trackingNewer, reason }) {
+  if (github) {
+    const base = { source: /** @type {const} */ ('github'), branch: github.branch, head: github.head, githubNewer: github.githubNewer, localNewer: github.localNewer, reason: null };
+    if (github.state !== 'not-on-github') {
+      return { ...base, state: github.state, pushed: github.state === 'up-to-date' || github.state === 'github-newer' };
+    }
+    if (headReachesGithub === null) {
+      return { ...base, state: 'unknown', pushed: false, reason: `HEAD is not on GitHub, and whether ${github.branch} on GitHub has newer commits too could not be told` };
+    }
+    return { ...base, state: headReachesGithub ? 'local-newer' : 'diverged', githubNewer: headReachesGithub ? 0 : null, pushed: false };
+  }
+  const base = { source: /** @type {const} */ ('fetch'), branch, head: null, githubNewer: null, localNewer: null, pushed, reason };
+  if (!branch || pushed === null || (pushed && trackingNewer === null)) return { ...base, state: 'unknown' };
+  if (pushed) return { ...base, state: trackingNewer ? 'github-newer' : 'up-to-date' };
+  return { ...base, state: trackingNewer ? 'diverged' : 'local-newer' };
+}
+
+/**
  * What the safety net (the repository's own publish-firmware.yml, which a tag push starts) would do
  * differently, as the deployment agent checks it before a publish.
  * @param {{ workflow: string | null, script: string | null, scriptPath: string | null, names: string[] }} repo

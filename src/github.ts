@@ -20,6 +20,9 @@
 //   5. the release v<version> with the changelog as its notes and the .srec files (from the bucket)
 //      as assets; an existing release keeps its assets and gets the missing ones.
 // Every call is in the audit log (github-release).
+//
+// Read only, when a repository folder is chosen (checkGitHub): whether Deploy can tag there, and
+// whether the clone's HEAD is the newest commit of its branch on GitHub (GitHub ahead = pull first).
 
 import { z } from 'zod';
 import type { Env, User } from './env';
@@ -100,31 +103,84 @@ export interface GitHubCheck {
   readable: boolean;        // the token can read it (GET /repos/{repo}: 200)
   canPush: boolean | null;  // GitHub's permissions.push for the token's owner, when it says
   error: string | null;     // why not, for the colleague
+  sync: GitHubSync | null;  // HEAD of the chosen clone against its branch on GitHub, when a commit was given
+  syncError: string | null; // why that could not be told
+}
+
+/**
+ * HEAD of the colleague's clone against the newest commit of its branch on GitHub, so the page can say
+ * that GitHub is ahead (pull first) before anything is published from an old HEAD.
+ *   up-to-date    HEAD is the branch's newest commit
+ *   github-newer  the branch has commits HEAD does not have
+ *   local-newer   HEAD has commits the branch does not have (HEAD is on GitHub, e.g. on another branch)
+ *   diverged      both
+ *   not-on-github GitHub does not know HEAD: it has unpushed commits; whether the branch is also ahead
+ *                 the page tells from its own history (does HEAD reach `head`?)
+ *   no-branch     GitHub has no such branch
+ */
+export interface GitHubSync {
+  branch: string;           // HEAD's branch, or the default branch for a detached HEAD
+  head: { sha: string; date: string | null; subject: string } | null;  // the branch's newest commit; null for no-branch
+  state: 'up-to-date' | 'github-newer' | 'local-newer' | 'diverged' | 'not-on-github' | 'no-branch';
+  githubNewer: number | null;  // commits on the branch that HEAD does not have
+  localNewer: number | null;   // commits of HEAD that the branch does not have
 }
 
 /**
  * Whether Deploy can tag and release in a repository: the token is set, the repository is allowed
  * and the token can read it. Read only (one GET). Write access shows only at the first tag: GitHub
- * has no way to ask a fine-grained token what it may write.
+ * has no way to ask a fine-grained token what it may write. With the commit (and branch) of the
+ * chosen clone also how it stands against GitHub (two more GETs at most, `compareWithGitHub`).
  */
-export async function checkGitHub(env: Env, repo: string): Promise<GitHubCheck> {
-  const out: GitHubCheck = { configured: false, allowed: false, readable: false, canPush: null, error: null };
+export async function checkGitHub(env: Env, repo: string, local: { branch?: string | null; commit?: string | null } = {}): Promise<GitHubCheck> {
+  const out: GitHubCheck = { configured: false, allowed: false, readable: false, canPush: null, error: null, sync: null, syncError: null };
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new HttpError(400, 'The GitHub repository is owner/name.', 'repo');
+  if (local.commit && !/^[0-9a-f]{40}$/.test(local.commit)) throw new HttpError(400, 'The commit is a full commit id.', 'commit');
   const token = await githubToken(env);
   out.configured = Boolean(token);
   out.allowed = repoAllowed(repo, env.GITHUB_REPOS);
-  if (!token) return { ...out, error: 'GitHub is not set up (DEPLOY_GITHUB_TOKEN).' };
-  if (!out.allowed) return { ...out, error: `Deploy may not tag ${repo} (GITHUB_REPOS: ${env.GITHUB_REPOS || 'none'}).` };
+  const unsynced = (error: string) => ({ ...out, error, syncError: local.commit ? error : null });
+  if (!token) return unsynced('GitHub is not set up (DEPLOY_GITHUB_TOKEN).');
+  if (!out.allowed) return unsynced(`Deploy may not tag ${repo} (GITHUB_REPOS: ${env.GITHUB_REPOS || 'none'}).`);
+  const gh = new GitHub(token, repo);
+  let info: { permissions?: { push?: boolean }; default_branch?: string };
   try {
-    const res = await new GitHub(token, repo).call('GET', '');
-    if (res.status === 404) return { ...out, error: `The GitHub token cannot see ${repo}: add the repository to the token.` };
-    if (!res.ok) return { ...out, error: `GitHub answered ${res.status} for ${repo}.` };
-    const info = await res.json<{ permissions?: { push?: boolean } }>();
-    return { ...out, readable: true, canPush: typeof info.permissions?.push === 'boolean' ? info.permissions.push : null };
+    const res = await gh.call('GET', '');
+    if (res.status === 404) return unsynced(`The GitHub token cannot see ${repo}: add the repository to the token.`);
+    if (!res.ok) return unsynced(`GitHub answered ${res.status} for ${repo}.`);
+    info = await res.json();
   } catch (err) {
-    if (err instanceof HttpError) return { ...out, error: err.message };
+    if (err instanceof HttpError) return unsynced(err.message);
     throw err;
   }
+  const readable = { ...out, readable: true, canPush: typeof info.permissions?.push === 'boolean' ? info.permissions.push : null };
+  if (!local.commit) return readable;
+  const branch = local.branch || info.default_branch || '';
+  if (!/^(?!.*\.\.)(?!\/)(?!-)[A-Za-z0-9._\/-]{1,200}$/.test(branch)) {
+    return { ...readable, syncError: `Deploy cannot ask GitHub about a branch named "${branch.slice(0, 80)}".` };
+  }
+  try {
+    return { ...readable, sync: await compareWithGitHub(gh, branch, local.commit) };
+  } catch (err) {
+    if (err instanceof HttpError) return { ...readable, syncError: err.message };
+    throw err;
+  }
+}
+
+/** HEAD (`commit`) against the newest commit of `branch` on GitHub (see GitHubSync). Read only. */
+async function compareWithGitHub(gh: GitHub, branch: string, commit: string): Promise<GitHubSync> {
+  const found = await gh.json<{ commit: { sha: string; commit: { message?: string; committer?: { date?: string } } } }>(
+    'GET', `/branches/${branch.split('/').map(encodeURIComponent).join('/')}`);
+  if (!found) return { branch, head: null, state: 'no-branch', githubNewer: null, localNewer: null };
+  const head = { sha: found.commit.sha, date: found.commit.commit.committer?.date ?? null, subject: (found.commit.commit.message ?? '').split('\n')[0].slice(0, 200) };
+  if (head.sha === commit) return { branch, head, state: 'up-to-date', githubNewer: 0, localNewer: 0 };
+  // base...head: ahead_by = commits on the branch HEAD lacks, behind_by = commits of HEAD the branch lacks.
+  const res = await gh.call('GET', `/compare/${commit}...${head.sha}?per_page=1`);
+  if (res.status === 404 || res.status === 422) return { branch, head, state: 'not-on-github', githubNewer: null, localNewer: null };
+  if (!res.ok) throw new HttpError(502, `GitHub answered ${res.status} to the comparison with ${branch}.`);
+  const cmp = await res.json<{ status: string; ahead_by: number; behind_by: number }>();
+  const state = cmp.status === 'identical' ? 'up-to-date' : cmp.status === 'ahead' ? 'github-newer' : cmp.status === 'behind' ? 'local-newer' : 'diverged';
+  return { branch, head, state, githubNewer: cmp.ahead_by, localNewer: cmp.behind_by };
 }
 
 const Body = z.object({

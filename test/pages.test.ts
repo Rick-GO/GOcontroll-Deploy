@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   annotationMatches, changelogFromTag, compareVersions, githubSlug, githubUrl, guessPlatform, guessRole, normaliseChangelog, parseSrecName as pageParse,
-  previousTag, releaseDateFromTag, safetyNetFindings, tagAnnotation, toLf,
+  previousTag, releaseDateFromTag, safetyNetFindings, syncState, tagAnnotation, toLf,
 } from '../public/js/release-helpers.js';
 import { normaliseChangelog as workerNormalise, parseSrecName as workerParse } from '../src/firmware';
 
@@ -81,6 +81,33 @@ describe('firmware page', () => {
     expect(safetyNetFindings({ workflow: workflow.replace('secrets.CF_ACCOUNT_ID', 'secrets.CLOUDFLARE_ACCOUNT_ID'), script: fixed, scriptPath: 'x.py', names: [] }))
       .toEqual([expect.stringContaining('CF_ACCOUNT_ID')]);
     expect(safetyNetFindings({ workflow: null, script: null, scriptPath: null, names: [] })).toEqual([expect.stringContaining('no safety net')]);
+  });
+
+  it('says whether HEAD is the newest commit of its branch, from GitHub or else from the last fetch', () => {
+    const head = { sha: 'b'.repeat(40), date: null, subject: 'Faster sampling' };
+    const gh = (state: any, extra = {}) => ({ branch: 'main', head, state, githubNewer: null, localNewer: null, ...extra });
+    const local = { headReachesGithub: null, branch: 'main', pushed: null, trackingNewer: null, reason: null };
+    expect(syncState({ ...local, github: gh('up-to-date') })).toMatchObject({ source: 'github', state: 'up-to-date', pushed: true });
+    expect(syncState({ ...local, github: gh('github-newer', { githubNewer: 3 }) })).toMatchObject({ state: 'github-newer', githubNewer: 3, head, pushed: true });
+    expect(syncState({ ...local, github: gh('local-newer', { localNewer: 2 }) })).toMatchObject({ state: 'local-newer', pushed: false });
+    expect(syncState({ ...local, github: gh('diverged') })).toMatchObject({ state: 'diverged', pushed: false });
+    expect(syncState({ ...local, github: gh('no-branch') })).toMatchObject({ state: 'no-branch', pushed: false });
+    // GitHub's answer wins over a stale origin/main.
+    expect(syncState({ ...local, pushed: true, trackingNewer: false, github: gh('github-newer') }).state).toBe('github-newer');
+    // GitHub does not know HEAD: does HEAD's history hold GitHub's newest commit?
+    expect(syncState({ ...local, github: gh('not-on-github'), headReachesGithub: true })).toMatchObject({ state: 'local-newer', githubNewer: 0, pushed: false });
+    expect(syncState({ ...local, github: gh('not-on-github'), headReachesGithub: false })).toMatchObject({ state: 'diverged', pushed: false });
+    expect(syncState({ ...local, github: gh('not-on-github') })).toMatchObject({ state: 'unknown', pushed: false, reason: expect.stringContaining('not on GitHub') });
+
+    const fetched = (pushed: boolean | null, trackingNewer: boolean | null, branch: string | null = 'main') =>
+      syncState({ github: null, headReachesGithub: null, branch, pushed, trackingNewer, reason: 'GitHub is not set up' });
+    expect(fetched(true, false)).toMatchObject({ source: 'fetch', state: 'up-to-date', pushed: true, reason: 'GitHub is not set up' });
+    expect(fetched(true, true)).toMatchObject({ state: 'github-newer', pushed: true });
+    expect(fetched(false, false)).toMatchObject({ state: 'local-newer', pushed: false });
+    expect(fetched(false, true)).toMatchObject({ state: 'diverged', pushed: false });
+    expect(fetched(null, null).state).toBe('unknown');
+    expect(fetched(true, null).state).toBe('unknown');
+    expect(fetched(null, null, null).state).toBe('unknown');
   });
 });
 

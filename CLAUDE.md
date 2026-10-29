@@ -29,6 +29,11 @@
   secret in `IMAGES_TURNSTILE_SECRET` (gecontroleerd: siteverify accepteert hem; een fout secret geeft 503, niet 403); nog geen
   echte link gemaild en geopend. Terug: eerst `gocontroll-images` naar `9a2c1639`
   (`-c images/wrangler.toml`), dan deze Worker naar 0.5.1 (`e582f30e-2524-4ea3-9859-92736792a705`).
+- **0.6.1 (2026-10-29, wens gebruiker)**: bij elke keuze van een repo-map op de tab Firmware vraagt de pagina GitHub of
+  HEAD de nieuwste commit van zijn branch is (`GET /api/firmware/github` met `commit` en `branch`, `checkGitHub` →
+  `compareWithGitHub`, alleen lezen) en meldt het boven de bestanden: GitHub nieuwer (eerst pullen), HEAD niet gepusht, beide,
+  of branch niet op GitHub; zonder GitHub uit `origin/<branch>` van de laatste fetch. Waarschuwing, geen blokkade. Terug naar
+  0.6.0: `npx wrangler rollback 86d281d3-446d-4fd5-a2e0-ac7199b6a11e` (geen data of bindingen gewijzigd).
 
 ## Architectuur
 - **Worker met static assets** (geen Pages), zelfde opzet als GOcontroll-Logistic: `run_worker_first = true`,
@@ -89,7 +94,13 @@
   eerst); changelog genormaliseerd zoals de CI hem uit een tag leest (`normaliseChangelog`).
 - **Het bestand zoals git het heeft**: vanuit een repo stuurt de pagina de blob op HEAD (`git.js` `fileAt`), nooit de
   werkkopie (Windows + `core.autocrlf` = CRLF, andere SHA-256 dan de CI); niet gecommit of afwijkend van de commit = niet
-  te publiceren; HEAD niet op origin wordt gemeld. Losse bestanden: CRLF → LF. Worker weigert CR.
+  te publiceren. Losse bestanden: CRLF → LF. Worker weigert CR.
+- **Is HEAD de nieuwste commit?** Bij elke mapkeuze vergelijkt de Worker HEAD met de branch op GitHub (`compareWithGitHub`:
+  `branches/<branch>`, dan `compare/<HEAD>...<branch-head>`; `ahead` = GitHub nieuwer); detached HEAD = default branch.
+  Kent GitHub HEAD niet (404: ongepushte commits), dan beslist de pagina met zijn eigen historie (`reaches`) of GitHub óók
+  verder is. Zonder token of leesrecht: `origin/<branch>` van de laatste fetch, en dat staat erbij. `syncState`
+  (`public/js/release-helpers.js`) maakt er één toestand van; `pushed` volgt daarna GitHub, dus ook *Then set tag…* in de
+  review. Alleen waarschuwen, niet blokkeren (keuze 29-10).
 - Bestandsnaam = alles: `20-10-1-6-2-0-3.srec` → `20100106`, `2.0.3`, HW `1.06` (`parseSrecName`, in `src/` én
   `public/js/release-helpers.js`, `test/pages.test.ts` houdt ze gelijk). Naam van een nieuwe hardware-ID: andere HW-versie van
   hetzelfde type → `MODULE_TYPE_NAMES` → door de collega ingetypt. Nooit iets onder `brcm/`.

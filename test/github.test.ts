@@ -186,7 +186,7 @@ describe('tag and release', () => {
       return new Response(JSON.stringify(known ? { permissions: { push: true } } : { message: 'Not Found' }), { status: known ? 200 : 404 });
     });
     const ok = await call('GET', `/api/firmware/github?repo=${encodeURIComponent(REPO)}`, undefined, TOKEN);
-    expect(ok.body).toEqual({ configured: true, allowed: true, readable: true, canPush: true, error: null });
+    expect(ok.body).toEqual({ configured: true, allowed: true, readable: true, canPush: true, error: null, sync: null, syncError: null });
     const unseen = await call('GET', `/api/firmware/github?repo=${encodeURIComponent('GOcontroll/Module-Other')}`, undefined, TOKEN);
     expect(unseen.body).toMatchObject({ readable: false, error: expect.stringContaining('cannot see') });
     const outside = await call('GET', `/api/firmware/github?repo=${encodeURIComponent('GOcontroll/GOcontroll-Team')}`, undefined, TOKEN);
@@ -195,6 +195,57 @@ describe('tag and release', () => {
     expect(off.body).toMatchObject({ configured: false, readable: false });
     expect((await call('GET', '/api/firmware/github?repo=nope', undefined, TOKEN)).status).toBe(400);
     expect(seen).toEqual([`GET /repos/${REPO}`, 'GET /repos/GOcontroll/Module-Other']);
+  });
+
+  test('compares HEAD of the chosen clone with the newest commit of its branch on GitHub, read only', async () => {
+    const HEAD = 'a'.repeat(40);
+    const NEWER = 'b'.repeat(40);
+    let branchHead = NEWER;
+    let compare: { status: number; body: unknown } = { status: 200, body: {} };
+    const seen: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: RequestInit) => {
+      const req = new Request(input, init);
+      const path = new URL(req.url).pathname;
+      seen.push(`${req.method} ${path}`);
+      const json = (status: number, v: unknown) => new Response(JSON.stringify(v), { status, headers: { 'content-type': 'application/json' } });
+      if (path === `/repos/${REPO}`) return json(200, { permissions: { push: true }, default_branch: 'main' });
+      if (path === `/repos/${REPO}/branches/main`) {
+        return json(200, { commit: { sha: branchHead, commit: { message: 'Faster sampling\n\nThe details.', committer: { date: '2026-10-29T10:00:00Z' } } } });
+      }
+      if (path.startsWith(`/repos/${REPO}/branches/`)) return json(404, { message: 'Branch not found' });
+      if (path === `/repos/${REPO}/compare/${HEAD}...${branchHead}`) return json(compare.status, compare.body);
+      throw new Error(`unmocked ${req.method} ${path}`);
+    });
+    const check = async (query: string, env: Record<string, unknown> = TOKEN) =>
+      (await call('GET', `/api/firmware/github?repo=${encodeURIComponent(REPO)}&${query}`, undefined, env)).body;
+    const newest = { sha: NEWER, date: '2026-10-29T10:00:00Z', subject: 'Faster sampling' };
+
+    compare = { status: 200, body: { status: 'ahead', ahead_by: 3, behind_by: 0 } };
+    expect((await check(`branch=main&commit=${HEAD}`)).sync).toEqual({ branch: 'main', head: newest, state: 'github-newer', githubNewer: 3, localNewer: 0 });
+    compare = { status: 200, body: { status: 'behind', ahead_by: 0, behind_by: 2 } };
+    expect((await check(`branch=main&commit=${HEAD}`)).sync).toMatchObject({ state: 'local-newer', githubNewer: 0, localNewer: 2 });
+    compare = { status: 200, body: { status: 'diverged', ahead_by: 2, behind_by: 1 } };
+    expect((await check(`branch=main&commit=${HEAD}`)).sync).toMatchObject({ state: 'diverged', githubNewer: 2, localNewer: 1 });
+    // GitHub does not know HEAD (unpushed commits): the page decides with its own history.
+    compare = { status: 404, body: { message: 'Not Found' } };
+    expect((await check(`branch=main&commit=${HEAD}`)).sync).toMatchObject({ state: 'not-on-github', head: newest, githubNewer: null });
+    compare = { status: 500, body: {} };
+    expect(await check(`branch=main&commit=${HEAD}`)).toMatchObject({ readable: true, sync: null, syncError: expect.stringContaining('500') });
+
+    // Up to date: no comparison needed. A detached HEAD is compared with the default branch.
+    branchHead = HEAD;
+    seen.length = 0;
+    expect((await check(`branch=main&commit=${HEAD}`)).sync).toMatchObject({ state: 'up-to-date', githubNewer: 0, localNewer: 0 });
+    expect((await check(`commit=${HEAD}`)).sync).toMatchObject({ branch: 'main', state: 'up-to-date' });
+    expect(seen.some((s) => s.includes('/compare/'))).toBe(false);
+
+    expect((await check(`branch=feature/x&commit=${HEAD}`)).sync).toEqual({ branch: 'feature/x', head: null, state: 'no-branch', githubNewer: null, localNewer: null });
+    expect(seen).toContain(`GET /repos/${REPO}/branches/feature/x`);
+    expect(await check(`branch=${encodeURIComponent('../x')}&commit=${HEAD}`)).toMatchObject({ readable: true, sync: null, syncError: expect.stringContaining('branch') });
+    expect(seen.every((s) => s.startsWith('GET '))).toBe(true);
+
+    expect((await call('GET', `/api/firmware/github?repo=${encodeURIComponent(REPO)}&commit=main`, undefined, TOKEN)).status).toBe(400);
+    expect(await check(`branch=main&commit=${HEAD}`, { GITHUB_TOKEN: 'not-set' })).toMatchObject({ sync: null, syncError: expect.stringContaining('not set up') });
   });
 
   test('the overview says whether GitHub is set up', async () => {
