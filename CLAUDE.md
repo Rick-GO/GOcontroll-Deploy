@@ -67,12 +67,13 @@
   toont niet meer de public key zelf, alleen Yes/No/n/a (de key staat op de applicatiepagina). Geen binding of data gewijzigd.
   Terug naar 0.9.0: `npx wrangler rollback 5f6aa698-1fce-4102-96f5-b0026dcbaa78`; een verplaatst manifest blijft op zijn nieuwe host
   (eerst terugzetten met *Change…*, of `previous_manifest` uit de logregel `distribution`).
-- **0.10.0 (2026-10-29, gecommit, nog niet gedeployd; wens gebruiker)**: een **type** per release (vrije tekst, optioneel,
+- **0.10.0 (2026-10-29, versie `9bdee976-0e87-48cd-9ffb-7096c8d3096d`; `gocontroll-images` versie
+  `74d51437-8b5e-45b7-a184-e9626ab475e3`; wens gebruiker)**: een **type** per release (vrije tekst, optioneel,
   bijv. `1.07 - AV123`: hardwareversie × adapterboard van de HMI1). Elk type is een eigen systeem met een eigen *Latest*.
   Formulier: controller, releasedatum, type, versie, notes; het type hoort bij de identiteit en is niet via *Edit…* te wijzigen.
   Identiteit = controller + type + versie; map = `productOf(controller, type)` (`moduline-hmi1-107-av123`), ook de sleutel in
   de API (`/api/images/releases/:product/:version`); `manifest.json` **format 4**. Zelfde slug, andere tekst = 409. Releases
-  zonder type houden map en sleutel. Deploy: `npm run deploy`, dan `npm run deploy:images`. Terug: eerst
+  zonder type houden map en sleutel. Gedeployd met het manifest nog in format 3 (vier releases zonder type). Terug: eerst
   `npx wrangler rollback 8d01606e-e198-4153-a180-e51a070f9e05 -c images/wrangler.toml`, dan
   `npx wrangler rollback b903561d-cc62-4181-8225-069824314a63` (0.9.1), na het verwijderen van releases met een type en van
   `manifest.json` (README → *Rolling back*).

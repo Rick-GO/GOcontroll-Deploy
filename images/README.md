@@ -15,8 +15,8 @@ sign-in link).
 > until there are. Since Deploy 0.8.0 (2026-10-29, version `dc1efb7b-089c-4d09-98db-514aa0609766`) there are controller
 > images only: no tool releases, no `tools/`, `manifest.json` format 2, and the file role *Complete image* (`package`). Since
 > Deploy 0.9.0 (2026-10-29, version `8d01606e-e198-4153-a180-e51a070f9e05`) a release is one controller and a version (`manifest.json` format 3): the page names the controller
-> once, on its card (*Moduline L4*), and a release shows only its version and date. Deploy 0.10.0 (committed 2026-10-29, not
-> deployed yet): a release can have a type (e.g. *1.07 - AV123*), shown next to its version; every type is a system of its own
+> once, on its card (*Moduline L4*), and a release shows only its version and date. Since Deploy 0.10.0 (2026-10-29,
+> version `74d51437-8b5e-45b7-a184-e9626ab475e3`) a release can have a type (e.g. *1.07 - AV123*), shown next to its version; every type is a system of its own
 > with its own *Latest* (`manifest.json` format 4).
 
 ## How it works
