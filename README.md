@@ -20,7 +20,7 @@ Images tab shows how often each release is downloaded. For the members of the En
 **`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> The Worker, the API and the pages are deployed (0.7.0 on 2026-10-29: the tabs are **Applications**, **Firmware**, **Images** and
+> The Worker, the API and the pages are deployed (0.7.0 on 2026-10-29, version `d9953f95`: the tabs are **Applications**, **Firmware**, **Images** and
 > **Key generator** (were Status and Keys; old links still work); key pairs are made in the browser and Deploy keeps only the public key
 > per application; a signed S1 release is signed in the browser with the private key the colleague gives, and the Worker checks the
 > signature against the public key ([Signing keys](#signing-keys)); 0.6.1 on 2026-10-29, version `ebd51294`: choosing a module's repository folder on the Firmware tab
@@ -773,8 +773,9 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
   manifest) and the root manifest before every publish is in its `publish-linux` log entry
   (`previous_manifest`); put them back with `npx wrangler r2 object put`, the root manifest last
   (`application/gzip` for the package, `application/json` for the manifests).
-- **0.7.0** (tabs Applications, Firmware, Images, Key generator; key pairs in the browser, only the public key in Deploy;
-  signing in the browser, the signature checked here; 2026-10-29; no binding changed, no existing object changed):
+- **0.7.0** (version `d9953f95-a736-40d8-9f1b-51c0526ddc8a`; tabs Applications, Firmware, Images, Key generator; key pairs in
+  the browser, only the public key in Deploy; signing in the browser, the signature checked here; 2026-10-29; no binding
+  changed, no existing object changed):
   back to 0.6.1 with `npx wrangler rollback ebd51294-6086-4a8e-8587-a702b9a945b6`. Public keys attached with 0.7.0
   (`keys/<APP_ID>.json` with `source: "attached"`, no `sealed_private_key`) then show in 0.6.1, but 0.6.1 cannot sign with them
   (it answers 503 for that folder: the sealed key is missing); remove such a key (copy it to `keys-retired/` first) or roll

@@ -34,7 +34,7 @@
   `compareWithGitHub`, alleen lezen) en meldt het boven de bestanden: GitHub nieuwer (eerst pullen), HEAD niet gepusht, beide,
   of branch niet op GitHub; zonder GitHub uit `origin/<branch>` van de laatste fetch. Waarschuwing, geen blokkade. Terug naar
   0.6.0: `npx wrangler rollback 86d281d3-446d-4fd5-a2e0-ac7199b6a11e` (geen data of bindingen gewijzigd).
-- **0.7.0 (2026-10-29, wens gebruiker)**: tabs **Applications** (was Status), **Firmware**, **Images**, **Key generator** (was
+- **0.7.0 (2026-10-29, versie `d9953f95-a736-40d8-9f1b-51c0526ddc8a`, wens gebruiker)**: tabs **Applications** (was Status), **Firmware**, **Images**, **Key generator** (was
   Keys), in die volgorde (`public/js/routes.js`); oude hash-routes sturen door (`#/`, `#/status` → `#/applications`,
   `#/folders/<id>` → `#/applications/<id>`, `#/keys` → `#/key-generator`). **Deploy bewaart geen private key meer**: de Key
   generator maakt het paar in de browser, de medewerker bewaart de private key (1Password, `.cred`), Deploy alleen de public key
