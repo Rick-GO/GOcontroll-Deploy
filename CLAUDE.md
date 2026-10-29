@@ -42,7 +42,8 @@
   sluit ook met ×/Escape (eerst bevestigen zolang de private key niet gedownload of als bewaard aangevinkt is). Terug naar 0.6.1:
   `npx wrangler rollback ebd51294-6086-4a8e-8587-a702b9a945b6` (geen binding of bestaand object gewijzigd; 0.6.1 kan niet signen
   met een in 0.7.0 gekoppelde public key: 503 voor die map, zie README → *Rolling back*).
-- **0.8.0 (2026-10-29, wens gebruiker)**: alleen nog **controller-images** op images.gocontroll.tech. Het releasesoort `tool`
+- **0.8.0 (2026-10-29, versie `fbebca17-acaf-4803-bc48-5f68a395d1bc`; `gocontroll-images` versie
+  `dc1efb7b-089c-4d09-98db-514aa0609766`; wens gebruiker)**: alleen nog **controller-images** op images.gocontroll.tech. Het releasesoort `tool`
   is weg (geen `kind`, niets onder `tools/`, `manifest.json` format 2, STATE `images/releases/<product>/<versie>.json`, routes
   `/api/images/releases/:product/:version`), de bestandsrol `tool` ook; nieuw is de rol **`package`** (*Complete image*: een zip
   met alles wat UUU nodig heeft, de volledige image plus een script voor alleen de kernel). Contract images-spec 2.0.0. Die dag

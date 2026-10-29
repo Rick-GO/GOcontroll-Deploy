@@ -20,7 +20,7 @@ Images tab shows how often each release is downloaded. For the members of the En
 **`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> The Worker, the API and the pages are deployed (0.8.0 on 2026-10-29: images.gocontroll.tech has controller images only; the release kind
+> The Worker, the API and the pages are deployed (0.8.0 on 2026-10-29, version `fbebca17`, `gocontroll-images` version `dc1efb7b`: images.gocontroll.tech has controller images only; the release kind
 > *tool* is gone (no `kind`, nothing under `tools/`, `manifest.json` format 2) and a file can be a **Complete image** (role `package`: one
 > zip with everything UUU needs, the complete image and a script that installs only the kernel), [Images for customers](#images-for-customers-imagesgocontrolltech);
 > 0.7.0 on 2026-10-29, version `d9953f95`: the tabs are **Applications**, **Firmware**, **Images** and
@@ -781,7 +781,8 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
   manifest) and the root manifest before every publish is in its `publish-linux` log entry
   (`previous_manifest`); put them back with `npx wrangler r2 object put`, the root manifest last
   (`application/gzip` for the package, `application/json` for the manifests).
-- **0.8.0** (controller images only: no release kind *tool*, no `kind`, nothing under `tools/`, `manifest.json` format 2, file
+- **0.8.0** (version `fbebca17-acaf-4803-bc48-5f68a395d1bc`, `gocontroll-images` version `dc1efb7b-089c-4d09-98db-514aa0609766`;
+  controller images only: no release kind *tool*, no `kind`, nothing under `tools/`, `manifest.json` format 2, file
   role `package` *Complete image* instead of `tool`; STATE `images/releases/<product>/<version>.json`; 2026-10-29; no binding
   changed, no existing object changed: the bucket held no release, draft, upload or `manifest.json` that day): roll
   **images.gocontroll.tech back first** (`npx wrangler rollback 340e55ee-9f89-4059-9d7c-da0925762cf8 -c images/wrangler.toml`),

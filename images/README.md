@@ -12,8 +12,8 @@ sign-in link).
 > mail (no Cloudflare Access, no one-time PIN). The Turnstile widget *GOcontroll Downloads* exists (site key in
 > `TURNSTILE_SITE_KEY`, secret in `IMAGES_TURNSTILE_SECRET`, checked on 2026-10-28: siteverify accepts it). Not yet seen:
 > a real link mailed and opened. There are no images yet either; the page shows "No images have been published yet."
-> until there are. Since Deploy 0.8.0 (2026-10-29) there are controller images only: no tool releases, no `tools/`,
-> `manifest.json` format 2.
+> until there are. Since Deploy 0.8.0 (2026-10-29, version `dc1efb7b-089c-4d09-98db-514aa0609766`) there are controller
+> images only: no tool releases, no `tools/`, `manifest.json` format 2, and the file role *Complete image* (`package`).
 
 ## How it works
 
