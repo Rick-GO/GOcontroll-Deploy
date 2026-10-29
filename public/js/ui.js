@@ -11,7 +11,7 @@ import { $, esc, hydrateBars, hydrateIcons, wireDialog } from './lib.js';
  * @typedef {import('./api.js').FolderSummary} FolderSummary
  * @typedef {{ me: Me, view: HTMLElement, nav: number, flash?: string | null }} Ctx
  *   nav counts navigations: a page that loaded slowly checks it before drawing (stale()).
- *   flash: a notice (markup) for the next page to show once, such as "folder deleted" on Status.
+ *   flash: a notice (markup) for the next page to show once, such as "folder deleted" on Applications.
  */
 
 /**

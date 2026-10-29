@@ -11,7 +11,7 @@
  * @typedef {{ total: number, online: number, upToDate: number }} ControllerCounts
  * @typedef {'manual' | 'manifest' | 'controllers'} ControllerSource
  * @typedef {{ appId: string, kind: 's1' | 'linux' | 'unknown', latest: string | null, releases: number, bytes: number,
- *   lastUpload: string | null, distributionUrl: string | null, hasKey: boolean, customer: FolderCustomer | null,
+ *   lastUpload: string | null, distributionUrl: string | null, hasKey: boolean, publicKey: string | null, customer: FolderCustomer | null,
  *   controller?: string | null, controllerSource?: ControllerSource | null, controllers: ControllerCounts }} FolderSummary
  *   controller: S1, M1, L4, HMI1 (by hand) or a derived controller type such as M2
  * @typedef {{ configured: boolean, last7: number | null, last30: number | null, error?: string }} DownloadTotals
@@ -19,8 +19,10 @@
  *   totals: { folders: number, s1Folders: number, linuxFolders: number, releases: number, bytes: number, controllers: number },
  *   downloads: DownloadTotals, distributionUrls?: string[] }} Overview
  *   distributionUrls: the Worker's DISTRIBUTION_URLS, the first the default for a new application
- * @typedef {{ publicKey: string, source: 'generated' | 'imported', createdAt: string, createdBy: string }} KeyInfo
- * @typedef {{ privateKeyB64: string, privateKeyPem: string }} KeyBackup
+ * @typedef {{ publicKey: string, source: 'generated' | 'imported' | 'attached', createdAt: string, createdBy: string,
+ *   sealedPrivateKey: boolean }} KeyInfo
+ *   source generated/imported: made in Deploy before 0.7.0, which still holds its private key sealed (sealedPrivateKey);
+ *   attached: only the public key is in Deploy
  * @typedef {{ headerVersion: number, signed: boolean, appId: string, version: string | number[], compressedSize: number,
  *   uncompressedSize: number, sha256: string, publicKey: string | null }} ReleaseHeader
  * @typedef {{ version: string, url: string, releaseDate: string | null, description: string | null, objectKey: string,
@@ -42,9 +44,6 @@
  * @typedef {{ tarballKey: string, manifestKey: string, rootManifestKey: string, version: string, released: string,
  *   sha256: string, sizeBytes: number, previousLatest: string | null, latestVersion: string, replaced: boolean }} LinuxPublishResult
  * @typedef {{ customer: FolderCustomer | null, controller: string | null, controllerSource: ControllerSource | null }} FolderSettings
- * @typedef {{ appId: string, publicKey: string, source: 'generated' | 'imported', createdAt: string, createdBy: string, inBucket: boolean,
- *   customer: FolderCustomer | null, controller: string | null }} KeyListEntry
- * @typedef {{ keys: KeyListEntry[], withoutKey: { appId: string, customer: FolderCustomer | null, controller: string | null }[] }} KeyList
  * @typedef {{ done: boolean, deleted: number, remaining: number, archive: string }} DeleteStep
  * @typedef {{ binaryKey: string, binaryUrl: string, manifestKey: string, version: string, releaseDate: string,
  *   previousLatest: string | null, replaced: boolean, latestMovedBack: boolean, signed: boolean }} PublishResult

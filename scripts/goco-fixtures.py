@@ -8,8 +8,9 @@ Run through scripts/goco-fixtures.mjs (`npm run fixtures:goco`), never on its ow
 `make` builds, with the reference implementation (GOcontroll-Deployment-Tool/tools/goco.py and
 keys.py), a fixed test key in every format keys.py reads, a zlib payload, and per App ID an
 unsigned and a Python-signed container plus the header fields Python reads from them.
-`verify` reads containers signed by src/goco.ts and checks each with goco.parse_header and
-goco.verify_signature; it also reads the PEM backup src/keys.ts makes with keys.py.
+`verify` reads containers signed the way Deploy signs (src/goco.ts scope, public/js/signing.js
+signature) and checks each with goco.parse_header and goco.verify_signature; it also reads the key
+pair the Key generator makes (public/js/signing.js generateKeyPair) with keys.py.
 
 The test key is derived from a fixed text: it signs nothing but these fixtures.
 """
@@ -99,14 +100,20 @@ def main() -> int:
     if mode == "verify":
         with open(sys.argv[3], encoding="utf-8") as f:
             data = json.load(f)
-        out = {"cases": [], "pem_backup": None}
+        out = {"cases": [], "key_pair": None}
         for case in data["cases"]:
             container = base64.b64decode(case["ts_signed_b64"])
             header = goco.parse_header(container)
             goco.verify_signature(container, header)  # raises when the signature does not hold
             out["cases"].append({"app_id": case["app_id"], "verified": True, "header": header_fields(container)})
-        if data.get("pem_backup"):
-            out["pem_backup"] = keys.load_private_key(data["pem_backup"]) == base64.b64decode(data["pem_backup_scalar_b64"])
+        pair = data.get("key_pair")
+        if pair:
+            scalar = keys.load_private_key(pair["privatePem"])
+            out["key_pair"] = {
+                "pem": scalar == keys.load_private_key(pair["privateB64"]),
+                "public": keys.public_key_for(scalar).hex().upper() == pair["publicHex"]
+                and keys.parse_public_key(pair["publicHex"]).hex().upper() == pair["publicHex"],
+            }
         json.dump(out, sys.stdout, indent=2)
         return 0
 

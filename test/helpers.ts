@@ -1,7 +1,8 @@
 import { env } from 'cloudflare:test';
 import { expect } from 'vitest';
 import worker from '../src/index';
-import { buildHeader, concat } from '../src/goco';
+import { buildHeader, concat, readHeader } from '../src/goco';
+import { generateKeyPair, sha256Hex, signScope, signerFor, toBase64, fromBase64, type KeyPair } from '../public/js/signing.js';
 
 export const ME = 'jane.doe@gocontroll.com';
 
@@ -116,4 +117,32 @@ export function spyBucket(real: R2Bucket, before: (method: string, args: any[], 
       };
     },
   });
+}
+
+// ── Keys and signatures, the way the pages make them ────────────────────────
+
+/**
+ * A key pair made as the Key generator makes it, its public key attached to `id` (PUT), and a
+ * signer for it (public/js/signing.js): what a colleague holds after the Key generator.
+ */
+export async function attachNewKey(id: string): Promise<{ publicKey: string; pair: KeyPair; signer: CryptoKey }> {
+  const pair = await generateKeyPair();
+  const res = await call('PUT', `/api/folders/${encodeURIComponent(id)}/key`, { publicKey: pair.publicHex });
+  expect(res.status, JSON.stringify(res.body)).toBe(200);
+  return { publicKey: pair.publicHex, pair, signer: await signerFor(pair.privatePem, pair.publicHex, id) };
+}
+
+/**
+ * The signature the page sends for a payload or a container (release.js signHere): the scope from
+ * POST /api/sign/scope, signed with `signer` followed by the payload. Base64 of 64 bytes.
+ */
+export async function browserSignature(id: string, version: string, signer: CryptoKey, source: { payload: Uint8Array; rawSize: number } | { container: Uint8Array }): Promise<string> {
+  const body = 'container' in source
+    ? { appId: id, version, containerHeader: toBase64(source.container.subarray(0, Math.min(211, source.container.length))) }
+    : { appId: id, version, payload: { size: source.payload.length, rawSize: source.rawSize, sha256: await sha256Hex(source.payload) } };
+  const res = await call('POST', '/api/sign/scope', body);
+  expect(res.status, JSON.stringify(res.body)).toBe(200);
+  const payload = 'container' in source ? source.container.subarray(res.body.payloadOffset) : source.payload;
+  if ('container' in source) expect(res.body.payloadOffset).toBe(readHeader(source.container).headerSize);
+  return toBase64(await signScope(signer, fromBase64(res.body.scope), payload));
 }

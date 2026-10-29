@@ -1,25 +1,35 @@
 // @ts-check
-// New release, on the folder page of an S1 application, in three steps:
+// New release, on the page of an S1 application, in three steps:
 //   1 File     pick or drop the .bin / S-record / GOCO container; read and compressed in the
 //              browser (picker.js); the version from its name or container header, typed wins.
-//   2 Sign     the folder's public key with Copy; signing on and locked when there is a key.
-//              Without one: generate (or import) it right here, or tick "publish unsigned".
+//   2 Sign     the application's public key with Copy; signing on and locked when there is one,
+//              and the private key that belongs to it: pasted or from a file (.pem, the base64
+//              value, a .cred file), checked right here against the public key (signing.js). It
+//              stays in this browser. A container signed already needs none. Without a public key:
+//              generate a pair or attach a public key right here, or tick "publish unsigned".
 //   3 Publish  what changed (mandatory) next to what the manifest holds now; a version that is
 //              published already takes a deliberate yes (Replace…), one below latest is said out
 //              loud. Progress, then the binary URL. Or "Download signed file instead"
 //              (POST /api/sign) for a local upload with the Deployment Tool: nothing published.
-// The rules are the Deployment Tool's (README "Publishing a release", "Replacing a published
-// version takes a deliberate yes", "The version comes from the filename"). The Worker builds
-// and signs the container, writes the binary first and the manifest second, and checks again.
+// Signing: the Worker gives the bytes to sign (POST /api/sign/scope, the header scope of
+// src/goco.ts), this page signs them followed by the payload, and sends only the signature with
+// the upload; the Worker builds the container and checks the signature against the public key
+// before it writes the binary first and the manifest second. The rules are the Deployment Tool's
+// (README "Publishing a release", "Replacing a published version takes a deliberate yes", "The
+// version comes from the filename").
 
-import { ApiError, errorText, postForm } from './api.js';
+import { ApiError, api, errorText, postForm } from './api.js';
 import { fmtBytes, fmtDay } from './format.js';
-import { act, copyButton, esc, field, hydrateIcons, saveBlob } from './lib.js';
-import { fileSafe, generateKey, importKey } from './key.js';
+import { act, copyButton, esc, field, hydrateIcons, saveBlob, toast } from './lib.js';
+import { attachKey, checkIcon, fileSafe, generateFor } from './key.js';
 import { DEFAULT_DISTRIBUTION_URLS } from './newapp.js';
 import { appendFile, mountFilePicker, prefillVersion } from './picker.js';
+import { KeyError, KeyMismatchError, fromBase64, sha256Hex, signScope, signerFor, toBase64 } from './signing.js';
 import { compareVersions, parseVersion } from './source.js';
 import { badge, confirmDialog, flagField, runSteps } from './ui.js';
+
+/** The longest GOCO header (0x05): the first bytes of a container hold all of it. */
+const MAX_HEADER_SIZE = 211;
 
 /**
  * @typedef {import('./api.js').FolderDetail} FolderDetail
@@ -32,12 +42,30 @@ const stepHead = (n, title) => `<div class="flow-head"><span class="flow-num" ar
   <h3>${esc(title)}</h3><span class="flow-state" data-state></span></div>`;
 
 /**
+ * The signature for a picked file, made here: the Worker gives the scope (POST /api/sign/scope),
+ * this browser signs scope + payload with `signer`. Only the signature leaves the page.
+ * @param {string} appId @param {string} version @param {import('./picker.js').Picked} p @param {CryptoKey} signer
+ * @returns {Promise<string>}  base64 of the 64-byte signature
+ */
+async function signHere(appId, version, p, signer) {
+  const container = p.source.kind === 'container';
+  const payload = container ? null : /** @type {Uint8Array} */ (p.payload);
+  /** @type {{ scope: string, payloadOffset: number }} */
+  const res = await api('POST', '/sign/scope', container
+    ? { appId, version, containerHeader: toBase64(p.source.bytes.subarray(0, Math.min(MAX_HEADER_SIZE, p.source.bytes.length))) }
+    : { appId, version, payload: { size: payload?.length ?? 0, rawSize: p.source.rawSize, sha256: await sha256Hex(/** @type {Uint8Array} */ (payload)) } });
+  const signed = container ? p.source.bytes.subarray(res.payloadOffset) : /** @type {Uint8Array} */ (payload);
+  return toBase64(await signScope(signer, fromBase64(res.scope), signed));
+}
+
+/**
  * Fill the New release card.
  * @param {HTMLElement} el  the card (a .panel)
- * @param {{ detail: FolderDetail, published?: PublishResult | null,
+ * @param {{ detail: FolderDetail, published?: PublishResult | null, releaseKeys: string[],
  *   onKey: (key: KeyInfo) => unknown, onPublished: (res: PublishResult) => unknown }} opts
- *   published: the release this page just published, shown on top; onKey: a key was made here
- * @returns {{ setKey: (key: KeyInfo | null) => void }}  for a key made elsewhere on the page
+ *   published: the release this page just published, shown on top; onKey: a key was attached here;
+ *   releaseKeys: public keys in the headers of its signed releases that are not the application's
+ * @returns {{ setKey: (key: KeyInfo | null) => void }}  for a key attached elsewhere on the page
  */
 export function mountRelease(el, opts) {
   const d = opts.detail;
@@ -97,37 +125,89 @@ export function mountRelease(el, opts) {
   const errorBox = q('[data-error]');
   const goBtn = /** @type {HTMLButtonElement} */ (q('[data-go]'));
   const signBtn = /** @type {HTMLButtonElement} */ (q('[data-signonly]'));
-  const st = { unsigned: false, busy: false, auto: { auto: '' } };
+  /** @type {{ unsigned: boolean, busy: boolean, auto: { auto: string }, signer: CryptoKey | null, checking: number }} */
+  const st = { unsigned: false, busy: false, auto: { auto: '' }, signer: null, checking: 0 };
 
   const picker = mountFilePicker(q('[data-picker]'), (p) => {
     prefillVersion(versionIn, p, st.auto);
-    drawSign();
+    showContainerState();
     draw();
   });
 
   const versionOk = () => { try { parseVersion(versionIn.value.trim()); return true; } catch { return false; } };
   const fileDone = () => Boolean(picker.get()) && versionOk();
-  const signDone = () => fileDone() && (Boolean(key) || st.unsigned);
+  /** A container that is signed already goes as it is: the Worker checks that it is this key. */
+  const signedAlready = () => Boolean(picker.get()?.source.header?.signed);
+  const signDone = () => fileDone() && (key ? signedAlready() || Boolean(st.signer) : st.unsigned);
   /** The release standing at the version typed, if the manifest has it. */
   const standing = () => releases.find((r) => r.version === versionIn.value.trim()) ?? null;
 
-  /** Step 2, drawn again when the key or the file changes (not on every keystroke). */
+  /**
+   * Step 2, drawn again when the key changes (not when the file does: a private key typed stays).
+   * With a key: the public key, and the private key field, checked as it is given.
+   */
   const drawSign = () => {
-    const header = picker.get()?.source.header;
     const sign = q('[data-sign]');
+    st.signer = null;
+    st.checking++;
     if (key) {
-      sign.innerHTML = `<label class="check locked"><input type="checkbox" checked disabled> Signed with this folder's key</label>
+      const pub = key.publicKey;
+      sign.innerHTML = `<label class="check locked"><input type="checkbox" checked disabled> Signed with the key of ${esc(appId)}</label>
         <div class="key-box">
           <div class="key-head"><span class="section-label">Public key</span>${copyButton('release-pubkey', 'public key')}</div>
-          <code class="keytext" id="release-pubkey">${esc(key.publicKey)}</code>
+          <code class="keytext" id="release-pubkey">${esc(pub)}</code>
         </div>
-        <p class="hint">A controller provisioned with this public key accepts only images signed with it, so this folder takes signed releases only.${
-          header?.signed ? ' The container is signed already: the Worker checks that it was this key.' : ''}</p>`;
+        <p class="hint" data-signed-already hidden>The container is signed already: the Worker checks that it was this key. No private key is needed.</p>
+        <div data-pk-part>
+          ${field('Private key', (id) => `<textarea id="${id}" data-pk class="mono" rows="4" spellcheck="false" autocomplete="off" autocapitalize="off"
+            placeholder="-----BEGIN PRIVATE KEY----- …, the base64 value, or a whole .cred file"></textarea>`, '',
+            'The private key of this public key: the <span class="mono">.pem</span>, the base64 value (<span class="mono">FW_PRIVATE_KEY_B64</span>) or the application\'s .cred file.')}
+          ${field('Or take it from a file', (id) => `<input id="${id}" type="file" data-pkfile accept=".pem,.key,.txt,.cred,.json">`)}
+          <div class="key-check" data-pk-state aria-live="polite"></div>
+          <p class="hint">It stays in this browser: the page checks that it belongs to the public key above, signs here, and sends only the signature.
+            Deploy keeps no private key.</p>
+        </div>`;
+      const text = /** @type {HTMLTextAreaElement} */ (sign.querySelector('[data-pk]'));
+      const file = /** @type {HTMLInputElement} */ (sign.querySelector('[data-pkfile]'));
+      const state = /** @type {HTMLElement} */ (sign.querySelector('[data-pk-state]'));
+      const check = async () => {
+        const mine = ++st.checking;
+        st.signer = null;
+        draw();
+        const value = text.value.trim();
+        if (!value) { state.className = 'key-check'; state.innerHTML = ''; return; }
+        state.className = 'key-check';
+        state.innerHTML = '<span class="spinner dark"></span> Checking the key…';
+        try {
+          const signer = await signerFor(value, pub, appId);
+          if (mine !== st.checking) return;
+          st.signer = signer;
+          state.className = 'key-check ok';
+          state.innerHTML = `${checkIcon(true)} This private key belongs to the public key of ${esc(appId)}.`;
+        } catch (err) {
+          if (mine !== st.checking) return;
+          state.className = 'key-check err';
+          state.innerHTML = `${checkIcon(false)} ${esc(err instanceof KeyError || err instanceof KeyMismatchError ? err.message : errorText(err))}`;
+        }
+        draw();
+      };
+      /** @type {number | undefined} */
+      let timer;
+      text.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(check, 250); });
+      file.addEventListener('change', async () => {
+        const f = file.files?.[0];
+        file.value = '';
+        if (!f) return;
+        if (f.size > 64 * 1024) { toast('That file is too large to be a key file.', 'err'); return; }
+        text.value = (await f.text()).trim();
+        await check();
+      });
     } else {
-      sign.innerHTML = `<div class="notice warn">This folder has no signing key yet. Generate one now (its private key is shown once, for your backup), import the one this application is signed with, or publish unsigned.</div>
+      sign.innerHTML = `<div class="notice warn">This application has no public key yet. Generate a key pair now (you keep the private key; Deploy keeps the public key),
+          attach the public key this application is signed with already, or publish unsigned.</div>
         <div class="btn-row">
-          <button type="button" class="btn sm primary" data-gen data-icon="key">Generate key…</button>
-          <button type="button" class="btn sm" data-imp data-icon="arrow-up-tray">Import key…</button>
+          <button type="button" class="btn sm primary" data-gen data-icon="key">Generate key pair…</button>
+          <button type="button" class="btn sm" data-attach data-icon="arrow-up-tray">Attach a public key…</button>
         </div>
         <label class="check unsigned"><input type="checkbox" data-unsigned${st.unsigned ? ' checked' : ''}>
           Publish unsigned: a controller with signing switched on refuses this image</label>`;
@@ -141,10 +221,19 @@ export function mountRelease(el, opts) {
         drawSign();
         draw();
       };
-      sign.querySelector('[data-gen]')?.addEventListener('click', () => take(generateKey(appId)));
-      sign.querySelector('[data-imp]')?.addEventListener('click', () => take(importKey(appId)));
+      sign.querySelector('[data-gen]')?.addEventListener('click', () => take(generateFor(appId, null)));
+      sign.querySelector('[data-attach]')?.addEventListener('click', () => take(attachKey(appId, { current: null, releaseKeys: opts.releaseKeys, confirm: null })));
     }
     hydrateIcons(sign);
+    showContainerState();
+  };
+
+  /** A container signed already needs no private key: hide the field then. */
+  const showContainerState = () => {
+    const already = q('[data-sign]').querySelector('[data-signed-already]');
+    const part = q('[data-sign]').querySelector('[data-pk-part]');
+    if (already instanceof HTMLElement) already.hidden = !signedAlready();
+    if (part instanceof HTMLElement) part.hidden = signedAlready();
   };
 
   /** Steps unlocked in turn, the version hint, the plan and the buttons. */
@@ -189,7 +278,7 @@ export function mountRelease(el, opts) {
     signBtn.disabled = !key;
     q('[data-signonly-hint]').textContent = key
       ? `Or sign it without publishing: downloads ${appId}-${v || '<version>'}.bin, for a local upload with the Deployment Tool.`
-      : 'Downloading a signed file needs the folder\'s signing key (step 2).';
+      : 'Downloading a signed file needs the application\'s public key and its private key (step 2).';
   };
 
   versionIn.addEventListener('input', draw);
@@ -209,9 +298,17 @@ export function mountRelease(el, opts) {
   /** Hold every step still while a run is on its way. @param {boolean} busy */
   const hold = (busy) => { st.busy = busy; draw(); };
 
+  /** The signature to send, made here, or null for a container signed already. @param {import('./picker.js').Picked} p @param {string} v */
+  const signature = async (p, v) => {
+    if (signedAlready()) return null;
+    if (!st.signer) throw new ApiError(`Give the private key of ${appId} (step 2): the page signs with it here.`, 400);
+    return signHere(appId, v, p, st.signer);
+  };
+
   goBtn.addEventListener('click', () => act(goBtn, async () => {
     const { p, v } = ready();
     if (!key && !st.unsigned) throw new ApiError('Sign it, or tick "Publish unsigned" (step 2).', 400);
+    if (key && !signedAlready() && !st.signer) throw new ApiError(`Give the private key of ${appId} (step 2): the page signs with it here.`, 400);
     const description = descIn.value.trim();
     if (!description) { flagField(descIn); throw new ApiError('Describe what this release changes: the manifest carries it as the release note.', 400); }
     const s = standing();
@@ -229,12 +326,15 @@ export function mountRelease(el, opts) {
     form.append('appId', appId);
     form.append('version', v);
     form.append('description', description);
-    form.append('sign', key ? '1' : '0');
     form.append('replace', s ? '1' : '0');
     if (distSel) form.append('distributionUrl', distSel.value);
+    if (key) {
+      const sig = await signature(p, v);
+      if (sig) form.append('signature', sig);
+    }
     appendFile(form, p);
     q('[data-result]').hidden = true;
-    const run = runSteps(q('[data-progress]'), ['Uploading', key ? 'Signing, then writing the binary and the manifest' : 'Writing the binary, then the manifest']);
+    const run = runSteps(q('[data-progress]'), ['Uploading', key ? 'Checking the signature, then writing the binary and the manifest' : 'Writing the binary, then the manifest']);
     hold(true);
     /** @type {PublishResult} */
     let res;
@@ -251,14 +351,16 @@ export function mountRelease(el, opts) {
 
   signBtn.addEventListener('click', () => act(signBtn, async () => {
     const { p, v } = ready();
-    if (!key) throw new ApiError('Downloading a signed file needs the folder\'s signing key (step 2).', 400);
+    if (!key) throw new ApiError('Downloading a signed file needs the application\'s public key and its private key (step 2).', 400);
     const form = new FormData();
     form.append('appId', appId);
     form.append('version', v);
+    const sig = await signature(p, v);
+    if (sig) form.append('signature', sig);
     appendFile(form, p);
     const result = q('[data-result]');
     result.hidden = true;
-    const run = runSteps(q('[data-progress]'), ['Uploading', 'Signing']);
+    const run = runSteps(q('[data-progress]'), ['Uploading', 'Checking the signature']);
     hold(true);
     /** @type {{ blob: Blob, filename: string | null }} */
     let res;

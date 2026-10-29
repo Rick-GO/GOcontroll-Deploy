@@ -34,6 +34,14 @@
   `compareWithGitHub`, alleen lezen) en meldt het boven de bestanden: GitHub nieuwer (eerst pullen), HEAD niet gepusht, beide,
   of branch niet op GitHub; zonder GitHub uit `origin/<branch>` van de laatste fetch. Waarschuwing, geen blokkade. Terug naar
   0.6.0: `npx wrangler rollback 86d281d3-446d-4fd5-a2e0-ac7199b6a11e` (geen data of bindingen gewijzigd).
+- **0.7.0 (2026-10-29, wens gebruiker)**: tabs **Applications** (was Status), **Firmware**, **Images**, **Key generator** (was
+  Keys), in die volgorde (`public/js/routes.js`); oude hash-routes sturen door (`#/`, `#/status` → `#/applications`,
+  `#/folders/<id>` → `#/applications/<id>`, `#/keys` → `#/key-generator`). **Deploy bewaart geen private key meer**: de Key
+  generator maakt het paar in de browser, de medewerker bewaart de private key (1Password, `.cred`), Deploy alleen de public key
+  per applicatie; signen gebeurt in de browser, de Worker controleert de handtekening (zie *Sleutels*). Het venster met het paar
+  sluit ook met ×/Escape (eerst bevestigen zolang de private key niet gedownload of als bewaard aangevinkt is). Terug naar 0.6.1:
+  `npx wrangler rollback ebd51294-6086-4a8e-8587-a702b9a945b6` (geen binding of bestaand object gewijzigd; 0.6.1 kan niet signen
+  met een in 0.7.0 gekoppelde public key: 503 voor die map, zie README → *Rolling back*).
 
 ## Architectuur
 - **Worker met static assets** (geen Pages), zelfde opzet als GOcontroll-Logistic: `run_worker_first = true`,
@@ -67,15 +75,17 @@
 - Verandert het formaat daar: `src/goco.ts` volgt, en `npm run fixtures:goco` maakt `test/fixtures/goco/fixtures.json`
   opnieuw met Python (`python -I`, de Deployment Tool ernaast). Die fixtures zijn de kruiscontrole met Python
   (unsigned byte-gelijk, Python-signed verifieert hier, TS-signed is door Python geverifieerd); niet met de hand wijzigen.
-- `src/goco.ts` en `src/keys.ts` hebben **geen imports** en alleen erasable TypeScript: het fixture-script draait ze onder Node.
+- `src/goco.ts` en `src/keys.ts` hebben **geen imports** en alleen erasable TypeScript, `public/js/signing.js` geen imports en
+  geen DOM: het fixture-script draait ze onder Node (de kruiscontrole signt zoals de browser: scope uit `goco.ts`, handtekening uit
+  `signing.js`).
 - S1 publiceren: binary eerst, dan manifest (etag-conditioneel, 409 bij race); onbekende manifestvelden blijven;
   `?v=` = eerste 16 hex van de payload-SHA-256; een bestaande map houdt de host die zijn manifest noemt (nooit twee
-  hosts, §2.1); een Linux-map (`versions[]` of settings M1/L4/HMI1) = 422 (die neemt Linux-releases); map met sleutel =
-  alleen gesigneerd met die sleutel.
+  hosts, §2.1); een Linux-map (`versions[]` of settings M1/L4/HMI1) = 422 (die neemt Linux-releases); map met public key =
+  alleen gesigneerd met de private key daarvan: in de browser gesigneerd, door de Worker gecontroleerd (zie *Sleutels*).
 - **Alleen de beveiligde map-delete** (`DELETE /api/folders/:appId`, `src/delete.ts`) verwijdert objecten uit
   `gocontroll-deploy`, en altijd na archiveren naar `STATE` `deleted/<APP_ID>/<ts>/<key>` (grootte gecontroleerd).
   Manifest eerst en alleen, dan de rest; max. 200 per call, hervatbaar via `deleting/<APP_ID>.json`; vereist exacte
-  App ID, reden ≥ 10 tekens en bevestiging als er nog controllers op die App ID staan. **De sleutel blijft.**
+  App ID, reden ≥ 10 tekens en bevestiging als er nog controllers op die App ID staan. **De public key blijft.**
   Publiceren verwijdert nooit: een overschreven binary gaat eerst naar `replaced/…`, het manifest van vóór een
   publish staat in de logregel (`previous_manifest`). Terugzetten: README → *Deleting a folder* (manifest als laatste).
 
@@ -160,8 +170,8 @@
   dashboard (de wrangler-login heeft geen Turnstile-rechten); Access, one-time PIN en een WAF-regel zijn niet meer nodig.
 
 ## Applicaties
-- Een applicatie = map: objecten onder `<APP_ID>/`, een sleutel, of settings (`folders/<APP_ID>.json`). Elk van de
-  drie laat hem zien op Status en geeft hem een pagina.
+- Een applicatie = map: objecten onder `<APP_ID>/`, een public key, of settings (`folders/<APP_ID>.json`). Elk van de
+  drie laat hem zien op Applications en geeft hem een pagina (`#/applications/<APP_ID>`).
 - *New application* (`POST /api/folders`) maakt alleen settings (customer, controller, wie/wanneer); 409 als de App ID
   al bestaat. S1: met distributiehost (de eerste release neemt die). M1/L4/HMI1: Linux-App-ID
   (`^[a-z0-9][a-z0-9._-]*$`, max. 64, zoals `config.schema.json`), geen host; zo'n map is `kind: "linux"`.
@@ -184,21 +194,37 @@
   pakt **niet** uit (de per-file-SHA-256 komen van browser/CI; go-deploy controleert ze).
 - Bestaande versie zonder replace = 409; replace archiveert eerst naar `replaced/<APP_ID>/v<versie>/<ts>/`. Root-manifest
   etag-conditioneel. S1 en Linux mengen nooit (422 beide kanten op). **Geen handtekening** (go-deploy kent er geen);
-  de Keys-pagina blijft S1. Downloads van controllers lopen via de signed route van Moduline, niet via Deploy.
+  signen blijft S1 (een public key mag wel aan een Linux-applicatie hangen, als opslag voor provisioning; `/api/sign/scope`
+  weigert hem). Downloads van controllers lopen via de signed route van Moduline, niet via Deploy.
 - Max. 100 MB per package (Cloudflare-edge ~100 MB per request; de Worker houdt het package één keer in geheugen).
 
 ## Sleutels
-- Eén P-256-sleutel per App ID in `STATE` `keys/<APP_ID>.json`, privédeel verzegeld met AES-256-GCM onder
-  `DEPLOY_SIGNING_KEYS_KEY` (Secrets Store, binding `SIGNING_KEYS_KEY`), AAD `deploy-key:<APP_ID>`. Vervangen →
-  oude naar `keys-retired/`, nooit weg. De privésleutel verlaat de Worker alleen als back-up direct na *generate*.
-- KEK kwijt = alle sleutels kwijt. **KEK roteren alleen met een her-verzegelpad** (oud en nieuw lezen, nieuw schrijven,
-  bewijzen dat alles opent, dan pas de oude weg) — dat pad bestaat nog niet, dus niet roteren.
-- Een onleesbare store of een sleutel die niet opent = 503, nooit "geen sleutel" (dat zou vervanging uitlokken).
+- **Deploy bewaart geen private key** (sinds 0.7.0, wens gebruiker). De Key generator maakt een P-256-paar in de browser
+  (`public/js/signing.js`, WebCrypto) en toont het één keer; downloads = de bestanden van `s1_ble.py keygen --out`:
+  `<APP_ID>-signing-key.pem` (PKCS#8) en `.pub` (130 hex + newline); base64 = `FW_PRIVATE_KEY_B64`. Formaten van `keys.py`,
+  geen eigen formaat. Python leest het paar terug (`browser_key_pair_read_by_python` in de GOCO-fixtures).
+- **Public key per applicatie** in `STATE` `keys/<APP_ID>.json` (`source: "attached"`, verder niets), via
+  `PUT /api/folders/:appId/key` (punt op P-256 gecontroleerd; vervangen = App ID typen, oude naar `keys-retired/`, nooit weg).
+  Ook voor een Linux-applicatie (provisioning). `POST …/key` (generate/import) = 410, body ongelezen.
+- **Signen**: de pagina vraagt de private key (plakken of `.pem`/base64/`.cred`), controleert lokaal dat hij bij de public key
+  hoort (`signerFor`), vraagt de scope (`POST /api/sign/scope`, `goco.ts` `signedScope`) en signt scope + payload; alleen de
+  64-byte `signature` gaat mee met de upload. De Worker bouwt de scope opnieuw uit wat binnenkwam en weigert (422 `signature`)
+  tenzij hij verifieert tegen de public key, vóór er iets geschreven wordt. `src/goco.ts` blijft de enige producent van de
+  container. Een verzoek met `privateKey` = 400, ongelezen, niet opgeslagen, niet gelogd (tests in `test/sign.test.ts`).
+- **Sleutels van vóór 0.7.0** (in de Worker gegenereerd of geïmporteerd): privédeel verzegeld (AES-256-GCM onder
+  `DEPLOY_SIGNING_KEYS_KEY`, binding `SIGNING_KEYS_KEY`, AAD `deploy-key:<APP_ID>`). **Niet verwijderen, niet wijzigen**, binding
+  blijft; niets opent ze nog (`sealScalar`/`unsealScalar` in `src/keys.ts` beschrijven alleen het formaat). Hun public key telt als
+  de public key van de applicatie; signen vraagt ook daar de private key. Geen export toevoegen zonder besluit van de gebruiker
+  (eenmalig naar 1Password, of laten staan als terugval). Stand 29-10: één zo'n sleutel, `gocontroll-application` (gegenereerd
+  29-10 06:51 UTC door de gebruiker, nooit mee gesigneerd; de releases 0.0.1–0.0.6 van die map zijn met een **andere** sleutel
+  gesigneerd, `044887C66EF0…`, van vóór Deploy).
+- KEK roteren alleen met een her-verzegelpad (bestaat niet): dus niet roteren. Een onleesbare KEK is alleen nog zichtbaar in
+  `/api/health` (`signingKeys`).
 
 ## Opslag en databases
 - **Geen eigen D1** (bij het bouwen op 21-10 zat het account aan de Free-plan-D1-limiet; R2 volstaat voor deze data,
   dus het blijft zo): app-state is JSON in R2 **`gocontroll-deploy-state`**
-  (`STATE`, privé): `keys/`, `keys-retired/`, `folders/`, `log/`, `replaced/`, `deleted/`, `deleting/`, `downloads/`,
+  (`STATE`, privé): `keys/` (public keys; van vóór 0.7.0 ook verzegelde private keys), `keys-retired/`, `folders/`, `log/`, `replaced/`, `deleted/`, `deleting/`, `downloads/`,
   `firmware-log/`, `images/releases/`, `images/uploads/` (zie README → *Data*).
 - **`gocontroll-firmware`** (`FIRMWARE_BUCKET`, publiek via `firmware.gocontroll.tech`/`.com`) en **`gocontroll-images`**
   (`IMAGES_BUCKET`, privé; alleen via `images.gocontroll.tech`): lezen en schrijven, zie de secties hierboven.

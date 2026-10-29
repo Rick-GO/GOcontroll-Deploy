@@ -1,11 +1,50 @@
-// The pure helpers of the Firmware and Images pages (public/js/release-helpers.js).
+// The pure helpers of the pages: the tabs and hash routes (public/js/routes.js, public/index.html),
+// and those of the Firmware and Images pages (public/js/release-helpers.js).
 
 import { describe, expect, it } from 'vitest';
 import {
   annotationMatches, changelogFromTag, compareVersions, githubSlug, githubUrl, guessPlatform, guessRole, normaliseChangelog, parseSrecName as pageParse,
   previousTag, releaseDateFromTag, safetyNetFindings, syncState, tagAnnotation, toLf,
 } from '../public/js/release-helpers.js';
+import { TABS, applicationHref, redirectFor, tabOf } from '../public/js/routes.js';
 import { normaliseChangelog as workerNormalise, parseSrecName as workerParse } from '../src/firmware';
+import indexHtml from '../public/index.html?raw';
+
+describe('tabs and routes', () => {
+  it('has the tabs Applications, Firmware, Images, Key generator, in that order, on the page too', () => {
+    expect(TABS.map(([, label]) => label)).toEqual(['Applications', 'Firmware', 'Images', 'Key generator']);
+    const nav = /<nav class="app-tabs"[\s\S]*?<\/nav>/.exec(indexHtml)![0];
+    const links = [...nav.matchAll(/<a href="([^"]+)" data-tab="([^"]+)">([^<]+)<\/a>/g)].map((m) => [m[2], m[3], m[1]]);
+    expect(links).toEqual(TABS.map((t) => [...t]));
+    for (const [tab, , href] of TABS) expect(tabOf(href.slice(1))).toBe(tab);
+    expect(tabOf('/applications/GOCO')).toBe('applications');
+  });
+
+  it('sends the old links (bookmarks) to the new pages', () => {
+    const go = (hash: string) => {
+      const at = hash.indexOf('?');
+      return redirectFor(at < 0 ? hash : hash.slice(0, at), new URLSearchParams(at < 0 ? '' : hash.slice(at + 1)));
+    };
+    expect(go('')).toBe('#/applications');
+    expect(go('/')).toBe('#/applications');
+    expect(go('/?q=goco&show=nokey')).toBe('#/applications?q=goco&show=nokey');
+    expect(go('/status')).toBe('#/applications');
+    expect(go('/status?show=S1')).toBe('#/applications?show=S1');
+    expect(go('/keys')).toBe('#/key-generator');
+    expect(go('/folders/GOCO%2FX')).toBe('#/applications/GOCO%2FX');
+    expect(go('/publish?app=gocontroll-application')).toBe(applicationHref('gocontroll-application'));
+    expect(go('/sign')).toBe('#/applications');
+    for (const current of ['/applications', '/applications/GOCO', '/firmware', '/images', '/key-generator']) expect(go(current)).toBeNull();
+  });
+
+  it('the key pair window can be closed (x, Close, Escape) and asks first while the private key is not stored', () => {
+    const dialog = /<dialog class="modal" id="keypair-dialog"[\s\S]*?<\/dialog>/.exec(indexHtml)![0];
+    expect(dialog).toContain('id="keypair-x"');
+    expect(dialog).toContain('id="keypair-close"');
+    expect(dialog).toContain('id="keypair-leave"');
+    expect(indexHtml).not.toContain('backup-dialog');
+  });
+});
 
 /**
  * What publish-firmware.yml makes of a tag annotation (its "Read tag annotation" step): the

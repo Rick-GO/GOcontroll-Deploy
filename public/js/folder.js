@@ -1,13 +1,14 @@
 // @ts-check
-// One application folder (#/folders/<APP_ID>): its customer and controller type (both can be
-// set by hand), then by what goes into it:
+// One application (#/applications/<APP_ID>; a folder in the bucket): its customer and controller
+// type (both can be set by hand), then by what goes into it:
 //   S1             New release (release.js: signed GOCO binaries), the releases with what their
-//                  headers say, the signing key;
+//                  headers say;
 //   M1, L4, HMI1   the Package card (pkgcard.js), New release (linux-release.js: go-deploy
 //                  packages), the versions;
-// and for every folder the controllers per version, the downloads per day, files the manifest
-// does not name, and the danger zone (danger.js). Another controller type is read-only. An App
-// ID that does not exist gets a way to create it.
+// and for every application its public key (key.js: to copy or download for provisioning; for a
+// Linux application kept for provisioning only), the controllers per version, the downloads per
+// day, files the manifest does not name, and the danger zone (danger.js). Another controller type
+// is read-only. An App ID that does not exist gets a way to create it.
 
 import { ApiError, api, folderPath } from './api.js';
 import { fmtBytes, fmtCount, fmtDateTime, fmtDay, fmtDayShort, hostOf, plural, shortHash, versionText } from './format.js';
@@ -54,12 +55,14 @@ export async function renderFolder(ctx, appId, after = {}) {
   if (stale(ctx, nav)) return;
   const kind = flavour(d);
   const releases = [...(d.releases ?? [])].sort((a, b) => compareVersions(b.version, a.version));
+  const releaseKeys = otherReleaseKeys(d);
+  const keyOpts = { linux: kind !== 's1', releaseKeys };
   drawHero(d);
   const middle = kind === 's1'
-    ? `<section class="panel" id="release-panel"></section>${releasesPanel(d, releases)}${keyPanel(d.key)}`
+    ? `<section class="panel" id="release-panel"></section>${releasesPanel(d, releases)}${keyPanel(d.key, keyOpts)}`
     : kind === 'linux'
-      ? `<section class="panel" id="package-panel"></section><section class="panel" id="release-panel"></section>${linuxPanel(d)}`
-      : `${readOnlyNote(d)}${d.kind === 'linux' ? linuxPanel(d) : releases.length ? releasesPanel(d, releases) : ''}`;
+      ? `<section class="panel" id="package-panel"></section><section class="panel" id="release-panel"></section>${linuxPanel(d)}${keyPanel(d.key, keyOpts)}`
+      : `${readOnlyNote(d)}${d.kind === 'linux' ? linuxPanel(d) : releases.length ? releasesPanel(d, releases) : ''}${keyPanel(d.key, keyOpts)}`;
   ctx.view.innerHTML = `
     <section class="panel" id="folder-summary"></section>
     ${middle}
@@ -90,15 +93,16 @@ export async function renderFolder(ctx, appId, after = {}) {
 
   /** @type {{ setKey: (key: KeyInfo | null) => void } | null} */
   let release = null;
-  /** A key made in the key card or in step 2: both show it. @param {KeyInfo} key */
+  /** A key attached in the key card or in step 2: both show it. @param {KeyInfo} key */
   const keyChanged = (key) => {
     d = { ...d, key };
     const panel = ctx.view.querySelector('#key-panel');
     if (panel) {
-      panel.outerHTML = keyPanel(key);
+      const others = otherReleaseKeys(d);
+      panel.outerHTML = keyPanel(key, { linux: kind !== 's1', releaseKeys: others });
       const fresh = /** @type {HTMLElement} */ (ctx.view.querySelector('#key-panel'));
       hydrateIcons(fresh);
-      wireKeyPanel(fresh, d.appId, (k) => { keyChanged(k); release?.setKey(k); });
+      wireKeyPanel(fresh, d.appId, key, others, (k) => { keyChanged(k); release?.setKey(k); });
     }
   };
   const releaseEl = /** @type {HTMLElement | null} */ (ctx.view.querySelector('#release-panel'));
@@ -121,6 +125,7 @@ export async function renderFolder(ctx, appId, after = {}) {
     release = mountRelease(releaseEl, {
       detail: d,
       published: after.published ?? null,
+      releaseKeys,
       onKey: keyChanged,
       onPublished: async (res) => {
         await renderFolder(ctx, appId, { published: res });
@@ -129,15 +134,25 @@ export async function renderFolder(ctx, appId, after = {}) {
     });
   }
   const keyEl = /** @type {HTMLElement | null} */ (ctx.view.querySelector('#key-panel'));
-  if (keyEl) wireKeyPanel(keyEl, d.appId, (k) => { keyChanged(k); release?.setKey(k); });
+  if (keyEl) wireKeyPanel(keyEl, d.appId, d.key, releaseKeys, (k) => { keyChanged(k); release?.setKey(k); });
   ctx.view.querySelector('[data-delete]')?.addEventListener('click', () => deleteFolder(ctx, d));
+}
+
+/**
+ * The public keys in the headers of this application's signed releases that are not its own key
+ * (all of them, without one): controllers in the field may carry them. @param {FolderDetail} d
+ */
+function otherReleaseKeys(d) {
+  const own = d.key?.publicKey ?? null;
+  const keys = new Set((d.releases ?? []).map((r) => (r.header?.signed ? r.header.publicKey : null)).filter((k) => k && k !== own));
+  return /** @type {string[]} */ ([...keys]);
 }
 
 /** @param {FolderDetail} d */
 function drawHero(d) {
   const { controller, source } = controllerOf(d);
   setHero({
-    back: { href: '#/', label: 'Deployments' },
+    back: { href: '#/applications', label: 'Applications' },
     title: d.appId,
     mono: true,
     tags: `${controllerBadge(controller, source)}${d.latest ? `<span>Latest <strong class="mono">${esc(d.latest)}</strong></span>` : ''}${
@@ -181,9 +196,9 @@ function readOnlyNote(d) {
 
 /** An App ID that does not exist (no folder, key or settings). @param {Ctx} ctx @param {string} appId */
 function renderMissing(ctx, appId) {
-  setHero({ back: { href: '#/', label: 'Deployments' }, title: appId, mono: true, lede: 'There is no application with this App ID yet.' });
+  setHero({ back: { href: '#/applications', label: 'Applications' }, title: appId, mono: true, lede: 'There is no application with this App ID yet.' });
   ctx.view.innerHTML = `<section class="panel">
-      <p class="text">Nothing in the bucket, no signing key and no settings carry the App ID <span class="mono">${esc(appId)}</span>.</p>
+      <p class="text">Nothing in the bucket, no public key and no settings carry the App ID <span class="mono">${esc(appId)}</span>.</p>
       <div class="btn-row"><button type="button" class="btn sm primary" data-create data-icon="plus">Create it as a new application…</button></div>
     </section>`;
   hydrateIcons(ctx.view);

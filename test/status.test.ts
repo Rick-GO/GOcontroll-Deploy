@@ -2,11 +2,13 @@
 
 import { env } from 'cloudflare:test';
 import { describe, expect, test } from 'vitest';
-import { appId, call, controller, customer, ok, project, putManifest, unsignedContainer, upload, zlibPayload } from './helpers';
+import { appId, attachNewKey, browserSignature, call, controller, customer, ok, project, putManifest, unsignedContainer, upload, zlibPayload } from './helpers';
 
-async function publish(id: string, version: string, extra: Record<string, string> = {}) {
+/** Publish a release; with `signer`, signed in the browser's way (the key attached to `id`). */
+async function publish(id: string, version: string, extra: Record<string, string> = {}, signer?: CryptoKey) {
   const { payload, rawSize } = await zlibPayload(`${id} ${version} `.repeat(20));
-  const res = await upload('/api/releases', { appId: id, version, description: `Release ${version}`, payload, rawSize: String(rawSize), ...extra });
+  const signature: Record<string, string> = signer ? { signature: await browserSignature(id, version, signer, { payload, rawSize }) } : {};
+  const res = await upload('/api/releases', { appId: id, version, description: `Release ${version}`, payload, rawSize: String(rawSize), ...signature, ...extra });
   expect(res.status, JSON.stringify(res.body)).toBe(200);
   return res.body;
 }
@@ -21,7 +23,7 @@ describe('GET /api/overview', () => {
     await publish(s1, '1.1.0');
     await putManifest(linux, { app_id: linux, latest_version: '2.0.0', versions: [{ version: '2.0.0', released: '2026-05-05', description: 'Linux', tarball: 'v2.0.0/update.tar.gz', manifest: 'v2.0.0/manifest.json', size_bytes: 10, sha256: 'ab' }] });
     await env.DEPLOY_BUCKET.put(`${linux}/v2.0.0/update.tar.gz`, 'tarball!!!');
-    await ok('POST', `/api/folders/${keyOnly}/key`, { action: 'generate' });
+    const keyOnlyKey = await attachNewKey(keyOnly);
     await controller({ app_id: s1, app_version: '1.1.0', client_id: acme, online: 1 });
     await controller({ app_id: s1, app_version: '1.0.0', client_id: acme, online: 0 });
     await controller({ app_id: ` ${s1} `, app_version: '1.1.0', client_id: null, online: 1 });
@@ -37,7 +39,7 @@ describe('GET /api/overview', () => {
     expect(Date.parse(f.lastUpload)).toBeGreaterThan(Date.now() - 60_000);
 
     expect(body.folders.find((x: any) => x.appId === linux)).toMatchObject({ kind: 'linux', latest: '2.0.0', releases: 1, distributionUrl: null, hasKey: false });
-    expect(body.folders.find((x: any) => x.appId === keyOnly)).toMatchObject({ kind: 's1', controller: null, controllerSource: null, latest: null, releases: 0, bytes: 0, lastUpload: null, hasKey: true, inBucket: false });
+    expect(body.folders.find((x: any) => x.appId === keyOnly)).toMatchObject({ kind: 's1', controller: null, controllerSource: null, latest: null, releases: 0, bytes: 0, lastUpload: null, hasKey: true, publicKey: keyOnlyKey.publicKey, inBucket: false });
 
     expect(body.customers).toContainEqual({ id: acme, name: `Acme ${s1}`, folders: [s1] });
     const names = body.customers.map((c: any) => c.name);
@@ -93,9 +95,9 @@ describe('GET /api/overview', () => {
 describe('GET /api/folders/:appId', () => {
   test('releases with header (range read), digest and key checks; controllers per version; other objects', async () => {
     const id = appId('F');
-    const key = await ok('POST', `/api/folders/${id}/key`, { action: 'generate' });
-    await publish(id, '1.0.0', { sign: '1' });
-    await publish(id, '1.1.0', { sign: '1' });
+    const key = await attachNewKey(id);
+    await publish(id, '1.0.0', {}, key.signer);
+    await publish(id, '1.1.0', {}, key.signer);
     await env.DEPLOY_BUCKET.put(`${id}/notes.txt`, 'left over');
     await controller({ app_id: id, app_version: '1.1.0', online: 1, distribution_url: 'https://deploy.gocontroll.tech' });
     await controller({ app_id: id, app_version: '1.0.0', online: 0, distribution_url: 'https://deploy.gocontroll.tech' });
@@ -103,7 +105,7 @@ describe('GET /api/folders/:appId', () => {
     const body = await ok('GET', `/api/folders/${encodeURIComponent(id)}`);
     expect(body).toMatchObject({
       appId: id, kind: 's1', latest: '1.1.0', distributionUrl: 'https://deploy.gocontroll.tech', mixedHosts: false,
-      key: { publicKey: key.publicKey, source: 'generated', createdBy: 'jane.doe@gocontroll.com' },
+      key: { publicKey: key.publicKey, source: 'attached', createdBy: 'jane.doe@gocontroll.com', sealedPrivateKey: false },
       customer: null,
       controllers: { total: 2, online: 1, upToDate: 1, versions: [{ version: '1.1.0', count: 1 }, { version: '1.0.0', count: 1 }] },
       linuxVersions: [],
@@ -133,7 +135,7 @@ describe('GET /api/folders/:appId', () => {
         '0.8.0': { url: `https://elsewhere.example/${id}/x.bin`, release_date: '2025-11-01', description: 'Outside' },
       },
     });
-    await ok('POST', `/api/folders/${id}/key`, { action: 'generate' });
+    await attachNewKey(id);
     const body = await ok('GET', `/api/folders/${id}`);
     expect(body.mixedHosts).toBe(true);
     expect(body.distributionUrl).toBe('https://deploy.gocontroll.com');

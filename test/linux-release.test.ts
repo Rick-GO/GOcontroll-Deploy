@@ -169,7 +169,8 @@ describe('POST /api/linux-releases', () => {
     const id = await newLinuxApp(linuxId(), 'HMI1');
     const s1IntoLinux = await upload('/api/releases', { appId: id, version: '1.0.0', description: 'x', payload, rawSize: String(rawSize) });
     expect(s1IntoLinux.status).toBe(422);
-    expect((await call('POST', `/api/folders/${id}/key`, { action: 'generate' })).status).toBe(422);
+    // A public key may be kept for a Linux application (provisioning), but nothing Linux is signed.
+    expect((await call('POST', '/api/sign/scope', { appId: id, version: '1.0.0', payload: { size: 1, rawSize: 1, sha256: '00'.repeat(32) } })).status).toBe(422);
 
     // Nothing there yet: make it a Linux application first.
     const nothing = linuxId();
@@ -210,7 +211,7 @@ describe('Linux applications', () => {
       const res = await call('POST', '/api/folders', { appId: bad, customerId: null, controller: 'L4' });
       expect([res.status, res.body.field], bad).toEqual([400, 'appId']);
     }
-    expect((await ok('GET', '/api/keys')).withoutKey.map((w: any) => w.appId)).not.toContain(id);
+    expect((await ok('GET', '/api/overview')).folders.find((f: any) => f.appId === id)).toMatchObject({ kind: 'linux', publicKey: null });
   });
 
   test('the package definition: stored with defaults, validated, only for Linux applications', async () => {

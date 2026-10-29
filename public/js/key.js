@@ -1,224 +1,337 @@
 // @ts-check
-// The signing key of an application (one per App ID): the key card on its folder page with
-// the public key to copy into a controller's configuration, and the dialogs to generate,
-// import and replace one (also used by the New release flow and the Keys page). The private
-// key stays in the Worker, sealed; it leaves it once, right after Generate, in a window that
-// has to be acknowledged (showBackup). Replacing asks for the App ID typed out: controllers
-// carrying the old public key refuse every image signed with the new one.
+// The public key of an application (one per App ID), and key pairs made in this browser.
+//   keyPanel / wireKeyPanel  the Public key card on an application's page: the key to copy or download
+//                            (.pub) for provisioning a controller, Generate key pair…, Attach a public key…,
+//                            Replace…
+//   showKeyPair              the window with a new pair: the private key to store (download .pem, copy),
+//                            the public key, and Attach to <APP_ID> once the private key is stored
+//   generateFor / attachKey  a new pair for one application / a public key it has already (pasted, a .pub
+//                            file, or the key its signed releases carry)
+// Since 0.7.0 Deploy keeps only the public key: the private key is made here (signing.js), shown
+// once, and is the colleague's to keep (1Password, the application's .cred file). Replacing a public
+// key asks for the App ID typed out: controllers carrying the old one refuse every image signed with
+// the new one; the old one is archived, not deleted.
 
-import { ApiError, api, folderPath } from './api.js';
+import { ApiError, api, errorText, folderPath } from './api.js';
 import { fmtDateTime } from './format.js';
-import { $, copyButton, esc, field, hydrateIcons, saveBlob, toast } from './lib.js';
+import { $, copyButton, esc, field, hydrateIcons, icon, saveBlob, toast } from './lib.js';
+import { KeyError, generateKeyPair, keyPairFiles, readPublicKey } from './signing.js';
 import { badge, formDialog, formValues } from './ui.js';
 
 /**
  * @typedef {import('./api.js').KeyInfo} KeyInfo
- * @typedef {import('./api.js').KeyBackup} KeyBackup
+ * @typedef {import('./signing.js').KeyPair} KeyPair
  */
 
 /** A filename part for an App ID (which may hold characters Windows refuses in names). @param {string} s */
 export const fileSafe = (s) => s.replace(/[\\/:*?"<>|\s]/g, '_');
 
+/** "043A6B68B705…9C1D2E3F" @param {string} hex */
+export const shortKey = (hex) => (hex.length > 24 ? `${hex.slice(0, 12)}…${hex.slice(-8)}` : hex);
+
+/** The base name of a key pair's files: <APP_ID>-signing-key, or firmware-signing-key-<time> without one. @param {string | null} appId */
+export const keyFileBase = (appId) => (appId
+  ? `${fileSafe(appId)}-signing-key`
+  : `firmware-signing-key-${new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')}`);
+
+/** Where a public key came from, in words. @param {KeyInfo} key */
+const sourceText = (key) => ({
+  generated: 'Generated in Deploy before 0.7.0',
+  imported: 'Imported into Deploy before 0.7.0',
+  attached: 'Attached (the private key is not in Deploy)',
+})[key.source] ?? key.source;
+
+/** Save the public key as keys.py writes it (<base>.pub: the hex and a newline). @param {string} publicHex @param {string} appId */
+const savePublicKey = (publicHex, appId) => saveBlob(new Blob([`${publicHex}\n`], { type: 'text/plain' }), `${keyFileBase(appId)}.pub`);
+
 /**
- * The key card of a folder page. @param {KeyInfo | null} key
+ * The Public key card of an application's page.
+ * @param {KeyInfo | null} key
+ * @param {{ linux: boolean, releaseKeys: string[] }} opts
+ *   linux: a Linux application (not signed; the key is kept for provisioning);
+ *   releaseKeys: public keys in the headers of its signed releases that are not this key
  */
-export function keyPanel(key) {
-  const head = `<div class="panel-head"><h2>Signing key</h2><span class="spacer"></span>${key ? badge('Active', 'ok') : badge('None', 'warn')}</div>`;
+export function keyPanel(key, opts) {
+  const head = `<div class="panel-head"><h2>Public key</h2><span class="spacer"></span>${key ? badge('Attached', 'ok') : badge('None', opts.linux ? 'muted' : 'warn')}</div>`;
+  const others = opts.releaseKeys.length ? `<div class="notice err">The releases of this application are signed with ${opts.releaseKeys.length === 1 ? 'another key' : 'other keys'}:
+      ${opts.releaseKeys.map((k) => `<span class="mono" title="${esc(k)}">${esc(shortKey(k))}</span>`).join(', ')}. Controllers provisioned with ${opts.releaseKeys.length === 1 ? 'that key' : 'those keys'}
+      refuse firmware signed with ${key ? 'this one' : 'any other key'}. If that is the key of this application, attach it${key ? ' instead (Replace…)' : ''}.</div>` : '';
   if (!key) {
-    return `<section class="panel" id="key-panel">${head}
-      <div class="notice warn">This folder has no signing key: its releases go out unsigned, and a controller with signing switched on refuses them.</div>
-      <p class="text">Generate a new key pair here, or import the key this application is signed with already (the <span class="mono">private_key</span> of its .cred file, or the pipeline's <span class="mono">FW_PRIVATE_KEY_B64</span>). From then on, every release of this folder is signed.</p>
+    return `<section class="panel" id="key-panel">${head}${others}
+      ${opts.linux
+        ? '<p class="text">Linux packages are not signed (go-deploy checks their SHA-256). A public key can be kept here anyway, for provisioning the controllers of this App ID.</p>'
+        : `<div class="notice warn">This application has no public key: its releases go out unsigned, and a controller with signing switched on refuses them.</div>
+      <p class="text">Generate a key pair (made in your browser: you keep the private key, Deploy keeps the public key), or attach the public key of the pair
+        this application is signed with already (the <span class="mono">.pub</span> file, or the key its signed releases carry). From then on every release is signed,
+        with the private key you give when you publish.</p>`}
       <div class="btn-row">
-        <button type="button" class="btn sm primary" data-key="generate" data-icon="key">Generate key…</button>
-        <button type="button" class="btn sm" data-key="import" data-icon="arrow-up-tray">Import key…</button>
+        <button type="button" class="btn sm primary" data-key="generate" data-icon="key">Generate key pair…</button>
+        <button type="button" class="btn sm" data-key="attach" data-icon="arrow-up-tray">Attach a public key…</button>
       </div>
     </section>`;
   }
-  return `<section class="panel" id="key-panel">${head}
-    <p class="text">Every release of this folder is signed with this key. A controller provisioned with its public key (Deployment Tool → Configuration) accepts only images signed with it.</p>
+  return `<section class="panel" id="key-panel">${head}${others}
+    <p class="text">${opts.linux
+      ? 'Kept for provisioning: Linux packages are not signed.'
+      : 'Every release of this application is signed with the private key that belongs to this public key; New release asks for that private key and signs in your browser. A controller provisioned with this public key (Deployment Tool → Configuration) accepts only images signed with it.'}</p>
     <div class="key-box">
       <div class="key-head"><span class="section-label">Public key</span>${copyButton('pubkey', 'public key')}</div>
       <code class="keytext" id="pubkey">${esc(key.publicKey)}</code>
     </div>
+    ${key.sealedPrivateKey ? `<div class="notice warn">This key was made in Deploy before 0.7.0, and Deploy still holds its private key, sealed. Deploy no longer signs
+      with it: publishing a signed release asks for the private key you stored when the key was made.</div>` : ''}
     <dl class="facts">
-      <div><dt>Source</dt><dd>${key.source === 'generated' ? 'Generated in Deploy' : 'Imported'}</dd></div>
+      <div><dt>Source</dt><dd>${esc(sourceText(key))}</dd></div>
       <div><dt>Since</dt><dd>${esc(fmtDateTime(key.createdAt))}</dd></div>
       <div><dt>By</dt><dd>${esc(key.createdBy)}</dd></div>
     </dl>
     <div class="btn-row">
-      <button type="button" class="btn sm danger" data-key="replace" data-icon="arrow-path">Replace key…</button>
+      <button type="button" class="btn sm" data-key="download" data-icon="arrow-down-tray">Download .pub</button>
+      <button type="button" class="btn sm danger" data-key="replace" data-icon="arrow-path">Replace…</button>
     </div>
   </section>`;
 }
 
 /**
- * Wire the buttons of the key panel; onKey gets the new key once one is made, imported or replaced.
- * @param {HTMLElement} root @param {string} appId @param {(key: KeyInfo) => unknown} onKey
+ * Wire the buttons of the key card; onKey gets the key once one is attached or replaced.
+ * @param {HTMLElement} root @param {string} appId @param {KeyInfo | null} key @param {string[]} releaseKeys
+ * @param {(key: KeyInfo) => unknown} onKey
  */
-export function wireKeyPanel(root, appId, onKey) {
+export function wireKeyPanel(root, appId, key, releaseKeys, onKey) {
   root.querySelectorAll('[data-key]').forEach((btn) => btn.addEventListener('click', async () => {
     const what = btn.getAttribute('data-key');
-    const key = what === 'generate' ? await generateKey(appId) : what === 'import' ? await importKey(appId) : await replaceKey(appId);
-    if (key) await onKey(key);
+    if (what === 'download' && key) { savePublicKey(key.publicKey, appId); return; }
+    if (what === 'replace') {
+      const how = await replaceChoice(appId);
+      if (!how) return;
+      const made = how.generate ? await generateFor(appId, how.confirm) : await attachKey(appId, { current: key, releaseKeys, confirm: how.confirm });
+      if (made) await onKey(made);
+      return;
+    }
+    const made = what === 'generate' ? await generateFor(appId, null) : await attachKey(appId, { current: null, releaseKeys, confirm: null });
+    if (made) await onKey(made);
   }));
 }
 
-/** POST the key action. @param {string} appId @param {Record<string, unknown>} body @returns {Promise<KeyInfo & { backup?: KeyBackup }>} */
-const postKey = (appId, body) => api('POST', `${folderPath(appId)}/key`, body);
-
-/** The key as the rest of the page uses it, without the backup. @param {KeyInfo & { backup?: KeyBackup }} k @returns {KeyInfo} */
-const keyInfo = (k) => ({ publicKey: k.publicKey, source: k.source, createdAt: k.createdAt, createdBy: k.createdBy });
-
-/**
- * Generate a key for an application that has none; the backup window follows.
- * @param {string} appId @returns {Promise<KeyInfo | null>}  null when cancelled
- */
-export async function generateKey(appId) {
-  /** @type {{ made: (KeyInfo & { backup?: KeyBackup }) | null }} */
-  const out = { made: null };
-  const ok = await formDialog({
-    title: `Generate a signing key for ${appId}?`,
-    submitLabel: 'Generate key',
-    narrow: true,
-    body: `<p>A new ECDSA P-256 key pair is made in the Worker and kept there, encrypted. Its private key is shown <strong>once</strong>, right after: have the password manager ready.</p>
-      <p>Controllers check an image against the public key they were provisioned with, so provision this App ID's controllers with the new public key.</p>`,
-    submit: async () => { out.made = await postKey(appId, { action: 'generate' }); },
-  });
-  if (!ok || !out.made) return null;
-  if (out.made.backup) await showBackup(appId, out.made.backup);
-  toast('Signing key made.');
-  return keyInfo(out.made);
-}
-
-/** The fields to paste or pick a private key. */
-const importFields = () => `
-  ${field('Private key', (id) => `<textarea id="${id}" name="privateKey" class="mono" rows="6" spellcheck="false" autocomplete="off"
-    placeholder="-----BEGIN PRIVATE KEY----- …, the base64 scalar, or a whole .cred file"></textarea>`, '',
-    'PEM (PKCS#8 or SEC1), the base64 32-byte scalar, or the JSON of a .cred file with <span class="mono">private_key</span>.')}
-  ${field('Or take it from a file', (id) => `<input id="${id}" type="file" data-keyfile accept=".pem,.key,.txt,.cred,.json">`)}`;
-
-/** Read a picked key file into the textarea. @param {HTMLFormElement} form */
-function wireKeyFile(form) {
-  const file = /** @type {HTMLInputElement | null} */ (form.querySelector('[data-keyfile]'));
-  const text = /** @type {HTMLTextAreaElement | null} */ (form.querySelector('[name=privateKey]'));
-  file?.addEventListener('change', async () => {
-    const f = file.files?.[0];
-    if (!f || !text) return;
-    if (f.size > 64 * 1024) { toast('That file is too large to be a key file.', 'err'); file.value = ''; return; }
-    text.value = (await f.text()).trim();
-  });
-}
-
-/** @param {HTMLFormElement} form */
-function privateKeyOf(form) {
-  const key = String(formValues(form).privateKey ?? '').trim();
-  if (!key) throw new ApiError('Paste the private key, or choose the file that holds it.', 400, 'privateKey');
-  return key;
-}
+/** PUT the public key. @param {string} appId @param {string} publicKey @param {string | null} confirm  the App ID typed, to replace */
+const putKey = (appId, publicKey, confirm) => /** @type {Promise<KeyInfo>} */ (api('PUT', `${folderPath(appId)}/key`, {
+  publicKey, ...(confirm ? { replace: true, confirm } : {}),
+}));
 
 /**
- * Import the key an application is signed with already.
- * @param {string} appId @returns {Promise<KeyInfo | null>}  null when cancelled
+ * Before replacing: the warning, the App ID typed out, and how the new key comes (a new pair, or a
+ * public key there is already). @param {string} appId
+ * @returns {Promise<{ generate: boolean, confirm: string } | null>}
  */
-export async function importKey(appId) {
-  /** @type {{ made: (KeyInfo & { backup?: KeyBackup }) | null }} */
-  const out = { made: null };
+async function replaceChoice(appId) {
+  /** @type {{ v: { generate: boolean, confirm: string } | null }} */
+  const out = { v: null };
   const ok = await formDialog({
-    title: `Import a signing key for ${appId}`,
-    submitLabel: 'Import key',
-    body: `<p>The key goes to the Worker, which keeps it encrypted and only signs with it; it is never shown again. Keep your own copy where it is now.</p>${importFields()}`,
-    onOpen: wireKeyFile,
-    submit: async (form) => { out.made = await postKey(appId, { action: 'import', privateKey: privateKeyOf(form) }); },
-  });
-  if (!ok || !out.made) return null;
-  toast('Signing key imported.');
-  return keyInfo(out.made);
-}
-
-/**
- * Replace an application's key, with the App ID typed out to confirm.
- * @param {string} appId @returns {Promise<KeyInfo | null>}  null when cancelled
- */
-async function replaceKey(appId) {
-  /** @type {{ made: (KeyInfo & { backup?: KeyBackup }) | null }} */
-  const out = { made: null };
-  const ok = await formDialog({
-    title: `Replace the signing key of ${appId}?`,
-    submitLabel: 'Replace key',
+    title: `Replace the public key of ${appId}?`,
+    submitLabel: 'Next',
     danger: true,
-    body: `<div class="notice err">Controllers that carry the current public key refuse every image signed with the new key, until they are provisioned with the new public key. Replace it only when the old key is lost or leaked, or when no controller carries it yet.</div>
+    body: `<div class="notice err">Controllers that carry the current public key refuse every image signed with the new key, until they are provisioned with the new public key. Replace it only when its private key is lost or leaked, when it is the wrong key, or when no controller carries it yet.</div>
       <p>The current key is archived, not deleted. Releases already published stay signed with it.</p>
       <fieldset><legend>The new key</legend><div class="checks">
         <label class="check"><input type="radio" name="how" value="generate" checked> Generate a new key pair</label>
-        <label class="check"><input type="radio" name="how" value="import"> Import a private key</label>
+        <label class="check"><input type="radio" name="how" value="attach"> Attach a public key there is already</label>
       </div></fieldset>
-      <div class="dialog-body" data-import hidden>${importFields()}</div>
       ${field('Type the App ID to confirm', (id) => `<input id="${id}" name="confirm" class="mono" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="${esc(appId)}">`)}`,
-    onOpen: (form) => {
-      wireKeyFile(form);
-      const part = /** @type {HTMLElement} */ (form.querySelector('[data-import]'));
-      form.querySelectorAll('[name=how]').forEach((r) => r.addEventListener('change', () => { part.hidden = formValues(form).how !== 'import'; }));
-    },
     valid: (form) => String(formValues(form).confirm ?? '').trim() === appId,
     submit: async (form) => {
       const v = formValues(form);
       if (String(v.confirm ?? '').trim() !== appId) throw new ApiError(`Type the App ID exactly as it is (${appId}) to confirm.`, 400, 'confirm');
-      const body = v.how === 'import'
-        ? { action: 'import', privateKey: privateKeyOf(form), replace: true, confirm: appId }
-        : { action: 'generate', replace: true, confirm: appId };
-      out.made = await postKey(appId, body);
+      out.v = { generate: v.how !== 'attach', confirm: appId };
     },
   });
-  if (!ok || !out.made) return null;
-  if (out.made.backup) await showBackup(appId, out.made.backup);
-  toast('Signing key replaced.');
-  return keyInfo(out.made);
+  return ok ? out.v : null;
 }
 
 /**
- * The one time a private key leaves the Worker: shown until the colleague confirms it is
- * stored. Escape and the backdrop do not close it; afterwards it is wiped from the page.
- * @param {string} appId @param {KeyBackup} backup
- * @returns {Promise<void>}
+ * A new key pair for one application, attached from the key pair window once its private key is
+ * stored. @param {string} appId @param {string | null} confirm  the App ID typed, when it replaces a key
+ * @returns {Promise<KeyInfo | null>}  null when closed without attaching
  */
-function showBackup(appId, backup) {
+export async function generateFor(appId, confirm) {
+  const pair = await generateKeyPair();
+  const { key } = await showKeyPair({ pair, appId, attach: (p) => putKey(appId, p.publicHex, confirm) });
+  if (key) toast(confirm ? 'Public key replaced.' : 'Public key attached.');
+  return key;
+}
+
+/**
+ * Attach a public key there is already: pasted, from a .pub file (or deploy/metadata.json), or
+ * one the signed releases carry.
+ * @param {string} appId
+ * @param {{ current: KeyInfo | null, releaseKeys: string[], confirm: string | null }} opts
+ * @returns {Promise<KeyInfo | null>}  null when cancelled
+ */
+export async function attachKey(appId, opts) {
+  /** @type {{ made: KeyInfo | null }} */
+  const out = { made: null };
+  const fromReleases = opts.releaseKeys.filter((k) => k !== opts.current?.publicKey);
+  const ok = await formDialog({
+    title: opts.current ? `The new public key of ${appId}` : `Attach a public key to ${appId}`,
+    submitLabel: opts.current ? 'Replace public key' : 'Attach public key',
+    danger: Boolean(opts.current),
+    body: `<p>Only the public key: the private key stays with you. It is the key of a pair made before (the <span class="mono">.pub</span> file
+        <span class="mono">s1_ble.py keygen</span> and the Key generator write, or <span class="mono">public_key</span> in <span class="mono">deploy/metadata.json</span>).</p>
+      ${fromReleases.length ? `<fieldset><legend>Which key</legend><div class="choices">
+        ${fromReleases.map((k, i) => `<label class="check"><input type="radio" name="pick" value="${esc(k)}"${i === 0 ? ' checked' : ''}>
+          <span>The key the releases of ${esc(appId)} are signed with: <span class="mono">${esc(k)}</span></span></label>`).join('')}
+        <label class="check"><input type="radio" name="pick" value=""> Another one, pasted or from a file</label>
+      </div></fieldset>` : ''}
+      <div class="dialog-body" data-own${fromReleases.length ? ' hidden' : ''}>
+        ${field('Public key', (id) => `<textarea id="${id}" name="publicKey" class="mono" rows="3" spellcheck="false" autocomplete="off"
+          placeholder="04…, 130 hex characters"></textarea>`, '', '130 hex characters, starting with 04.')}
+        ${field('Or take it from a file', (id) => `<input id="${id}" type="file" data-pubfile accept=".pub,.txt,.json,.hex">`)}
+      </div>`,
+    onOpen: (form) => {
+      const own = /** @type {HTMLElement} */ (form.querySelector('[data-own]'));
+      form.querySelectorAll('[name=pick]').forEach((r) => r.addEventListener('change', () => { own.hidden = Boolean(formValues(form).pick); }));
+      const file = /** @type {HTMLInputElement} */ (form.querySelector('[data-pubfile]'));
+      const text = /** @type {HTMLTextAreaElement} */ (form.querySelector('[name=publicKey]'));
+      file.addEventListener('change', async () => {
+        const f = file.files?.[0];
+        if (!f) return;
+        if (f.size > 16 * 1024) { toast('That file is too large to be a public key.', 'err'); file.value = ''; return; }
+        text.value = (await f.text()).trim();
+      });
+    },
+    submit: async (form) => {
+      const v = formValues(form);
+      let publicKey;
+      try {
+        publicKey = readPublicKey(String(v.pick || v.publicKey || ''));
+      } catch (err) {
+        if (err instanceof KeyError) throw new ApiError(err.message, 422, 'publicKey');
+        throw err;
+      }
+      out.made = await putKey(appId, publicKey, opts.confirm);
+    },
+  });
+  if (!ok || !out.made) return null;
+  toast(opts.current ? 'Public key replaced.' : 'Public key attached.');
+  return out.made;
+}
+
+/**
+ * The window with a key pair made in this browser. The private key is shown here and nowhere else:
+ * download the .pem (and the .pub), or copy the base64 value, into 1Password or the application's
+ * .cred file. Close, the x and Escape close it; while the pair is neither downloaded nor marked as
+ * stored, closing asks first. With `attach`, Attach to <APP_ID> sends the public key (never the
+ * private key) once the private key is marked as stored.
+ * @param {{ pair: KeyPair, appId: string | null, attach?: (pair: KeyPair) => Promise<KeyInfo> }} opts
+ * @returns {Promise<{ key: KeyInfo | null, stored: boolean }>}  key: the attached key, or null;
+ *   stored: whether the private key was downloaded or marked as stored before the window closed
+ */
+export function showKeyPair(opts) {
   /** @type {HTMLDialogElement} */
-  const dialog = $('backup-dialog');
-  const body = $('backup-body');
+  const dialog = $('keypair-dialog');
+  /** @type {HTMLElement} */
+  const body = $('keypair-body');
+  /** @type {HTMLElement} */
+  const leave = $('keypair-leave');
+  const error = $('keypair-error');
   /** @type {HTMLInputElement} */
-  const ack = $('backup-ack');
+  const ack = $('keypair-ack');
   /** @type {HTMLButtonElement} */
-  const done = $('backup-done');
-  $('backup-title').textContent = `Store the private key of ${appId} now`;
+  const attachBtn = $('keypair-attach');
+  const appId = opts.appId;
+  const base = keyFileBase(appId);
+  const [pemFile, pubFile] = keyPairFiles(opts.pair, base);
+
+  $('keypair-title').textContent = appId ? `A new key pair for ${appId}` : 'A new key pair';
   body.innerHTML = `
-    <div class="notice warn">This is the only time Deploy shows this private key. Deploy keeps it encrypted and signs with it; store your copy now in the password manager, or as <span class="mono">private_key</span> in the application's .cred file for the Deployment Tool.</div>
+    <div class="notice warn">Made in this browser. Deploy does not keep the private key and cannot show it again: store it now, in 1Password
+      (the .pem as a document, or the base64 value as a password), or as <span class="mono">private_key</span> in the application's .cred file for the
+      Deployment Tool. You need it every time a release is signed.</div>
     <div class="key-box">
-      <div class="key-head"><span class="section-label">Private key, base64 scalar</span>${copyButton('backup-b64', 'private key as base64')}</div>
-      <code class="keytext" id="backup-b64">${esc(backup.privateKeyB64)}</code>
+      <div class="key-head"><span class="section-label">Public key</span>${copyButton('keypair-pub', 'public key')}</div>
+      <code class="keytext" id="keypair-pub">${esc(opts.pair.publicHex)}</code>
     </div>
     <div class="key-box">
-      <div class="key-head"><span class="section-label">Private key, PEM</span>${copyButton('backup-pem', 'private key as PEM')}</div>
-      <pre class="keytext pem" id="backup-pem">${esc(backup.privateKeyPem.trim())}</pre>
+      <div class="key-head"><span class="section-label">Private key, base64 (FW_PRIVATE_KEY_B64)</span>${copyButton('keypair-b64', 'private key as base64')}</div>
+      <code class="keytext" id="keypair-b64">${esc(opts.pair.privateB64)}</code>
     </div>
-    <div class="btn-row"><button type="button" class="btn sm" id="backup-download" data-icon="arrow-down-tray">Download .pem</button></div>`;
+    <div class="key-box">
+      <div class="key-head"><span class="section-label">Private key, PEM</span>${copyButton('keypair-pem', 'private key as PEM')}</div>
+      <pre class="keytext pem" id="keypair-pem">${esc(opts.pair.privatePem.trim())}</pre>
+    </div>
+    <div class="btn-row">
+      <button type="button" class="btn sm primary" data-save="pem" data-icon="arrow-down-tray">Download private key (${esc(pemFile.name)})</button>
+      <button type="button" class="btn sm" data-save="pub" data-icon="arrow-down-tray">Download public key (${esc(pubFile.name)})</button>
+    </div>
+    <p class="hint">The files of <span class="mono">s1_ble.py keygen --out ${esc(pemFile.name)}</span>: the private key as PKCS#8 PEM, and the public key (130 hex characters).
+      The Deployment Tool and Deploy read either form of the private key, and a .cred file with it.</p>`;
   hydrateIcons(body);
+  leave.hidden = true;
+  error.hidden = true;
   ack.checked = false;
-  done.disabled = true;
+  attachBtn.hidden = !opts.attach;
+  attachBtn.disabled = true;
+  attachBtn.textContent = appId ? `Attach to ${appId}` : 'Attach';
+
+  let downloaded = false;
+  /** @type {KeyInfo | null} */
+  let attached = null;
+  const stored = () => downloaded || ack.checked;
+
   return new Promise((resolve) => {
-    let finished = false;
-    ack.onchange = () => { done.disabled = !ack.checked; };
-    /** @type {HTMLButtonElement} */ (body.querySelector('#backup-download')).onclick = () => saveBlob(
-      new Blob([`${backup.privateKeyPem.trim()}\n`], { type: 'application/x-pem-file' }), `${fileSafe(appId)}-signing-key.pem`,
-    );
-    done.onclick = () => { if (!ack.checked) return; finished = true; dialog.close(); };
-    dialog.oncancel = (e) => { if (!finished) e.preventDefault(); };
-    dialog.onclose = () => {
-      if (!finished) { dialog.showModal(); return; } // closed some other way: it stays until acknowledged
-      body.innerHTML = '';
-      dialog.onclose = null;
-      dialog.oncancel = null;
-      resolve();
+    const finish = () => {
+      dialog.removeEventListener('cancel', onCancel);
+      dialog.removeEventListener('close', onClose);
+      for (const id of ['keypair-x', 'keypair-close', 'keypair-stay', 'keypair-discard', 'keypair-attach']) $(id).onclick = null;
+      ack.onchange = null;
+      body.innerHTML = ''; // the private key leaves the page with the window
+      leave.hidden = true;
+      error.hidden = true;
+      resolve({ key: attached, stored: stored() });
+    };
+    /** Close, or first ask when the private key is not stored yet. @param {boolean} [force] */
+    const tryClose = (force = false) => {
+      if (force || attached || stored() || !leave.hidden) { leave.hidden = true; dialog.close(); return; }
+      leave.hidden = false;
+      /** @type {HTMLElement} */ ($('keypair-stay')).focus();
+    };
+    /**
+     * Escape: ask first (a second Escape, with the question showing, closes). The browser may close
+     * a dialog on Escape anyway (no user activation since it opened); then it is closed as with x.
+     * @param {Event} e
+     */
+    const onCancel = (e) => { e.preventDefault(); tryClose(); };
+    const onClose = () => finish();
+    dialog.addEventListener('cancel', onCancel);
+    dialog.addEventListener('close', onClose);
+    $('keypair-x').onclick = () => tryClose();
+    $('keypair-close').onclick = () => tryClose();
+    $('keypair-stay').onclick = () => { leave.hidden = true; };
+    $('keypair-discard').onclick = () => tryClose(true);
+    ack.onchange = () => { attachBtn.disabled = !ack.checked; if (stored()) leave.hidden = true; };
+    body.querySelectorAll('[data-save]').forEach((b) => b.addEventListener('click', () => {
+      const file = b.getAttribute('data-save') === 'pem' ? pemFile : pubFile;
+      saveBlob(new Blob([file.text], { type: file.type }), file.name);
+      if (file === pemFile) { downloaded = true; leave.hidden = true; }
+    }));
+    attachBtn.onclick = async () => {
+      if (!opts.attach || !ack.checked) return;
+      error.hidden = true;
+      attachBtn.disabled = true;
+      attachBtn.setAttribute('aria-busy', 'true');
+      try {
+        attached = await opts.attach(opts.pair);
+        dialog.close();
+      } catch (err) {
+        error.textContent = errorText(err);
+        error.hidden = false;
+      } finally {
+        attachBtn.removeAttribute('aria-busy');
+        attachBtn.disabled = !ack.checked;
+      }
     };
     dialog.showModal();
   });
 }
+
+/** The icon of a key check (✓ or !) for markup. @param {boolean} ok */
+export const checkIcon = (ok) => icon(ok ? 'check' : 'x', 18);

@@ -1,7 +1,7 @@
 // @ts-check
-// New application: the card at the bottom of Status (and an App ID that does not exist yet).
-// App ID, customer and controller → POST /api/folders → its folder page, where the rest
-// follows: for S1 the signing key and the first release (and here the distribution host);
+// New application: the card at the bottom of Applications (and an App ID that does not exist yet).
+// App ID, customer and controller → POST /api/folders → its page, where the rest follows: for
+// S1 its public key and the first release (and here the distribution host);
 // for M1, L4 and HMI1 the package definition and the first release (no host: Linux packages
 // are downloaded through the Moduline dashboard, the root manifest holds relative paths).
 // Nothing is written to the bucket until that first release.
@@ -9,6 +9,7 @@
 import { ApiError, api } from './api.js';
 import { esc, field, toast } from './lib.js';
 import { linuxAppIdProblem } from './package.js';
+import { applicationHref } from './routes.js';
 import { appIdProblem } from './source.js';
 import { CONTROLLERS, formDialog, formValues } from './ui.js';
 
@@ -74,7 +75,7 @@ export async function newApplication(opts) {
         const problem = id ? problemFor(controller, id) : null;
         const other = byLower.get(id.toLowerCase());
         if (problem) appHint.innerHTML = `<span class="error">${esc(problem)}</span>`;
-        else if (existing.has(id)) appHint.innerHTML = `<span class="error"><span class="mono">${esc(id)}</span> exists already.</span> <a href="#/folders/${encodeURIComponent(id)}">Open it</a>`;
+        else if (existing.has(id)) appHint.innerHTML = `<span class="error"><span class="mono">${esc(id)}</span> exists already.</span> <a href="${applicationHref(id)}">Open it</a>`;
         else if (other) appHint.innerHTML = `<span class="error">There is a folder <span class="mono">${esc(other)}</span>: App IDs are case-sensitive, so this would be another one.</span>`;
         else appHint.textContent = s1 ? HINTS.S1 : HINTS.linux;
         if (problem || existing.has(id)) input.setAttribute('aria-invalid', 'true');
@@ -104,5 +105,5 @@ export async function newApplication(opts) {
   });
   if (!ok || !out.appId) return;
   toast(out.existed ? `${out.appId} exists already: here it is.` : `Application ${out.appId} created.`);
-  location.hash = `#/folders/${encodeURIComponent(out.appId)}`;
+  location.hash = applicationHref(out.appId);
 }

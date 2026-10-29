@@ -60,9 +60,10 @@ bucket_name = "gocontroll-firmware"
 binding = "IMAGES_BUCKET"
 bucket_name = "gocontroll-images"
 
-# Private state of this app (no public access, no custom domain): sealed signing keys,
-# folder settings, the audit log, the download counts of finished days, and the archives of
-# replaced binaries and deleted folders (src/state.ts).
+# Private state of this app (no public access, no custom domain): the public keys of the
+# applications (and the sealed private keys of before 0.7.0), folder settings, the audit log,
+# the download counts of finished days, and the archives of replaced binaries and deleted
+# folders (src/state.ts).
 # A bucket instead of a D1 of our own: when Deploy was made (2026-10-21) the account was at
 # the Free-plan D1 limit, and JSON objects in R2 are enough for this data, so it stays here.
 [[r2_buckets]]
@@ -96,10 +97,11 @@ migrations_table = "deploy_migrations"
 # Secrets live in the account's Secrets Store default_secrets_store (GOcontroll-Team/CLAUDE.md),
 # never as Worker secret, in [vars] or in git; the code reads them through src/lib/secret.ts.
 #
-# The key-encryption key of the signing keys: 32 random bytes (base64), made in the store,
-# never seen by anyone. Every private signing key in STATE (keys/<APP_ID>.json) is sealed
-# under it with AES-256-GCM. Lost = every signing key lost; rotating it needs a re-seal path
-# (README, "Signing keys").
+# The key-encryption key of the private keys Deploy sealed until 0.6.1: 32 random bytes (base64),
+# made in the store, never seen by anyone. Keys generated or imported in the Worker before 0.7.0
+# keep their private key sealed under it with AES-256-GCM in STATE (keys/<APP_ID>.json). Since
+# 0.7.0 Deploy keeps no private key and nothing seals or opens one, but the binding stays: lost =
+# those sealed keys lost; rotating it needs a re-seal path (README, "Signing keys").
 [[secrets_store_secrets]]
 binding = "SIGNING_KEYS_KEY"
 store_id = "33801ac6937549ae8f6f92169586a707"

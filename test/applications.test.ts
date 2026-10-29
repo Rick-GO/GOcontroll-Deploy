@@ -1,14 +1,16 @@
 // Change set v2: new applications (POST /api/folders), folder settings (customer, controller),
-// the controller type, the keys list, and the protected folder delete.
+// the controller type, the public keys on the overview, and the protected folder delete.
 
 import { env } from 'cloudflare:test';
 import { describe, expect, test } from 'vitest';
 import { resolveController } from '../src/status';
-import { appId, call, controller, customer, ok, putManifest, spyBucket, upload, zlibPayload } from './helpers';
+import { appId, attachNewKey, browserSignature, call, controller, customer, ok, putManifest, spyBucket, upload, zlibPayload } from './helpers';
 
-async function publish(id: string, version: string, extra: Record<string, string> = {}, envOverrides: Record<string, unknown> = {}) {
+/** Publish a release; with `signer`, signed in the browser's way (the key attached to `id`). */
+async function publish(id: string, version: string, extra: Record<string, string> = {}, envOverrides: Record<string, unknown> = {}, signer?: CryptoKey) {
   const { payload, rawSize } = await zlibPayload(`${id} ${version} `.repeat(20));
-  return upload('/api/releases', { appId: id, version, description: `Release ${version}`, payload, rawSize: String(rawSize), ...extra }, envOverrides);
+  const signature: Record<string, string> = signer ? { signature: await browserSignature(id, version, signer, { payload, rawSize }) } : {};
+  return upload('/api/releases', { appId: id, version, description: `Release ${version}`, payload, rawSize: String(rawSize), ...signature, ...extra }, envOverrides);
 }
 
 const logsOf = async (id: string, action: string) => (await env.STATE.list({ prefix: 'log/' })).objects.filter((o) => o.key.endsWith(`-${id}-${action}.json`));
@@ -52,7 +54,7 @@ describe('POST /api/folders', () => {
     const inBucket = appId('E');
     expect((await publish(inBucket, '1.0.0')).status).toBe(200);
     const keyOnly = appId('E');
-    await ok('POST', `/api/folders/${keyOnly}/key`, { action: 'generate' });
+    await attachNewKey(keyOnly);
     const settingsOnly = appId('E');
     await ok('POST', '/api/folders', { appId: settingsOnly, customerId: null, controller: 'S1' }, 201);
     for (const id of [inBucket, keyOnly, settingsOnly]) {
@@ -148,31 +150,24 @@ describe('controller type', () => {
   });
 });
 
-describe('GET /api/keys', () => {
-  test('every key with customer, controller and whether the bucket holds the folder; S1 folders without a key', async () => {
+describe('public keys on the overview (Applications, Key generator)', () => {
+  test('every application with its public key, or null; the keys list of before 0.7.0 is gone', async () => {
     const keyed = appId('K');
     const cu = await customer(`Keys customer ${keyed}`);
     await ok('POST', '/api/folders', { appId: keyed, customerId: cu, controller: 'S1' }, 201);
-    const key = await ok('POST', `/api/folders/${keyed}/key`, { action: 'generate' });
+    const key = await attachNewKey(keyed);
     const published = appId('W');
     expect((await publish(published, '1.0.0')).status).toBe(200);
-    const created = appId('W');
-    await ok('POST', '/api/folders', { appId: created, customerId: null, controller: 'S1' }, 201);
     const linux = appId('L');
     await putManifest(linux, { app_id: linux, latest_version: '1.0.0', versions: [] });
 
-    const body = await ok('GET', '/api/keys');
-    expect(body.keys.find((k: any) => k.appId === keyed)).toEqual({
-      appId: keyed, publicKey: key.publicKey, source: 'generated', createdAt: key.createdAt, createdBy: 'jane.doe@gocontroll.com',
-      inBucket: false, customer: { id: cu, name: `Keys customer ${keyed}`, source: 'manual' }, controller: 'S1',
-    });
-    expect(body.keys.some((k: any) => 'sealed_private_key' in k || 'sealedPrivateKey' in k)).toBe(false);
-    const without = body.withoutKey.map((w: any) => w.appId);
-    expect(without).toContain(published);
-    expect(without).toContain(created);
-    expect(without).not.toContain(keyed);
-    expect(without).not.toContain(linux);
-    expect(body.withoutKey.find((w: any) => w.appId === published)).toEqual({ appId: published, customer: null, controller: 'S1' });
+    const body = await ok('GET', '/api/overview');
+    const row = (id: string) => body.folders.find((f: any) => f.appId === id);
+    expect(row(keyed)).toMatchObject({ hasKey: true, publicKey: key.publicKey, inBucket: false, controller: 'S1', customer: { id: cu, source: 'manual' } });
+    expect(row(published)).toMatchObject({ hasKey: false, publicKey: null });
+    expect(row(linux)).toMatchObject({ kind: 'linux', hasKey: false, publicKey: null });
+    expect(JSON.stringify(body)).not.toMatch(/sealed/i);
+    expect((await call('GET', '/api/keys')).status).toBe(404);
   });
 });
 
@@ -202,9 +197,9 @@ describe('DELETE /api/folders/:appId', () => {
     const id = appId('D');
     const cu = await customer(`Delete customer ${id}`);
     await ok('POST', '/api/folders', { appId: id, customerId: cu, controller: 'S1' }, 201);
-    const key = await ok('POST', `/api/folders/${id}/key`, { action: 'generate' });
-    expect((await publish(id, '1.0.0', { sign: '1' })).status).toBe(200);
-    expect((await publish(id, '1.1.0', { sign: '1' })).status).toBe(200);
+    const key = await attachNewKey(id);
+    expect((await publish(id, '1.0.0', {}, {}, key.signer)).status).toBe(200);
+    expect((await publish(id, '1.1.0', {}, {}, key.signer)).status).toBe(200);
     await env.DEPLOY_BUCKET.put(`${id}/notes.txt`, 'left over', { httpMetadata: { contentType: 'text/plain' } });
     const before = new Map<string, { bytes: string; type?: string }>();
     for (const o of (await env.DEPLOY_BUCKET.list({ prefix: `${id}/` })).objects) {

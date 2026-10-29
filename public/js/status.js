@@ -1,13 +1,16 @@
 // @ts-check
-// Status (#/): the deployments at a glance. KPI tiles; the customers with their application
-// folders (App IDs); the folders no customer was found for; at the bottom New application.
+// Applications (#/applications): the deployments at a glance. KPI tiles; the customers with their
+// applications (App IDs, each a folder in the bucket) and the public key of each, to copy for
+// provisioning; the applications no customer was found for; at the bottom New application.
 // The search and the filter work on the page itself, without a reload, and stay in the
-// address (#/?q=&show=) so Back returns to the same list.
+// address (#/applications?q=&show=) so Back returns to the same list.
 
 import { api } from './api.js';
 import { fmtBytes, fmtCount, fmtDateTime, plural } from './format.js';
-import { esc, hydrateIcons } from './lib.js';
+import { copyButton, esc, hydrateIcons } from './lib.js';
+import { shortKey } from './key.js';
 import { newApplication } from './newapp.js';
+import { applicationHref } from './routes.js';
 import { badge, controllerBadge, controllerOf, flavour, setHero, stale, wireRowLinks } from './ui.js';
 
 /**
@@ -19,7 +22,7 @@ import { badge, controllerBadge, controllerOf, flavour, setHero, stale, wireRowL
 const FILTERS = /** @type {const} */ ([
   ['all', 'All applications'],
   ['S1', 'S1'],
-  ['nokey', 'S1 without signing key'],
+  ['nokey', 'S1 without public key'],
   ['M1', 'M1'],
   ['L4', 'L4'],
   ['HMI1', 'HMI1'],
@@ -32,8 +35,8 @@ export async function renderStatus(ctx, params) {
   const flash = ctx.flash;
   ctx.flash = null;
   setHero({
-    title: 'Deployments',
-    lede: "Firmware in GOcontroll's distribution bucket, per customer and App ID: releases, signing keys, the controllers on each App ID and how often they download.",
+    title: 'Applications',
+    lede: "Firmware in GOcontroll's distribution bucket, per customer and App ID: releases, public keys, the controllers on each App ID and how often they download.",
   });
   /** @type {Overview} */
   const data = await api('GET', '/overview');
@@ -52,7 +55,7 @@ export async function renderStatus(ctx, params) {
     </section>
     <section class="panel">
       <div class="panel-head"><h2>New application</h2></div>
-      <p class="text">Start the folder of an application: its App ID, customer and controller (S1, or M1, L4 and HMI1 for Linux). Its signing key or package, and its first release, follow on its page.</p>
+      <p class="text">Start the folder of an application: its App ID, customer and controller (S1, or M1, L4 and HMI1 for Linux). Its public key or package, and its first release, follow on its page.</p>
       <div class="btn-row"><button type="button" class="btn primary" data-new-app data-icon="plus">New application…</button></div>
     </section>`;
   hydrateIcons(ctx.view);
@@ -68,7 +71,7 @@ export async function renderStatus(ctx, params) {
     if (q.value.trim()) p.set('q', q.value.trim());
     if (sel.value !== 'all') p.set('show', sel.value);
     const qs = p.toString();
-    history.replaceState(null, '', `#/${qs ? `?${qs}` : ''}`);
+    history.replaceState(null, '', `#/applications${qs ? `?${qs}` : ''}`);
   };
   q.addEventListener('input', draw);
   sel.addEventListener('change', draw);
@@ -143,20 +146,37 @@ function folderLists(d, q, show) {
     <p class="hint muted">The customer of a folder is the one assigned by hand on its page, or else the customer most of its controllers belong to, or else the customer of the project provisioned with that App ID.</p>`;
 }
 
+let keyCells = 0;
+
+/**
+ * The public key of an application, short, with Copy for the whole (for provisioning); "No" for an
+ * S1 application without one; "n/a" for a Linux application without one (not signed).
+ * @param {FolderSummary} f
+ */
+function keyCell(f) {
+  if (f.publicKey) {
+    const id = `st-pk-${++keyCells}`;
+    return `<span class="keycell"><span class="mono" title="${esc(f.publicKey)}">${esc(shortKey(f.publicKey))}</span>
+      ${copyButton(id, `public key of ${f.appId}`)}<span id="${id}" hidden>${esc(f.publicKey)}</span></span>`;
+  }
+  return flavour(f) !== 's1'
+    ? '<span class="muted" title="Only S1 binaries are signed; go-deploy checks the SHA-256 of a Linux package">n/a</span>'
+    : badge('No', 'warn', 'No public key: its releases go out unsigned');
+}
+
 /** @param {FolderSummary[]} folders @param {boolean} [withCustomer] */
 function folderTable(folders, withCustomer = false) {
   return `<div class="table-wrap"><table class="data rows cards folders">
-    <thead><tr><th>App ID</th><th>Controller</th><th>Latest</th><th class="num">Releases</th><th>Signing key</th><th>Last upload</th></tr></thead>
+    <thead><tr><th>App ID</th><th>Controller</th><th>Latest</th><th class="num">Releases</th><th>Public key</th><th>Last upload</th></tr></thead>
     <tbody>${folders.map((f) => {
       const { controller, source } = controllerOf(f);
       return `<tr>
-      <td data-label="App ID"><a class="cell-main mono" href="#/folders/${encodeURIComponent(f.appId)}">${esc(f.appId)}</a>${
+      <td data-label="App ID"><a class="cell-main mono" href="${esc(applicationHref(f.appId))}">${esc(f.appId)}</a>${
         withCustomer && f.customer ? `<div class="cell-sub">${esc(f.customer.name)}</div>` : ''}</td>
       <td data-label="Controller">${controllerBadge(controller, source)}</td>
       <td data-label="Latest" class="mono">${esc(f.latest ?? '—')}</td>
       <td data-label="Releases" class="num">${fmtCount(f.releases)}</td>
-      <td data-label="Signing key">${flavour(f) !== 's1' ? '<span class="muted" title="Only S1 binaries are signed; go-deploy checks the SHA-256 of a Linux package">n/a</span>'
-        : f.hasKey ? badge('Yes', 'ok') : badge('No', 'warn')}</td>
+      <td data-label="Public key">${keyCell(f)}</td>
       <td data-label="Last upload">${esc(fmtDateTime(f.lastUpload))}</td></tr>`;
     }).join('')}</tbody>
   </table></div>`;

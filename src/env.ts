@@ -25,7 +25,7 @@ export interface Env {
   IMAGES_MAIL_REPLY_TO: string; // where a customer's reply goes (info@gocontroll.com)
 
   // Secrets Store (src/lib/secret.ts reads both forms; a plain string locally and in tests).
-  SIGNING_KEYS_KEY?: SecretsStoreSecret | string; // store DEPLOY_SIGNING_KEYS_KEY: AES-256 KEK of the signing keys
+  SIGNING_KEYS_KEY?: SecretsStoreSecret | string; // store DEPLOY_SIGNING_KEYS_KEY: AES-256 KEK of the private keys sealed before 0.7.0 (only /api/health reads it)
   CF_API_TOKEN?: SecretsStoreSecret | string;     // store DEPLOY_CF_API_TOKEN: GraphQL Analytics (optional)
   GITHUB_TOKEN?: SecretsStoreSecret | string;     // store DEPLOY_GITHUB_TOKEN: tags and releases of the Module-* repos; not-set = off
   MS365_CLIENT_SECRET?: SecretsStoreSecret | string; // store MS365_CLIENT_SECRET: Graph sendMail (shared with Hours, Configurator, Finance)

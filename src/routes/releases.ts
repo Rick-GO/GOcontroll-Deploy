@@ -1,13 +1,14 @@
 // Publishing a release into the bucket (S1 firmware, or a Linux go-deploy package), and
 // signing an S1 binary without publishing it.
-// Both take multipart/form-data (the browser sends the compressed payload or a container);
-// the rules are in src/release.ts.
+// Both take multipart/form-data (the browser sends the compressed payload or a container, and the
+// signature it made); the rules are in src/release.ts. /sign/scope (JSON) gives the bytes the
+// browser signs: the private key stays in the browser.
 
 import { Hono } from 'hono';
 import type { AppEnv } from '../env';
 import { HttpError } from '../lib/http';
 import { publishLinux } from '../linux';
-import { publish, signOnly } from '../release';
+import { publish, signOnly, signingScope } from '../release';
 
 export const releases = new Hono<AppEnv>();
 
@@ -18,6 +19,8 @@ async function form(req: Request): Promise<FormData> {
     throw new HttpError(400, 'The upload could not be read. Try again.');
   }
 }
+
+releases.post('/sign/scope', async (c) => c.json(await signingScope(c.env, await c.req.json().catch(() => null))));
 
 releases.post('/sign', async (c) => {
   const { body, filename, size } = await signOnly(c.env, c.get('user'), await form(c.req.raw));

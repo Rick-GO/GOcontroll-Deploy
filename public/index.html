@@ -15,13 +15,13 @@
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="#/" aria-label="Deploy home">
+  <a class="brand" href="#/applications" aria-label="Deploy home">
     <img src="/pub/logo.svg" alt="GOcontroll" height="36">
   </a>
   <span class="divider" aria-hidden="true"></span>
   <a class="crumb" href="https://gocontroll.tools" aria-label="Back to GOcontroll Team" data-icon="arrow-left"><span>Team</span></a>
   <span class="crumb-sep" aria-hidden="true">/</span>
-  <a class="app-title" href="#/"><span class="long">Deploy</span><span class="short">Deploy</span></a>
+  <a class="app-title" href="#/applications"><span class="long">Deploy</span><span class="short">Deploy</span></a>
   <span class="spacer"></span>
   <span class="who" id="who">
     <span class="avatar" aria-hidden="true" id="who-initials"></span>
@@ -31,10 +31,10 @@
 </header>
 <section class="hero">
   <nav class="app-tabs" aria-label="Sections">
-    <a href="#/" data-tab="status">Status</a>
-    <a href="#/keys" data-tab="keys">Keys</a>
+    <a href="#/applications" data-tab="applications">Applications</a>
     <a href="#/firmware" data-tab="firmware">Firmware</a>
     <a href="#/images" data-tab="images">Images</a>
+    <a href="#/key-generator" data-tab="key-generator">Key generator</a>
   </nav>
   <div class="hero-inner" id="hero"></div>
 </section>
@@ -63,18 +63,29 @@
   </form>
 </dialog>
 
-<!-- The one-time backup of a generated private key: key.js showBackup(). No close button:
-     it closes only once the colleague confirms the key is stored. -->
-<dialog class="modal" id="backup-dialog" aria-labelledby="backup-title">
+<!-- A key pair made in this browser (Key generator, or an application's page): key.js
+     showKeyPair(). Closes with Close, the x or Escape; before the pair is downloaded or marked as
+     stored, closing asks first, because the private key is gone after it. -->
+<dialog class="modal" id="keypair-dialog" aria-labelledby="keypair-title">
   <div class="modal-head">
-    <h2 id="backup-title">Store the private key now</h2>
+    <h2 id="keypair-title">Store the private key now</h2>
+    <button type="button" class="icon-btn" id="keypair-x" data-icon="x" aria-label="Close"></button>
   </div>
   <div class="modal-body">
-    <div id="backup-body" class="dialog-body"></div>
+    <div id="keypair-body" class="dialog-body"></div>
+    <div class="notice warn" id="keypair-leave" hidden>
+      <p><strong>The private key has not been downloaded or marked as stored.</strong> Once this window is closed it is gone: Deploy does not keep it, and nobody can show it again.</p>
+      <div class="btn-row">
+        <button type="button" class="btn sm" id="keypair-stay">Back to the key pair</button>
+        <button type="button" class="btn sm danger" id="keypair-discard">Close without it</button>
+      </div>
+    </div>
+    <div class="notice err" id="keypair-error" hidden></div>
   </div>
-  <div class="modal-foot backup-foot">
-    <label class="check"><input type="checkbox" id="backup-ack"> I have stored the private key safely</label>
-    <button type="button" class="btn primary" id="backup-done" disabled>Done</button>
+  <div class="modal-foot keypair-foot">
+    <label class="check"><input type="checkbox" id="keypair-ack"> I have stored the private key (for example in 1Password)</label>
+    <button type="button" class="btn" id="keypair-close">Close</button>
+    <button type="button" class="btn primary" id="keypair-attach" hidden disabled></button>
   </div>
 </dialog>
 

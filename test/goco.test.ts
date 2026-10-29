@@ -4,10 +4,11 @@
 
 import { describe, expect, test } from 'vitest';
 import {
-  GocoError, MAX_HEADER_SIZE, STM32_APP_MAX_SIZE, buildHeader, concat, crc16ccitt, fromHex, headerSize, looksLikeZlib,
-  parseContainer, parseVersion, pickVersion, readHeader, toHex, verifySignature,
+  GocoError, MAX_HEADER_SIZE, STM32_APP_MAX_SIZE, buildHeader, concat, crc16ccitt, fromHex, headerSize, headerWithSignature, looksLikeZlib,
+  parseContainer, parseVersion, pickVersion, readHeader, sha256, signedScope, toHex, verifySignature,
 } from '../src/goco';
-import { parsePrivateKey, publicKeyHex, signingKey } from '../src/keys';
+import { parsePublicKeyHex, publicKeyHex } from '../src/keys';
+import { signScope, signerFor } from '../public/js/signing.js';
 import fixtures from './fixtures/goco/fixtures.json';
 
 const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
@@ -59,21 +60,27 @@ describe.each(fixtures.cases)('App ID $app_id, version $version', (c) => {
     expect(parsed.header.signed).toBe(true);
   });
 
-  test('signed here (committed): goco.py verified it, and it still verifies here', async () => {
+  test('signed as the browser signs (committed): goco.py verified it, and it still verifies here', async () => {
     expect(c.ts_signed_verified_by_python).toBe(true);
     const data = unb64(c.ts_signed_b64);
     expect(fields(data)).toEqual(c.ts_signed_python_header);
     await parseContainer(data);
   });
 
-  test('signed now: same header as goco.py apart from the (randomised) signature', async () => {
-    const m = await parsePrivateKey(fixtures.key.private_b64);
-    const header = await buildHeader({ appId: c.app_id, version: c.version, payload, rawSize: fixtures.raw_size, signer: { privateKey: await signingKey(m), publicKey: m.publicKey } });
+  test('signed now as the browser signs: the scope is the header goco.py signed, up to the signature', async () => {
+    const signer = await signerFor(fixtures.key.private_b64, fixtures.key.public_hex);
+    const scope = signedScope({
+      appId: c.app_id, version: c.version, compressedSize: payload.length, rawSize: fixtures.raw_size,
+      payloadSha256: await sha256(payload), publicKey: parsePublicKeyHex(fixtures.key.public_hex),
+    });
     const python = unb64(c.python_signed_b64);
-    const scope = readHeader(python).signatureScope;
-    expect(toHex(header.subarray(0, scope))).toBe(toHex(python.subarray(0, scope)));
+    expect(toHex(scope)).toBe(toHex(python.subarray(0, readHeader(python).signatureScope)));
+    const header = headerWithSignature(scope, await signScope(signer, scope, payload));
     expect(publicKeyHex(readHeader(header).publicKey!)).toBe(fixtures.key.public_hex);
     await parseContainer(concat(header, payload));
+    // buildHeader with a signer (the format's reference) gives the same scope.
+    const built = await buildHeader({ appId: c.app_id, version: c.version, payload, rawSize: fixtures.raw_size, signer: { privateKey: signer, publicKey: parsePublicKeyHex(fixtures.key.public_hex) } });
+    expect(toHex(built.subarray(0, scope.length))).toBe(toHex(scope));
   });
 });
 

@@ -4,7 +4,7 @@
 // until the App ID is typed out, a reason of at least 10 characters is given and, when
 // controllers still run this App ID, that is acknowledged. The Worker archives every object
 // to the private state bucket before it deletes it (the manifest first) and keeps the
-// signing key; it works in batches, so the dialog repeats the same DELETE until it is done.
+// public key; it works in batches, so the dialog repeats the same DELETE until it is done.
 // A delete that stopped halfway continues where it was when Delete is pressed again.
 
 import { ApiError, api, folderPath } from './api.js';
@@ -25,7 +25,7 @@ const MIN_REASON = 10;
 export const dangerPanel = (d) => `<section class="panel danger-zone">
   <div class="panel-head"><h2>Danger zone</h2></div>
   <p class="text">Delete this application folder from the distribution bucket: its manifest and every file under <span class="mono">${esc(d.appId)}/</span>.
-    Everything is archived in Deploy's private state bucket first, and the signing key is kept.</p>
+    Everything is archived in Deploy's private state bucket first, and the public key is kept.</p>
   <div class="btn-row"><button type="button" class="btn sm danger" data-delete data-icon="trash">Delete application folder…</button></div>
 </section>`;
 
@@ -49,7 +49,7 @@ function whatGoes(d) {
 }
 
 /**
- * Ask, then delete. On success the colleague lands on Status with a notice.
+ * Ask, then delete. On success the colleague lands on Applications with a notice.
  * @param {Ctx} ctx @param {FolderDetail} d
  */
 export async function deleteFolder(ctx, d) {
@@ -70,7 +70,7 @@ export async function deleteFolder(ctx, d) {
       <ul class="plain-list">
         <li>Every object is copied to Deploy's private state bucket first (<span class="mono">deleted/${esc(appId)}/…</span>), then deleted.
           The manifest goes first, so nothing ever reads a manifest that points at deleted files.</li>
-        <li>The signing key is kept: controllers in the field carry its public key, and a folder made again under this App ID signs with the same key.</li>
+        <li>The public key is kept: controllers in the field carry it, and a folder made again under this App ID is signed with the same key pair.</li>
         <li>The folder can be put back from the archive (README, "Restoring a deleted folder").</li>
       </ul>
       <div class="notice warn" data-controllers${st.controllers ? '' : ' hidden'}><span data-controllers-text>${esc(controllersLine(d, st.controllers))}</span></div>
@@ -135,8 +135,8 @@ export async function deleteFolder(ctx, d) {
   });
   if (!ok) return;
   ctx.flash = `<div class="notice ok">Application folder <span class="mono">${esc(appId)}</span> is deleted: ${plural(st.deleted, 'object')} archived
-    ${out.archive ? `under <span class="mono">${esc(out.archive)}</span> ` : ''}in Deploy's state bucket. Its signing key is kept, so ${esc(appId)} still shows under Keys.</div>`;
-  location.hash = '#/';
+    ${out.archive ? `under <span class="mono">${esc(out.archive)}</span> ` : ''}in Deploy's state bucket.${d.key ? ` Its public key is kept, so ${esc(appId)} still shows under Applications.` : ''}</div>`;
+  location.hash = '#/applications';
 }
 
 /** @param {FolderDetail} d @param {number} n */

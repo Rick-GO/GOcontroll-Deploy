@@ -3,7 +3,8 @@
 // (2026-10-21) the account was at the Free-plan D1 limit, and R2 is enough for this data.
 // Layout:
 //
-//   keys/<APP_ID>.json                      active signing key of a folder (private key sealed);
+//   keys/<APP_ID>.json                      the public key of an application (since 0.7.0 only that;
+//                                           a key of before 0.7.0 also holds its private key, sealed);
 //                                           kept when the folder is deleted
 //   keys-retired/<APP_ID>/<timestamp>.json  keys that were replaced; never deleted
 //   folders/<APP_ID>.json                   folder settings: customer and controller set by hand,
@@ -30,9 +31,14 @@ import type { PackageDefinition } from './linux';
 
 export interface StoredKey {
   app_id: string;
-  public_key: string;          // 130 hex, upper case: 04 || X || Y
-  sealed_private_key: string;  // v1.<iv>.<ciphertext+tag>, src/keys.ts
-  source: 'generated' | 'imported';
+  public_key: string;           // 130 hex, upper case: 04 || X || Y
+  /**
+   * Only in a key of before 0.7.0 (generated or imported in the Worker): its private key, sealed
+   * (v1.<iv>.<ciphertext+tag>, src/keys.ts). Never written since; never sent to a browser.
+   */
+  sealed_private_key?: string;
+  /** generated / imported: before 0.7.0, private key sealed here; attached: only the public key, since 0.7.0. */
+  source: 'generated' | 'imported' | 'attached';
   created_at: string;
   created_by: string;
 }
@@ -91,16 +97,35 @@ export async function listAll(bucket: R2Bucket, options: R2ListOptions): Promise
   return out;
 }
 
-// ── Signing keys ─────────────────────────────────────────────────────────────
+// ── Public keys (signing) ────────────────────────────────────────────────────
 
 export async function loadKey(env: Env, appId: string): Promise<Versioned<StoredKey> | null> {
   return readJson<StoredKey>(env.STATE, keyPath(appId));
 }
 
-/** The App IDs that have an active key (one listing, no reads). */
-export async function appIdsWithKey(env: Env): Promise<Set<string>> {
-  const objects = await listAll(env.STATE, { prefix: 'keys/' });
-  return new Set(objects.map((o) => o.key.slice('keys/'.length)).filter((k) => k.endsWith('.json')).map((k) => k.slice(0, -5)));
+/**
+ * The public key of every application that has one: one listing, and one small read per key
+ * (one per signed application; the sealed part of a key of before 0.7.0 is read but never passed on).
+ */
+export async function publicKeys(env: Env): Promise<Map<string, string>> {
+  const objects = (await listAll(env.STATE, { prefix: 'keys/' })).filter((o) => o.key.endsWith('.json'));
+  const out = new Map<string, string>();
+  await Promise.all(objects.map(async (o) => {
+    const key = (await readJson<StoredKey>(env.STATE, o.key))?.value;
+    if (key?.public_key) out.set(o.key.slice('keys/'.length, -'.json'.length), key.public_key);
+  }));
+  return out;
+}
+
+/** What the API says about a key: never the sealed private key of a key of before 0.7.0, only that there is one. */
+export function keyInfo(key: StoredKey) {
+  return {
+    publicKey: key.public_key,
+    source: key.source,
+    createdAt: key.created_at,
+    createdBy: key.created_by,
+    sealedPrivateKey: typeof key.sealed_private_key === 'string' && key.sealed_private_key.length > 0,
+  };
 }
 
 /**
@@ -114,7 +139,7 @@ export async function saveKey(env: Env, appId: string, key: StoredKey, previous:
     await writeJson(env.STATE, `keys-retired/${appId}/${stamp}.json`, { ...previous.value, retired_at: key.created_at, retired_by: key.created_by });
   }
   const ok = await writeJson(env.STATE, keyPath(appId), key, previous ? { etag: previous.etag } : 'absent');
-  if (!ok) throw new HttpError(409, 'The signing key of this folder was changed a moment ago. Reload the page.');
+  if (!ok) throw new HttpError(409, 'The public key of this application was changed a moment ago. Reload the page.');
 }
 
 // ── Folder settings ──────────────────────────────────────────────────────────
@@ -183,7 +208,7 @@ export async function deleteFolderSettings(env: Env, appId: string): Promise<voi
 // ── Audit log ────────────────────────────────────────────────────────────────
 
 export interface AuditEntry {
-  action: 'publish' | 'publish-linux' | 'sign' | 'key-generate' | 'key-import' | 'key-replace' | 'settings' | 'package' | 'create-folder' | 'delete-folder'
+  action: 'publish' | 'publish-linux' | 'sign' | 'key-attach' | 'key-replace' | 'settings' | 'package' | 'create-folder' | 'delete-folder'
     | 'publish-firmware' | 'github-release'
     | 'images-create' | 'images-update' | 'images-delete' | 'images-publish' | 'images-withdraw' | 'images-upload' | 'images-abort' | 'images-remove-file';
   app_id: string;

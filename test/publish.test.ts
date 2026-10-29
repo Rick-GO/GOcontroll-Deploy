@@ -1,18 +1,19 @@
 // POST /api/releases: the rules of GOcontroll-Deployment-Tool/tools/r2.py publish(), plus the
-// folder's signing key (cloud-r2-distribution.md §2-§4).
+// application's public key: a signature made in the browser is checked against it (cloud-r2-distribution.md §2-§4).
 
 import { env } from 'cloudflare:test';
 import { describe, expect, test } from 'vitest';
 import { readHeader, toHex } from '../src/goco';
 import fixtures from './fixtures/goco/fixtures.json';
-import { appId, ok, putManifest, spyBucket, unsignedContainer, upload, zlibPayload } from './helpers';
+import { generateKeyPair, signerFor } from '../public/js/signing.js';
+import { appId, attachNewKey, browserSignature, ok, putManifest, spyBucket, unsignedContainer, upload, zlibPayload } from './helpers';
 
 const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const today = () => new Date().toISOString().slice(0, 10);
 
 async function release(id: string, version: string, extra: Record<string, string | Uint8Array> = {}, envOverrides: Record<string, unknown> = {}) {
   const { payload, rawSize } = await zlibPayload(`image ${id} ${version} `.repeat(30));
-  return upload('/api/releases', { appId: id, version, description: `Release ${version}`, sign: '0', replace: '0', payload, rawSize: String(rawSize), ...extra }, envOverrides);
+  return upload('/api/releases', { appId: id, version, description: `Release ${version}`, replace: '0', payload, rawSize: String(rawSize), ...extra }, envOverrides);
 }
 
 async function manifest(id: string) {
@@ -154,7 +155,7 @@ describe('containers', () => {
   test('a ready-made container goes out unchanged; its App ID and version must match', async () => {
     const id = appId();
     const container = await unsignedContainer(id, '3.2.1');
-    const res = await upload('/api/releases', { appId: id, version: '3.2.1', description: 'From CI', sign: '0', container });
+    const res = await upload('/api/releases', { appId: id, version: '3.2.1', description: 'From CI', container });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     const stored = new Uint8Array(await (await env.DEPLOY_BUCKET.get(`${id}/${id}-3.2.1.bin`))!.arrayBuffer());
     expect(toHex(stored)).toBe(toHex(container));
@@ -184,46 +185,73 @@ describe('containers', () => {
   });
 });
 
-describe('with a signing key', () => {
-  async function withKey() {
+describe('with a public key (signed in the browser)', () => {
+  test('unsigned is refused (422 signature); signed with the private key of the public key is written', async () => {
     const id = appId('K');
-    const key = await ok('POST', `/api/folders/${id}/key`, { action: 'generate' });
-    return { id, publicKey: key.publicKey as string };
-  }
-
-  test('unsigned is refused (422); signed with the folder key is written', async () => {
-    const { id, publicKey } = await withKey();
+    const { publicKey, signer } = await attachNewKey(id);
     const unsigned = await release(id, '1.0.0');
     expect(unsigned.status).toBe(422);
+    expect(unsigned.body.field).toBe('signature');
     expect(unsigned.body.error).toMatch(/must be signed/);
-    const signed = await release(id, '1.0.0', { sign: '1' });
-    expect(signed.status).toBe(200);
+    const { payload, rawSize } = await zlibPayload(`image ${id} 1.0.0 `.repeat(30));
+    const signature = await browserSignature(id, '1.0.0', signer, { payload, rawSize });
+    const signed = await upload('/api/releases', { appId: id, version: '1.0.0', description: 'Signed', replace: '0', payload, rawSize: String(rawSize), signature });
+    expect(signed.status, JSON.stringify(signed.body)).toBe(200);
     expect(signed.body.signed).toBe(true);
     const h = readHeader(new Uint8Array(await (await env.DEPLOY_BUCKET.get(`${id}/${id}-1.0.0.bin`))!.arrayBuffer()));
     expect(h.headerVersion).toBe(0x03);
     expect(toHex(h.publicKey!).toUpperCase()).toBe(publicKey);
+    const [log] = (await env.STATE.list({ prefix: 'log/' })).objects.filter((o) => o.key.endsWith(`-${id}-1.0.0.json`));
+    expect(JSON.parse(await (await env.STATE.get(log.key))!.text())).toMatchObject({ action: 'publish', signed: true, public_key: publicKey });
+  });
+
+  test('a signature by another private key: 422 before anything is written', async () => {
+    const id = appId('K');
+    const { signer } = await attachNewKey(id);
+    const stranger = await generateKeyPair();
+    const { payload, rawSize } = await zlibPayload('foreign image '.repeat(30));
+    const forged = await browserSignature(id, '1.0.0', await signerFor(stranger.privateB64, stranger.publicHex), { payload, rawSize });
+    const writes: string[] = [];
+    const bucket = spyBucket(env.DEPLOY_BUCKET, async (method, args) => { if (method === 'put') writes.push(String(args[0])); });
+    const res = await upload('/api/releases', { appId: id, version: '1.0.0', description: 'x', payload, rawSize: String(rawSize), signature: forged }, { DEPLOY_BUCKET: bucket });
+    expect(res.status).toBe(422);
+    expect(res.body.field).toBe('signature');
+    expect(writes).toEqual([]);
+    expect(await env.DEPLOY_BUCKET.head(`${id}/manifest.json`)).toBeNull();
+    // The right key, but a signature made for other bytes (another version), does not verify either.
+    const forOther = await browserSignature(id, '1.0.0', signer, { payload, rawSize });
+    const moved = await upload('/api/releases', { appId: id, version: '1.0.1', description: 'x', payload, rawSize: String(rawSize), signature: forOther });
+    expect([moved.status, moved.body.field]).toEqual([422, 'signature']);
   });
 
   test('an unsigned container is signed (payload taken over); one signed with another key is refused', async () => {
-    const { id, publicKey } = await withKey();
+    const id = appId('K');
+    const { publicKey, signer } = await attachNewKey(id);
     const container = await unsignedContainer(id, '2.0.0');
-    const res = await upload('/api/releases', { appId: id, version: '2.0.0', description: 'CI', sign: '1', container });
+    const signature = await browserSignature(id, '2.0.0', signer, { container });
+    const res = await upload('/api/releases', { appId: id, version: '2.0.0', description: 'CI', container, signature });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     const stored = new Uint8Array(await (await env.DEPLOY_BUCKET.get(`${id}/${id}-2.0.0.bin`))!.arrayBuffer());
     const h = readHeader(stored);
     expect(toHex(h.publicKey!).toUpperCase()).toBe(publicKey);
     expect(toHex(stored.subarray(h.headerSize))).toBe(toHex(container.subarray(readHeader(container).headerSize)));
 
-    // The Python-signed ABCDEFGH container is signed with the fixture key, not this folder's.
+    // The Python-signed ABCDEFGH container is signed with the fixture key, not this application's.
     const other = fixtures.cases[1];
-    await ok('POST', `/api/folders/${other.app_id}/key`, { action: 'generate' });
-    const foreign = await upload('/api/releases', { appId: other.app_id, version: other.version, description: 'x', sign: '1', container: unb64(other.python_signed_b64) });
+    await attachNewKey(other.app_id);
+    const foreign = await upload('/api/releases', { appId: other.app_id, version: other.version, description: 'x', container: unb64(other.python_signed_b64) });
     expect(foreign.status).toBe(422);
     expect(foreign.body.error).toMatch(/another key/);
   });
 
-  test('sign=1 without a key is refused', async () => {
-    expect((await release(appId(), '1.0.0', { sign: '1' })).status).toBe(422);
+  test('a signature without a public key is refused; so is a private key in the form', async () => {
+    const id = appId();
+    const { payload, rawSize } = await zlibPayload();
+    const res = await upload('/api/releases', { appId: id, version: '1.0.0', description: 'x', payload, rawSize: String(rawSize), signature: btoa(String.fromCharCode(...new Uint8Array(64))) });
+    expect([res.status, res.body.field]).toEqual([422, 'signature']);
+    const leaked = await upload('/api/releases', { appId: id, version: '1.0.0', description: 'x', payload, rawSize: String(rawSize), privateKey: fixtures.key.private_b64 });
+    expect([leaked.status, leaked.body.field]).toEqual([400, 'privateKey']);
+    expect(await env.DEPLOY_BUCKET.head(`${id}/manifest.json`)).toBeNull();
   });
 });
 

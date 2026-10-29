@@ -11,8 +11,8 @@
 // The archive timestamp of an unfinished delete is kept in STATE deleting/<APP_ID>.json, so a
 // repeat (or a retry after a failure) continues in the same archive. When the bucket holds
 // nothing more, the folder settings move to the archive (folder-settings.json), the record goes
-// and the delete is logged. The signing key stays: controllers in the field carry its public
-// key, and a folder made again under that App ID signs with the same key.
+// and the delete is logged. The public key stays: controllers in the field carry it, and a
+// folder made again under that App ID is signed with the same key pair.
 
 import type { Env, User } from './env';
 import { listFolder, manifestKey } from './bucket';
@@ -51,7 +51,7 @@ export async function deleteFolder(env: Env, user: User, appId: string, body: De
   const [objects, settings] = await Promise.all([listFolder(env.DEPLOY_BUCKET, appId), loadFolderSettingsVersioned(env, appId)]);
   let record = await readJson<Deleting>(env.STATE, deletingKey(appId));
   if (!record) {
-    if (!objects.length && !settings) throw new HttpError(404, `There is nothing to delete in ${appId} (its signing key always stays).`);
+    if (!objects.length && !settings) throw new HttpError(404, `There is nothing to delete in ${appId} (its public key always stays).`);
     const fresh: Deleting = { app_id: appId, started_at: new Date().toISOString(), actor: user.email, reason, controllers, deleted: 0, bytes: 0 };
     // Two colleagues starting at once: the second continues the first one's archive.
     record = (await writeJson(env.STATE, deletingKey(appId), fresh, 'absent')) ? { value: fresh, etag: '' } : await readJson<Deleting>(env.STATE, deletingKey(appId));

@@ -1,9 +1,9 @@
 {
   "name": "gocontroll-deploy-intranet",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
-  "description": "GOcontroll Deploy at deploy.gocontroll.tools: publish S1 firmware, Linux applications, module firmware (firmware.gocontroll.tech) and images for customers (images.gocontroll.tech)",
+  "description": "GOcontroll Deploy at deploy.gocontroll.tools: publish S1 firmware (signed in the browser), Linux applications, module firmware (firmware.gocontroll.tech) and images for customers (images.gocontroll.tech); signing key pairs",
   "scripts": {
     "dev": "wrangler dev",
     "predeploy": "npm run typecheck && npm test",

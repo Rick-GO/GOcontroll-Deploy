@@ -5,7 +5,8 @@
 
 import { env } from 'cloudflare:test';
 import { expect, test } from 'vitest';
-import { appId, call, controller, customer, ok, upload, zlibPayload } from './helpers';
+import { generateKeyPair, signerFor } from '../public/js/signing.js';
+import { appId, browserSignature, call, controller, customer, ok, upload, zlibPayload } from './helpers';
 
 const sources = import.meta.glob('../src/**/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
@@ -38,9 +39,11 @@ test('every statement on BUSINESS_DB and MODULINE_DB is a SELECT of what Deploy 
 
   const { payload, rawSize } = await zlibPayload();
   expect((await upload('/api/releases', { appId: id, version: '1.0.0', description: 'x', payload, rawSize: String(rawSize) }, dbs)).status).toBe(200);
-  await ok('POST', `/api/folders/${id}/key`, { action: 'generate', replace: true, confirm: id }, 200, dbs);
-  expect((await upload('/api/sign', { appId: id, version: '1.0.1', payload, rawSize: String(rawSize) }, dbs)).status).toBe(200);
-  expect((await upload('/api/releases', { appId: id, version: '1.0.1', description: 'x', sign: '1', payload, rawSize: String(rawSize) }, dbs)).status).toBe(200);
+  const pair = await generateKeyPair();
+  await ok('PUT', `/api/folders/${id}/key`, { publicKey: pair.publicHex }, 200, dbs);
+  const signature = await browserSignature(id, '1.0.1', await signerFor(pair.privatePem, pair.publicHex), { payload, rawSize });
+  expect((await upload('/api/sign', { appId: id, version: '1.0.1', payload, rawSize: String(rawSize), signature }, dbs)).status).toBe(200);
+  expect((await upload('/api/releases', { appId: id, version: '1.0.1', description: 'x', signature, payload, rawSize: String(rawSize) }, dbs)).status).toBe(200);
   for (const path of ['/api/me', '/api/health', '/api/overview', `/api/folders/${id}`, `/api/folders/${id}/key`, '/api/customers', `/api/downloads?appId=${id}`]) {
     expect((await call('GET', path, undefined, dbs)).status, path).toBe(200);
   }

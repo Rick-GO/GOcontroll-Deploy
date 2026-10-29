@@ -1,7 +1,7 @@
-// The status pages: every folder (application) with its releases, customer, controller type,
-// controllers and downloads (overview), one folder in detail, and the keys list.
+// The Applications pages: every folder (application) with its releases, customer, controller type,
+// public key, controllers and downloads (overview), and one folder in detail.
 //
-// A folder is what the bucket holds under <APP_ID>/, a signing key (STATE keys/), or settings
+// A folder is what the bucket holds under <APP_ID>/, a public key (STATE keys/), or settings
 // (STATE folders/: a folder made here before its first release, or a customer or controller
 // set by hand). Any of the three makes it show.
 //
@@ -32,8 +32,8 @@ import { dayCounts, fileDownloads, lastDays, loadWindow, type DayCounts } from '
 import { toHex } from './goco';
 import { controllerGroups, provisionedProjects, type ControllerGroup } from './moduline';
 import {
-  appIdsWithKey, listAll, loadFolderSettings, loadKey, readJson, settingsEntry, settingsIndex,
-  type ControllerType, type SettingsIndexEntry, type StoredKey,
+  keyInfo, loadFolderSettings, loadKey, publicKeys, readJson, settingsEntry, settingsIndex,
+  type ControllerType, type SettingsIndexEntry,
 } from './state';
 import { HttpError } from './lib/http';
 import { folderKey, isLinuxController, rootEntry } from './linux';
@@ -87,8 +87,8 @@ export function resolveController(manifestKindOfFolder: FolderKind, manual: Cont
 
 /**
  * The kind of a folder: its manifest's; without a manifest, S1 when its settings say S1 (or
- * when it has a signing key and no controller set: keys are only made for S1 folders), Linux
- * when they say M1, L4 or HMI1.
+ * when it has a public key and no controller set: signing is for S1 firmware), Linux when they
+ * say M1, L4 or HMI1 (a Linux application can hold a public key too, kept for provisioning).
  */
 export function folderKind(manifestDoc: Record<string, unknown> | null | undefined, hasManifest: boolean, settings: SettingsIndexEntry | null | undefined, hasKey: boolean): FolderKind {
   const kind = manifestKind(manifestDoc);
@@ -153,6 +153,7 @@ export interface FolderSummary {
   lastUpload: string | null;
   distributionUrl: string | null;
   hasKey: boolean;
+  publicKey: string | null;  // the application's public key (130 hex), or null
   inBucket: boolean;
   customer: FolderCustomer | null;
   controllers: ControllerStats;
@@ -162,7 +163,7 @@ export interface FolderSummary {
 export async function folderSummaries(env: Env): Promise<FolderSummary[]> {
   const [objects, keyed, settings, groups] = await Promise.all([
     listBucket(env.DEPLOY_BUCKET),
-    appIdsWithKey(env),
+    publicKeys(env),
     settingsIndex(env),
     controllerGroups(env),
   ]);
@@ -180,7 +181,7 @@ export async function folderSummaries(env: Env): Promise<FolderSummary[]> {
     byFolder.set(name, f);
   }
   // A key or settings made before the first release still show their folder.
-  for (const id of [...keyed, ...settings.keys()]) if (!byFolder.has(id)) byFolder.set(id, { bytes: 0, lastUpload: null, objects: 0 });
+  for (const id of [...keyed.keys(), ...settings.keys()]) if (!byFolder.has(id)) byFolder.set(id, { bytes: 0, lastUpload: null, objects: 0 });
 
   const manual = new Map<string, number | null>([...settings].map(([id, s]) => [id, s.customer_id]));
   const sources = await customerSources(env, manual, groups);
@@ -205,6 +206,7 @@ export async function folderSummaries(env: Env): Promise<FolderSummary[]> {
       lastUpload: stats.lastUpload === null ? null : new Date(stats.lastUpload).toISOString(),
       distributionUrl: entries.length ? folderDistribution(entries, latest).distributionUrl : kind === 's1' ? own?.distribution_url ?? null : null,
       hasKey: keyed.has(appId),
+      publicKey: keyed.get(appId) ?? null,
       inBucket: stats.objects > 0,
       customer: resolveCustomer(appId, sources),
       controllers: controllerStats(appGroups, latest),
@@ -244,29 +246,6 @@ export async function overview(env: Env) {
       ...(window.configured ? { missingDays: window.missingDays } : {}),
     },
   };
-}
-
-// ── Keys ─────────────────────────────────────────────────────────────────────
-
-/** Every folder's key, and the S1 folders that have none (the Keys page). */
-export async function keysList(env: Env) {
-  const [folders, keyObjects] = await Promise.all([folderSummaries(env), listAll(env.STATE, { prefix: 'keys/' })]);
-  const byId = new Map(folders.map((f) => [f.appId, f]));
-  const stored = await Promise.all(keyObjects.filter((o) => o.key.endsWith('.json')).map(async (o) => (await readJson<StoredKey>(env.STATE, o.key))?.value ?? null));
-  const keys = stored
-    .filter((k): k is StoredKey => Boolean(k))
-    .sort((a, b) => a.app_id.localeCompare(b.app_id))
-    .map((k) => {
-      const f = byId.get(k.app_id);
-      return {
-        appId: k.app_id, publicKey: k.public_key, source: k.source, createdAt: k.created_at, createdBy: k.created_by,
-        inBucket: f?.inBucket ?? false, customer: f?.customer ?? null, controller: f?.controller ?? null,
-      };
-    });
-  const withoutKey = folders
-    .filter((f) => !f.hasKey && (f.kind === 's1' || f.controller === 'S1'))
-    .map((f) => ({ appId: f.appId, customer: f.customer, controller: f.controller }));
-  return { keys, withoutKey };
 }
 
 // ── One folder ───────────────────────────────────────────────────────────────
@@ -368,7 +347,7 @@ export async function folderDetail(env: Env, appId: string, days = 30) {
     latest,
     distributionUrl,
     mixedHosts: named.mixedHosts,
-    key: key ? { publicKey: key.value.public_key, source: key.value.source, createdAt: key.value.created_at, createdBy: key.value.created_by } : null,
+    key: key ? keyInfo(key.value) : null,
     customer,
     controllers: {
       ...controllerStats(groups, latest),

@@ -3,7 +3,7 @@
 // Adapted from GOcontroll-Logistic (src/auth.ts). Access decides who may open the app (policy
 // on an Entra group). The Worker checks the group as well: a valid token without one of
 // DEPLOY_GROUPS is refused, so an Access policy that is too wide never lets anyone publish
-// firmware to the controllers in the field or use a signing key. Only the group's object ID
+// firmware to the controllers in the field or change an application's public key. Only the group's object ID
 // counts, never its display name: any employee can create a Microsoft 365 group with any name
 // (as on Team since its commit 8ba6f0a). An empty DEPLOY_GROUPS lets nobody in, and so does a
 // failed group lookup (fail closed). There is no in-app admin role.

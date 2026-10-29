@@ -482,9 +482,20 @@ p.hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
 }
 .btn.sm.copy-btn { margin: 0; flex: none; }
 .btn.copy-btn.copied { border-color: rgba(22,163,74,.5); color: #166534; background: rgba(22,163,74,.06); }
-.backup-foot { justify-content: space-between; align-items: center; }
-.backup-foot .check { flex: 1 1 220px; }
-.modal-foot.backup-foot .btn { flex: 0 0 auto; }
+.keypair-foot { justify-content: space-between; align-items: center; }
+.keypair-foot .check { flex: 1 1 220px; }
+.modal-foot.keypair-foot .btn { flex: 0 0 auto; }
+#keypair-leave p { margin: 0 0 8px; }
+
+/* ── The private key in step 2 of New release: whether it belongs to the public key ── */
+.key-check { display: flex; align-items: center; gap: 8px; font-size: 13px; min-height: 24px; }
+.key-check.ok { color: #166534; }
+.key-check.err { color: #991b1b; }
+.key-check svg { width: 18px; height: 18px; flex: none; }
+.choices { display: grid; gap: 8px; }
+.choices .check { align-items: flex-start; font-size: 13px; }
+.choices .check input { margin-top: 2px; }
+.choices .mono { overflow-wrap: anywhere; }
 
 /* ── The file picker (picker.js) ── */
 .drop {

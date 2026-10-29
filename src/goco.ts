@@ -8,6 +8,12 @@
 // most 8 characters keeps producing byte-identical 0x02/0x03 output for the controllers in
 // the field.
 //
+// Since 0.7.0 Deploy holds no private key: the Worker builds the scope a signature covers
+// (signedScope()), the browser signs it with the private key the colleague gives, and the
+// Worker checks that signature against the folder's public key before it puts the header
+// together (headerWithSignature(), verifySignature()). The bytes are the same as when the
+// Worker signed itself (buildHeader() with a signer, which the fixtures still exercise).
+//
 // To keep the Worker's CPU time low, nothing here loops over the payload in JavaScript:
 // SHA-256 and ECDSA run in crypto.subtle, concatenation is a native copy, the CRC covers only
 // the header. The payload is a zlib stream the browser made (CompressionStream('deflate'));
@@ -267,11 +273,48 @@ export interface Signer {
   publicKey: Uint8Array;  // the 65-byte uncompressed point that belongs to it
 }
 
+/** CRC-16 over everything before the last two bytes, written into them (little endian). */
+function withCrc(header: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer> {
+  const crc = crc16ccitt(header.subarray(0, header.length - 2));
+  header[header.length - 2] = crc & 0xff;
+  header[header.length - 1] = crc >> 8;
+  return header;
+}
+
+/**
+ * The header bytes a signature covers: the common body of the signed header version
+ * (0x03/0x05) plus the public key. The ECDSA signature is over SHA-256(scope + the whole
+ * compressed payload), the scope the ESP recomputes in FwVerifyEcdsaP256(). Whoever signs
+ * (the Deployment Tool, or the browser with a private key Deploy never sees) signs exactly
+ * these bytes followed by the payload; headerWithSignature() puts the result together.
+ */
+export function signedScope(opts: {
+  appId: string;
+  version: string;
+  compressedSize: number;
+  rawSize: number;
+  payloadSha256: Uint8Array;
+  publicKey: Uint8Array;
+}): Uint8Array<ArrayBuffer> {
+  const { appId, compressedSize, rawSize, payloadSha256, publicKey } = opts;
+  if (!Number.isSafeInteger(rawSize) || rawSize < 0 || rawSize > 0xffffffff) throw new GocoError('raw size out of range');
+  if (!Number.isSafeInteger(compressedSize) || compressedSize < 0 || compressedSize > 0xffffffff) throw new GocoError('compressed size out of range');
+  if (payloadSha256.length !== 32) throw new GocoError('the payload SHA-256 must be 32 bytes');
+  if (publicKey.length !== PUBLIC_KEY_SIZE || publicKey[0] !== 0x04) throw new GocoError('public key must be a 65-byte uncompressed point');
+  const body = commonBody(pickVersion(appId, true), appId, parseVersion(opts.version), compressedSize, rawSize, payloadSha256);
+  return concat(body, publicKey);
+}
+
+/** A signed header: its scope (signedScope()), the raw R || S signature over scope + payload, the CRC. */
+export function headerWithSignature(scope: Uint8Array, signature: Uint8Array): Uint8Array<ArrayBuffer> {
+  if (signature.length !== SIGNATURE_SIZE) throw new GocoError(`signature is ${signature.length} bytes, expected ${SIGNATURE_SIZE}`);
+  return withCrc(concat(scope, signature, new Uint8Array(2)));
+}
+
 /**
  * The header for a compressed payload: unsigned (0x02/0x04) without `signer`, signed
- * (0x03/0x05) with it. The signature covers SHA-256(common body + public key + the whole
- * compressed payload), the scope the ESP recomputes in FwVerifyEcdsaP256(); WebCrypto's
- * ECDSA gives the raw R || S the header carries.
+ * (0x03/0x05) with it (signedScope() + headerWithSignature()); WebCrypto's ECDSA gives the
+ * raw R || S the header carries.
  */
 export async function buildHeader(opts: {
   appId: string;
@@ -283,24 +326,14 @@ export async function buildHeader(opts: {
 }): Promise<Uint8Array<ArrayBuffer>> {
   const { appId, payload, rawSize, signer } = opts;
   if (!Number.isSafeInteger(rawSize) || rawSize < 0 || rawSize > 0xffffffff) throw new GocoError('raw size out of range');
-  const version = parseVersion(opts.version);
   const digest = opts.payloadSha256 ?? (await sha256(payload));
-  const headerVersion = pickVersion(appId, Boolean(signer));
-  const body = commonBody(headerVersion, appId, version, payload.length, rawSize, digest);
-  let header: Uint8Array<ArrayBuffer>;
   if (signer) {
-    if (signer.publicKey.length !== PUBLIC_KEY_SIZE || signer.publicKey[0] !== 0x04) throw new GocoError('public key must be a 65-byte uncompressed point');
-    const scope = concat(body, signer.publicKey);
+    const scope = signedScope({ appId, version: opts.version, compressedSize: payload.length, rawSize, payloadSha256: digest, publicKey: signer.publicKey });
     const signature = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, signer.privateKey, concat(scope, payload)));
-    if (signature.length !== SIGNATURE_SIZE) throw new GocoError(`signature is ${signature.length} bytes, expected ${SIGNATURE_SIZE}`);
-    header = concat(scope, signature, new Uint8Array(2));
-  } else {
-    header = concat(body, new Uint8Array(2));
+    return headerWithSignature(scope, signature);
   }
-  const crc = crc16ccitt(header.subarray(0, header.length - 2));
-  header[header.length - 2] = crc & 0xff;
-  header[header.length - 1] = crc >> 8;
-  return header;
+  const body = commonBody(pickVersion(appId, false), appId, parseVersion(opts.version), payload.length, rawSize, digest);
+  return withCrc(concat(body, new Uint8Array(2)));
 }
 
 /**

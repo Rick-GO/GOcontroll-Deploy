@@ -1,5 +1,5 @@
-// The status of the bucket (overview, one folder, downloads, keys) and what is set per
-// folder: a new folder, its settings (customer, controller), its signing key, and the
+// The status of the bucket (overview, one folder, downloads) and what is set per folder
+// (application): a new folder, its settings (customer, controller), its public key, and the
 // protected delete.
 
 import { Hono } from 'hono';
@@ -9,22 +9,19 @@ import { distributionUrls, manifestKind, readManifest } from '../bucket';
 import { loadCustomer } from '../business';
 import { deleteFolder, deleteUnderWay } from '../delete';
 import { loadWindow } from '../downloads';
-import { KeyFormatError, generateKey, parsePrivateKey, privateKeyPem, publicKeyHex, scalarB64, type KeyMaterial } from '../keys';
+import { KeyFormatError, checkedPublicKey } from '../keys';
 import { HttpError, parse } from '../lib/http';
 import { LINUX_APP_ID, LINUX_APP_ID_MAX, LINUX_VERSION, PackageSchema, folderKey, isLinuxController, normalisePackage, rootEntry } from '../linux';
 import { folderParam, s1AppId } from '../lib/validate';
-import { downloadDays, folderDetail, folderIdentity, keysList, overview } from '../status';
+import { downloadDays, folderDetail, folderIdentity, overview } from '../status';
 import {
-  CONTROLLER_TYPES, audit, loadFolderSettingsVersioned, loadKey, saveFolderSettings, saveKey,
+  CONTROLLER_TYPES, audit, keyInfo, loadFolderSettingsVersioned, loadKey, saveFolderSettings, saveKey,
   type FolderSettings, type StoredKey,
 } from '../state';
-import { keyFailure, keyVault } from '../vault';
 
 export const folders = new Hono<AppEnv>();
 
 folders.get('/overview', async (c) => c.json(await overview(c.env)));
-
-folders.get('/keys', async (c) => c.json(await keysList(c.env)));
 
 folders.get('/folders/:appId', async (c) => c.json(await folderDetail(c.env, folderParam(c.req.param('appId')))));
 
@@ -36,7 +33,7 @@ folders.get('/downloads', async (c) => {
   return c.json(downloadDays(await loadWindow(c.env, days), appId));
 });
 
-/** A folder exists when the bucket holds something under it, a key was made for it, or it has settings. */
+/** A folder exists when the bucket holds something under it, a public key was attached to it, or it has settings. */
 async function folderExists(env: Env, appId: string): Promise<boolean> {
   const [objects, key, settings] = await Promise.all([
     env.DEPLOY_BUCKET.list({ prefix: `${appId}/`, limit: 1 }),
@@ -204,77 +201,64 @@ folders.delete('/folders/:appId', async (c) => {
   return c.json(await deleteFolder(c.env, c.get('user'), appId, body));
 });
 
-// ── Signing key of a folder ──────────────────────────────────────────────────
-
-const keyInfo = (k: StoredKey) => ({ publicKey: k.public_key, source: k.source, createdAt: k.created_at, createdBy: k.created_by });
+// ── Public key of an application ─────────────────────────────────────────────
+//
+// Deploy keeps the public key only (since 0.7.0): the pair is made in the browser (Key generator),
+// the colleague keeps the private key. A key of before 0.7.0 also holds its private key, sealed;
+// the API says only that it does (keyInfo). Attaching works for any application, S1 or Linux (for
+// a Linux application it is kept for provisioning; only S1 firmware is signed). Replacing moves the
+// old key to keys-retired/ (never deleted: controllers in the field carry it).
 
 folders.get('/folders/:appId/key', async (c) => {
   const appId = folderParam(c.req.param('appId'));
   const key = await loadKey(c.env, appId);
-  if (!key) throw new HttpError(404, `The folder ${appId} has no signing key.`);
+  if (!key) throw new HttpError(404, `The application ${appId} has no public key.`);
   return c.json(keyInfo(key.value));
 });
 
-const KeyBody = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('generate'), replace: z.boolean().optional(), confirm: z.string().optional() }),
-  z.object({
-    action: z.literal('import'),
-    privateKey: z.string({ message: 'Paste the private key.' }).trim().min(1, 'Paste the private key.').max(20_000, 'That is too long for a key.'),
-    replace: z.boolean().optional(),
-    confirm: z.string().optional(),
-  }),
-], { message: 'Choose generate or import.' });
+const KeyBody = z.object({
+  publicKey: z.string({ message: 'Paste the public key.' }).trim().min(1, 'Paste the public key.').max(400, 'That is too long for a public key.'),
+  replace: z.boolean().optional(),
+  confirm: z.string().optional(),
+});
 
-folders.post('/folders/:appId/key', async (c) => {
-  const appId = s1AppId(c.req.param('appId'));
-  const body = parse(KeyBody, await c.req.json().catch(() => null));
-  const user = c.get('user');
+/** A body that carries a private key: refused unread, never stored or logged. */
+const carriesPrivateKey = (body: unknown) => Boolean(body && typeof body === 'object' && ('privateKey' in body || 'private_key' in body));
 
-  const [manifest, settings] = await Promise.all([readManifest(c.env.DEPLOY_BUCKET, appId), loadFolderSettingsVersioned(c.env, appId)]);
-  if (manifestKind(manifest?.doc) === 'linux' || isLinuxController(settings?.value.controller)) {
-    throw new HttpError(422, `The folder ${appId} is a Linux application; go-deploy packages are not signed (go-deploy checks their SHA-256), signing keys are for S1 firmware.`);
+// Generating and importing in the Worker ended with 0.7.0. The body is not read: an old page may
+// still send a private key here.
+folders.post('/folders/:appId/key', () => {
+  throw new HttpError(410, 'Deploy no longer makes or keeps private keys. Make a key pair on the Key generator tab, keep its private key, and attach its public key. Reload the page.');
+});
+
+folders.put('/folders/:appId/key', async (c) => {
+  const name = folderParam(c.req.param('appId'));
+  const body = await c.req.json().catch(() => null);
+  if (carriesPrivateKey(body)) {
+    throw new HttpError(400, 'Deploy keeps only the public key: the private key stays with you. Nothing was stored.', 'privateKey');
   }
-  const existing = await loadKey(c.env, appId);
-  if (existing && !(body.replace === true && body.confirm === appId)) {
-    throw new HttpError(409, `The folder ${appId} already has a signing key. Controllers that carry its public key refuse firmware signed with another one; to replace it anyway, confirm with the App ID.`, 'confirm', { publicKey: existing.value.public_key });
-  }
-
-  let material: KeyMaterial;
+  const { publicKey: text, replace, confirm } = parse(KeyBody, body);
+  // An application that exists (any name the bucket holds), or a new S1 App ID: its key comes first.
+  const appId = (await folderExists(c.env, name)) ? name : s1AppId(name);
+  let publicKey: string;
   try {
-    material = body.action === 'generate' ? await generateKey() : await parsePrivateKey(body.privateKey);
+    publicKey = await checkedPublicKey(text);
   } catch (err) {
-    if (err instanceof KeyFormatError) throw new HttpError(422, err.message, 'privateKey');
+    if (err instanceof KeyFormatError) throw new HttpError(422, err.message, 'publicKey');
     throw err;
   }
-  const publicKey = publicKeyHex(material.publicKey);
-  if (existing && existing.value.public_key === publicKey) throw new HttpError(422, 'That is the key this folder already has.', 'privateKey');
-
-  // Seal, and open it again before storing: a key that would not open is never kept.
-  const vault = keyVault(c.env.SIGNING_KEYS_KEY);
-  let sealed: string;
-  try {
-    sealed = await vault.seal(material.scalar, appId);
-    const back = await vault.unseal(sealed, appId);
-    if (back.length !== material.scalar.length || back.some((b, i) => b !== material.scalar[i])) throw new Error('sealed key does not round-trip');
-  } catch (err) {
-    throw keyFailure(err);
+  const user = c.get('user');
+  const existing = await loadKey(c.env, appId);
+  if (existing && existing.value.public_key === publicKey) throw new HttpError(422, 'That is the public key this application has already.', 'publicKey');
+  if (existing && !(replace === true && confirm === appId)) {
+    throw new HttpError(409, `The application ${appId} has a public key already. Controllers that carry it refuse firmware signed with another key; to replace it anyway, confirm with the App ID.`, 'confirm', { publicKey: existing.value.public_key });
   }
 
-  const source = body.action === 'generate' ? 'generated' : 'imported';
-  const stored: StoredKey = {
-    app_id: appId, public_key: publicKey, sealed_private_key: sealed, source,
-    created_at: new Date().toISOString(), created_by: user.email,
-  };
+  const stored: StoredKey = { app_id: appId, public_key: publicKey, source: 'attached', created_at: new Date().toISOString(), created_by: user.email };
   await saveKey(c.env, appId, stored, existing);
   await audit(c.env, {
-    action: existing ? 'key-replace' : body.action === 'generate' ? 'key-generate' : 'key-import',
-    app_id: appId, actor: user.email, source, public_key: publicKey,
-    ...(existing ? { previous_public_key: existing.value.public_key } : {}),
+    action: existing ? 'key-replace' : 'key-attach', app_id: appId, actor: user.email, source: 'attached', public_key: publicKey,
+    ...(existing ? { previous_public_key: existing.value.public_key, previous_source: existing.value.source } : {}),
   }).catch((err) => console.error('audit', err));
-
-  // The only time a private key leaves the Worker: the backup of a key generated here.
-  const backup = body.action === 'generate'
-    ? { privateKeyB64: scalarB64(material.scalar), privateKeyPem: await privateKeyPem(material) }
-    : undefined;
-  return c.json({ ...keyInfo(stored), ...(backup ? { backup } : {}) });
+  return c.json(keyInfo(stored));
 });

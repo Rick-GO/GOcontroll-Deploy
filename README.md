@@ -1,11 +1,13 @@
 # GOcontroll Deploy
 
 Publishing controller applications at **https://deploy.gocontroll.tools**: Moduline **S1**
-firmware (an STM32 application binary in a GOCO container, signed with the folder's key when it
-has one) and, for **M1, L4 and HMI1**, Linux **go-deploy packages** (`update.tar.gz` + version
+firmware (an STM32 application binary in a GOCO container, signed when the application has a
+public key, in the browser, with the private key the colleague gives) and, for **M1, L4 and HMI1**, Linux **go-deploy packages** (`update.tar.gz` + version
 manifest), into GOcontroll's own distribution bucket (R2 `gocontroll-deploy`), with the manifest
 pointing at them so controllers on update-to-latest install them. A binary can also be signed without publishing it (the signed container comes back
-as a download). One **signing key per App ID** lives here, sealed. And the **status** of every
+as a download). The **Key generator** makes signing key pairs in the browser; Deploy keeps only the
+**public key, per application** (to copy or download when a controller is provisioned), never a
+private key. And the **status** of every
 deployment: customers → their applications (App ID folders) → controller type, releases, file
 and header checks, the controllers on that App ID and the download counts. New applications (S1
 and Linux) are made here; an application folder can be deleted, strongly protected and always archived
@@ -18,7 +20,10 @@ Images tab shows how often each release is downloaded. For the members of the En
 **`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> The Worker, the API and the pages are deployed (0.6.1 on 2026-10-29, version `ebd51294`: choosing a module's repository folder on the Firmware tab
+> The Worker, the API and the pages are deployed (0.7.0 on 2026-10-29: the tabs are **Applications**, **Firmware**, **Images** and
+> **Key generator** (were Status and Keys; old links still work); key pairs are made in the browser and Deploy keeps only the public key
+> per application; a signed S1 release is signed in the browser with the private key the colleague gives, and the Worker checks the
+> signature against the public key ([Signing keys](#signing-keys)); 0.6.1 on 2026-10-29, version `ebd51294`: choosing a module's repository folder on the Firmware tab
 > asks GitHub whether HEAD is the newest commit of its branch and warns when GitHub has newer commits, when HEAD is not pushed, or
 > both ([Module firmware](#module-firmware-firmwaregocontrolltech)); 0.6.0 on 2026-10-28, version `86d281d3`, `gocontroll-images` version `5cb45e29`: images.gocontroll.tech signs customers in with
 > their e-mail address and a link by mail instead of Access with a one-time PIN; this Worker sends that mail through its RPC
@@ -39,18 +44,20 @@ Images tab shows how often each release is downloaded. For the members of the En
 
 ## Pages
 
-The tab bar holds **Status**, **Keys**, **Firmware** and **Images**; an application (folder) has a page of its own. Plain ES
-modules in `public/js/` (`app.js` routes, one module per page), no framework, no build step.
-Old links `#/publish` and `#/sign` (milestone 1) lead to the folder page with `?app=`, else to Status.
+The tab bar holds **Applications**, **Firmware**, **Images** and **Key generator**, in that order (`public/js/routes.js`); an
+application (folder) has a page of its own. Plain ES modules in `public/js/` (`app.js` routes, one module per page), no framework,
+no build step. Older links keep working (bookmarks), replaced without a new history entry: `#/` and `#/status` (with their
+`?q=&show=`) go to `#/applications`, `#/folders/<APP_ID>` to `#/applications/<APP_ID>`, `#/keys` (the Keys tab until 0.6.1) to
+`#/key-generator`, and `#/publish` and `#/sign` (milestone 1) to the application of their `?app=`, else to Applications.
 
 | Page | What you do there |
 |---|---|
-| **Status** (`#/`) | Totals, then every customer with its applications and the folders without a customer. Columns: App ID, Controller (S1, M1, L4, HMI1 or a derived type), latest, releases, signing key ("n/a" for Linux applications, which are not signed), last upload. Search and a filter (all / S1 / S1 without key / M1 / L4 / HMI1 / controller unknown) stay in the address. At the bottom, **New application…**: controller S1, M1, L4 or HMI1, then the App ID (S1: up to 32 characters, no spaces or "/"; Linux: lower case `^[a-z0-9][a-z0-9._-]*$`, up to 64), customer, and for S1 the distribution host. Creating it opens its folder page. |
-| **Folder, S1** (`#/folders/<APP_ID>`) | Customer and controller (**Change…** each). **New release** in three steps: **1 File** (`.bin` / S-record / GOCO container, version from the filename) → **2 Sign** (public key with Copy; Generate or Import a key there, or tick *publish unsigned*) → **3 Publish** (description, Replace… / latest-moves-back confirmations, binary URL with Copy), or **Download signed file instead**. Then the releases with header checks, the signing key card, controllers per version, downloads per day, other files, and the **Danger zone**. |
-| **Folder, Linux (M1, L4, HMI1)** | Customer and controller. **Package** card: the files in `files/` (name, destination, mode, owner, group) with Add / Edit / Remove; default owner and group; after install: Nothing, *Restart services* (comma list, nodered and go-simulink suggested, preview of the rendered `post-install.sh.tmpl`) or *A script of its own*. **Save package**; **Import r2-deploy.config.json…** (paste or file); **From the latest release** (files from its version manifest, `files/post-install.sh` from its tarball). **New release** in three steps: **1 Files**: one file per package file (choose per row, or drop several, matched by name), or *Upload a built package* (`update.tar.gz` + `manifest.json` from a CI `dist/`, sent as they are after a SHA-256 check here), plus the version (next patch of latest) and what changed. **2 Review**: not signed, and why (go-deploy checks SHA-256 only); size and SHA-256 of the tarball; the version manifest's files with destination, mode, owner and short SHA-256; the post-install script; `manifest.json` as it will be written; what happens to `latest_version`. **3 Publish**: Publish / Replace…, progress, result (keys written, SHA-256 with Copy, size, `latest_version`). Then the Versions table (with a Tarball download per version), controllers per version, downloads, other files, Danger zone. |
+| **Applications** (`#/applications`) | Totals, then every customer with its applications and the folders without a customer. Columns: App ID, Controller (S1, M1, L4, HMI1 or a derived type), latest, releases, public key (short, with Copy for the whole: for provisioning; "No" for an S1 application without one, "n/a" for a Linux application without one), last upload. Search and a filter (all / S1 / S1 without public key / M1 / L4 / HMI1 / controller unknown) stay in the address. At the bottom, **New application…**: controller S1, M1, L4 or HMI1, then the App ID (S1: up to 32 characters, no spaces or "/"; Linux: lower case `^[a-z0-9][a-z0-9._-]*$`, up to 64), customer, and for S1 the distribution host. Creating it opens its folder page. |
+| **Application, S1** (`#/applications/<APP_ID>`) | Customer and controller (**Change…** each). **New release** in three steps: **1 File** (`.bin` / S-record / GOCO container, version from the filename) → **2 Sign** (the public key with Copy, and the **private key**: pasted, or from a file (`.pem`, the base64 value, a `.cred` file); checked in the browser against the public key, "belongs" or "does not belong", as soon as it is given; it stays in the browser. A container signed already needs none. Without a public key: *Generate key pair…* or *Attach a public key…* right there, or tick *publish unsigned*) → **3 Publish** (description, Replace… / latest-moves-back confirmations, binary URL with Copy), or **Download signed file instead**. Then the releases with header checks, the **Public key** card (Copy, *Download .pub*, where it came from, *Replace…*; a warning when the signed releases carry another key, with that key to attach), controllers per version, downloads per day, other files, and the **Danger zone**. |
+| **Application, Linux (M1, L4, HMI1)** | Customer and controller. **Package** card: the files in `files/` (name, destination, mode, owner, group) with Add / Edit / Remove; default owner and group; after install: Nothing, *Restart services* (comma list, nodered and go-simulink suggested, preview of the rendered `post-install.sh.tmpl`) or *A script of its own*. **Save package**; **Import r2-deploy.config.json…** (paste or file); **From the latest release** (files from its version manifest, `files/post-install.sh` from its tarball). **New release** in three steps: **1 Files**: one file per package file (choose per row, or drop several, matched by name), or *Upload a built package* (`update.tar.gz` + `manifest.json` from a CI `dist/`, sent as they are after a SHA-256 check here), plus the version (next patch of latest) and what changed. **2 Review**: not signed, and why (go-deploy checks SHA-256 only); size and SHA-256 of the tarball; the version manifest's files with destination, mode, owner and short SHA-256; the post-install script; `manifest.json` as it will be written; what happens to `latest_version`. **3 Publish**: Publish / Replace…, progress, result (keys written, SHA-256 with Copy, size, `latest_version`). Then the Versions table (with a Tarball download per version), the **Public key** card (a public key can be kept for provisioning; Linux packages are not signed), controllers per version, downloads, other files, Danger zone. |
 | **Firmware** (`#/firmware`) | Module firmware on firmware.gocontroll.tech, the way the Moduline Module Firmware Deployer (agent 08) published it. **Publish firmware**: *Choose the source folder…* (the module's repository, e.g. `Module-Input`; `showDirectoryPicker`, or a folder field in browsers without it, or drop the folder) or *Choose .srec files…*. From a folder Deploy takes every `<…>-BOOT/<name>.srec`, as the CI did, and reads the repository's `.git` in the browser: the line above the files names the repository, branch, HEAD and the number of version tags; the next notice says whether HEAD is the newest commit of its branch, asked of GitHub every time a folder is chosen: green when it is, a warning when GitHub has newer commits (with how many and the newest; pull first and choose the folder again), when HEAD is not on GitHub yet (push first), when both moved on, or when the branch is not on GitHub; without GitHub (no token, a repository Deploy may not read) the same from `origin/<branch>` as of the last fetch, saying so. A notice after that says that the repository has no publish workflow of its own (the safety net, removed from every module repository on 2026-10-29), or, should one be back, what it would do differently. Per file: module (name, hardware ID, hardware version, from the file name), version, file date and status: **New**, **Published** (the same bytes), **Published, other bytes** (cannot be published: a correction gets a new version number) or why it **cannot be used** (not committed, differs from the commit, not an S-record). Per version: the **release date** (the tag's `RELEASE_DATE` when tag `v<version>` exists, else the file's date), the **changelog** (the tag's text, else typed: one line in English, with the commits since the previous version tag beside it), the name of a module that is new on firmware.gocontroll.tech, and for a published version *Publish again* (its manifest entry, same file). **Review N files…** sends each file as a dry run and shows what will be written (new file or identical, entry added or written again, `latest_firmware` before → after, the module manifest); **Publish** writes them, lowest version first. Per version the review has *Then set tag v<version> … and make the GitHub release*, ticked when Deploy can (token set, repository folder chosen, HEAD pushed, not an older version under a safety net; else the reason): after publishing Deploy sets the tag and makes the release with the `.srec` attached, and links both (a tag that says something else: *Replace v<version>…*). Without that, or when GitHub refuses: **Set tag v<version>** with the annotation (Copy, Download), the commands and the link to make the release by hand. Below: every module (name, hardware version and ID, latest, date, number of releases), unfolding into its releases: version (link to the file, *flashed* on the first), date, changelog, SHA-256 with Copy, and who published it from Deploy and from which repository and commit, or *CI of the module repository* (published before 2026-10-29). |
 | **Images** (`#/images`) | Linux images and tools for customers on images.gocontroll.tech. **New release…**: image (for L4, M1 and/or HMI1) or tool, product (e.g. `moduline-headless`), version, title, controllers, release date, notes. A release is a **draft** until **Publish**; per draft *Add files…* (role guessed from the name: root file system, kernel, bootloader, device tree, flash script, tool, documentation, other; and the computer it runs on), upload with progress per file (32 MiB parts, three at a time, retried), the SHA-256 of each file as stored; *Remove* a file, *Edit…*, *Delete draft…*. A published release can be edited (text only) or **Withdrawn** (back to a draft; the files stay). Unfinished uploads with *Abort*. Per file of a published release **Copy link**: the customer link `images.gocontroll.tech/download/<path>` (sign in, then that file starts). **Downloads**: per release in all, this month and last month, and per month the downloads, different addresses and countries; the release cards show their count. **Latest downloads**: who downloaded which file when, this month and last month, as images.gocontroll.tech logs it. |
-| **Keys** (`#/keys`) | S1 applications with a key (App ID, customer, controller, short public key with Copy, made by and when, source) and without one (Generate / Import with the one-time backup). Plus: Linux packages (M1, L4, HMI1) are not signed; go-deploy checks the SHA-256 only. |
+| **Key generator** (`#/key-generator`, `?app=<APP_ID>` picks the application) | **Generate key pair**: an ECDSA P-256 pair made in the browser (`public/js/signing.js`), optionally for an application without a public key. A window shows the public key, the private key as base64 (`FW_PRIVATE_KEY_B64`) and as PEM, each with Copy, and **Download private key** (`<APP_ID>-signing-key.pem`) and **Download public key** (`<APP_ID>-signing-key.pub`): the files of `s1_ble.py keygen --out`. *Attach to <APP_ID>* sends the public key once *I have stored the private key* is ticked. The window closes with Close, the x and Escape; while the private key is neither downloaded nor marked as stored, closing first asks (*Close without it* / *Back to the key pair*), because the private key is gone after it. Closed without attaching (and stored), the page keeps the public key to copy, download or attach to an application. Replacing an application's key is done on its page. |
 
 ## How it works
 
@@ -58,13 +65,16 @@ Old links `#/publish` and `#/sign` (milestone 1) lead to the folder page with `?
 browser ──► Cloudflare Access (Entra ID, group CF_Deploy) ──► Worker gocontroll-deploy-intranet
    │ reads .bin/.srec, compresses (zlib)                         │  verifies Cf-Access-Jwt-Assertion
    │ and sends payload + raw size,                               │  and an object ID in DEPLOY_GROUPS
-   │ or a ready-made GOCO container                              ├─► R2 gocontroll-deploy        (the distribution bucket: read + publish)
-                                                                 ├─► R2 gocontroll-deploy-state  (keys, folder settings, log, download days, image releases)
+   │ or a ready-made GOCO container;                             │
+   │ signs the scope the Worker gives with the                   │  checks the signature against the
+   │ colleague's private key (never sent)                        │  application's public key
+   │                                                             ├─► R2 gocontroll-deploy        (the distribution bucket: read + publish)
+                                                                 ├─► R2 gocontroll-deploy-state  (public keys, folder settings, log, download days, image releases)
                                                                  ├─► R2 gocontroll-firmware      (module firmware: .srec + manifests)
                                                                  ├─► R2 gocontroll-images        (images and tools, manifest.json; reads downloads/)
                                                                  ├─► D1 gocontroll-business      (customers, projects: read only)
                                                                  ├─► D1 gocontroll-db            (controllers, project_provisioning: read only)
-                                                                 ├─► Secrets Store               (DEPLOY_SIGNING_KEYS_KEY, DEPLOY_GITHUB_TOKEN, MS365_CLIENT_SECRET; DEPLOY_CF_API_TOKEN later)
+                                                                 ├─► Secrets Store               (DEPLOY_GITHUB_TOKEN, MS365_CLIENT_SECRET, DEPLOY_SIGNING_KEYS_KEY of the keys sealed before 0.7.0; DEPLOY_CF_API_TOKEN later)
                                                                  ├─► Microsoft Graph             (ImagesMail: the sign-in links of images.gocontroll.tech)
                                                                  └─► Cloudflare GraphQL Analytics (download counts, once the token exists)
 cron 17 2 * * * ─────────────────────────────────────────────► the download counts of finished days, and the image counts of finished months, into STATE
@@ -108,7 +118,7 @@ customers   ──► e-mail address + Turnstile, link by mail ──► Worker 
   has inline styles).
 - **Small uploads, little Worker CPU**: the browser parses the S-record and compresses the
   image (`CompressionStream('deflate')`, a zlib stream); the Worker never inflates. It
-  hashes and signs with `crypto.subtle`, computes the CRC over the header only, writes header
+  hashes and checks signatures with `crypto.subtle`, computes the CRC over the header only, writes header
   and payload as one body, reads a stored binary's header with a range read of its first
   211 bytes, and lists the bucket once for the overview.
 - **Uploads** (`/api/sign`, `/api/releases`) are `multipart/form-data`, which a cross-site form
@@ -130,14 +140,18 @@ changes, `src/goco.ts` follows, and so do its cross-check fixtures.
 which runs `python -I scripts/goco-fixtures.py` against the Deployment Tool's own `goco.py` and
 `keys.py`): per App ID (4, 8, 9 and 32 characters, so all four header versions) an unsigned
 container from a known zlib payload, which `src/goco.ts` must rebuild byte for byte; a
-Python-signed one, which must verify here; and one signed by `src/goco.ts`, which Python's
-`verify_signature` verified when the fixtures were made. Python also reads back the PEM backup
-`src/keys.ts` writes. The Deployment Tool sits next to `GOcontroll-Team`
-(`DEPLOYMENT_TOOL=<its tools dir>` otherwise); its Python needs `cryptography`.
+Python-signed one, which must verify here; and one signed the way Deploy signs since 0.7.0 (the
+scope from `src/goco.ts` `signedScope`, signed by `public/js/signing.js` as the browser does, put
+together by `headerWithSignature`), which Python's `verify_signature` verified when the fixtures
+were made. Python also reads a key pair made by `public/js/signing.js` `generateKeyPair` (what the
+Key generator downloads): its PEM gives the same scalar as its base64 value, and the public key
+`keys.py` derives is its `.pub` (`browser_key_pair_read_by_python`). The Deployment Tool sits next
+to `GOcontroll-Team` (`DEPLOYMENT_TOOL=<its tools dir>` otherwise); its Python needs `cryptography`.
 
 ### Publishing a release
 
-`POST /api/releases` does what `r2.py publish()` does, with the folder's key held here:
+`POST /api/releases` does what `r2.py publish()` does; the private key is the colleague's, the
+signature is made in the browser ([Signing keys](#signing-keys)):
 
 - a description is mandatory (the manifest carries it as the release note);
 - a folder holding a Linux manifest (go-deploy packages: `versions[]`) is refused here (Linux
@@ -145,10 +159,15 @@ Python-signed one, which must verify here; and one signed by `src/goco.ts`, whic
   has no `binaries`: an S1 release never goes into another format;
 - a version already in the manifest is refused (409) unless *replace* is ticked: that binary
   may be on controllers already;
-- a folder with a signing key only gets signed releases, signed with that key: an unsigned
-  payload or container is signed here (the container's payload is taken over), a container
-  already signed with the folder's key goes out as it is, one signed with another key is
-  refused; *sign* without a key is refused;
+- an application with a public key only gets releases signed with its private key: the upload
+  carries the `signature` the browser made (over the scope `POST /api/sign/scope` gave, followed by
+  the payload); the Worker builds the scope again from what was uploaded, puts the header together
+  and refuses it unless the signature verifies against the public key (422, `signature`), before
+  anything is written. An unsigned container is re-wrapped the same way (its payload taken over); a
+  container already signed with this key goes out as it is, one signed with another key is
+  refused; without a signature (and not signed already) it is refused (422, `signature`). A
+  signature for an application without a public key is refused, and so is any request that carries
+  a private key (400, `privateKey`: not read, not kept, not logged);
 - a container's App ID and version must be the folder's and the release's;
 - the distribution URL of an existing folder is the host its manifest's URLs name; a folder
   made with *New application* takes the host chosen then (its settings); any other new folder
@@ -209,7 +228,9 @@ the CI pipeline of the skill `GOcontroll-Claude-Skills/r2-application-deploy-set
   (`test/fixtures/linux/root-manifests.json`, made by `npm run fixtures:linux` with the real
   `upload()` against an in-memory bucket).
 - **No signature**: the go-deploy contract has none; integrity is the SHA-256 in the root
-  manifest, which the Moduline dashboard sends with the update. The Keys page stays S1-only.
+  manifest, which the Moduline dashboard sends with the update. Signing stays S1-only; a public key
+  can still be attached to a Linux application, kept for provisioning (`POST /api/sign/scope` refuses
+  it).
 - Controllers download through the Moduline signed route (`updates.gocontroll.tech`), not from a
   Deploy host: root-manifest paths are relative, and a Linux application has no distribution URL.
 - `GET /api/folders/:appId/versions/:version/tarball` gives a stored package (Access-protected),
@@ -405,13 +426,13 @@ and two secrets of its own (`IMAGES_SESSION_KEY`, `IMAGES_TURNSTILE_SECRET`); no
 
 ### Applications, settings and the controller type
 
-An application is a folder: what the bucket holds under `<APP_ID>/`, a signing key, or settings
-in `STATE` (`folders/<APP_ID>.json`). Any of the three makes it show on Status and gives it a
+An application is a folder: what the bucket holds under `<APP_ID>/`, a public key, or settings
+in `STATE` (`folders/<APP_ID>.json`). Any of the three makes it show on Applications and gives it a
 page.
 
 - **New application** (`POST /api/folders`): only settings (customer, controller, who and
   when; for S1 also the distribution URL its first release gets); nothing in the bucket until its
-  first release. 409 when the App ID has objects, a key or settings already. S1 App IDs follow
+  first release. 409 when the App ID has objects, a public key or settings already. S1 App IDs follow
   the publishing rules; Linux ones (M1, L4, HMI1) `^[a-z0-9][a-z0-9._-]*$`, at most 64
   characters (the CI config's pattern), without a distribution URL.
 - **Settings** (`PUT /api/folders/:appId/settings`): customer and controller by hand; a field
@@ -422,8 +443,9 @@ page.
   where a Linux manifest leaves the S1 controllers out (one App ID can have both); else none.
   The API gives `controller` and `controllerSource` (`manual`, `manifest`, `controllers` or
   `null`) next to `kind` (`s1`, `linux`, `unknown`: what the manifest is). Without a manifest a
-  folder counts as `s1` when its settings say S1 (or when it has a key and no controller set:
-  keys are only made for S1), and as `linux` when they say M1, L4 or HMI1.
+  folder counts as `s1` when its settings say S1 (or when it has a public key and no controller
+  set: signing is for S1), and as `linux` when they say M1, L4 or HMI1 (a Linux application can
+  hold a public key too, for provisioning).
 
 ### Deleting a folder
 
@@ -447,8 +469,8 @@ folder is gone.
 - When the bucket holds nothing more, the folder settings move to the archive
   (`folder-settings.json`), the record goes and the log gets `delete-folder` (who, why, objects,
   bytes, controllers, archive).
-- **The signing key stays** (`keys/<APP_ID>.json`): controllers in the field carry its public
-  key, and a folder made again under that App ID signs with the same key.
+- **The public key stays** (`keys/<APP_ID>.json`): controllers in the field carry it, and a
+  folder made again under that App ID is signed with the same key pair.
 
 **Restoring a deleted folder** (by hand, with an account that may write both buckets): the
 `delete-folder` entry in `log/…` names the archive and how many objects it holds; list them in
@@ -482,10 +504,10 @@ enough for this data, so it stays there.
 
 | Key | What |
 |---|---|
-| `keys/<APP_ID>.json` | The active signing key of a folder: `app_id`, `public_key` (130 hex), `sealed_private_key` (`v1.<iv>.<ciphertext+tag>`), `source` (generated / imported), `created_at`, `created_by`. Kept when the folder is deleted. |
+| `keys/<APP_ID>.json` | The public key of an application: `app_id`, `public_key` (130 hex, upper case), `source`, `created_at`, `created_by`. Since 0.7.0 `source` is `attached` and there is nothing else. A key made in the Worker before 0.7.0 (`source` generated / imported) also holds `sealed_private_key` (`v1.<iv>.<ciphertext+tag>`), kept as it is and opened by nothing ([Signing keys](#signing-keys)). Kept when the folder is deleted. |
 | `keys-retired/<APP_ID>/<timestamp>.json` | A key that was replaced, with who replaced it when. Never deleted. |
 | `folders/<APP_ID>.json` | Folder settings: `customer_id` and `controller` set by hand, `distribution_url` (an S1 application made here, for its first release), `package` (a Linux application's package definition), `created_at` / `created_by`, `updated_at` / `updated_by`. Customer, controller and URL are also in the object's custom metadata (marked `index`), so the overview needs one listing. |
-| `log/<yyyy>/<mm>/<timestamp>-<APP_ID>-<version or action>.json` | One entry per publish, sign, key action (generate, import, replace), `publish-linux`, `create-folder`, `settings`, `package`, `delete-folder`, `publish-firmware` (App ID `module-<hw_id>`: the file, date, changelog, source, and both manifests as they were before) and `images-*` (App ID `<kind>-<product>`: create, update, upload, abort, remove-file, publish, withdraw, delete): action, App ID, version, actor, time, signed, replaced, payload SHA-256, size, description; a publish also its URL, the previous `latest`, the previous manifest and where a replaced binary went; a delete its reason, objects, bytes, controllers and archive. |
+| `log/<yyyy>/<mm>/<timestamp>-<APP_ID>-<version or action>.json` | One entry per publish, sign, key action (`key-attach`, `key-replace` with the previous public key; `key-generate` and `key-import` until 0.6.1), `publish-linux`, `create-folder`, `settings`, `package`, `delete-folder`, `publish-firmware` (App ID `module-<hw_id>`: the file, date, changelog, source, and both manifests as they were before) and `images-*` (App ID `<kind>-<product>`: create, update, upload, abort, remove-file, publish, withdraw, delete): action, App ID, version, actor, time, signed, replaced, payload SHA-256, size, description; a publish also its URL, the previous `latest`, the previous manifest and where a replaced binary went; a delete its reason, objects, bytes, controllers and archive. |
 | `replaced/<APP_ID>/<APP_ID>-<version>/<timestamp>.bin` | A binary a publish overwrote. |
 | `replaced/<APP_ID>/v<version>/<timestamp>/update.tar.gz`, `…/manifest.json` | A Linux release a publish replaced. |
 | `deleted/<APP_ID>/<timestamp>/<original key>` | Every object of a deleted folder, plus its `folder-settings.json` ([Deleting a folder](#deleting-a-folder)). |
@@ -524,35 +546,53 @@ a latest, those with `app_uptodate = 1`).
 
 ## Signing keys
 
-- One ECDSA P-256 key per App ID. The private key is the 32-byte scalar, the public key the
-  65-byte point `04 || X || Y` as 130 hex characters (`code-signing-local.md`). *Generate* makes
-  one here; *import* takes a PEM (PKCS#8 or SEC1 "EC PRIVATE KEY", also pasted on one line), the
-  base64 scalar (the `FW_PRIVATE_KEY_B64` format of the CI pipeline) or a Deployment Tool `.cred`
-  document with `private_key`.
-- **The private key leaves the Worker once**: right after *generate*, as a backup (base64 and
-  PEM) to keep in a password manager or a `.cred` file. Never again; an imported key comes back
-  as nothing but its public key.
-- At rest every private key is sealed with AES-256-GCM under the key-encryption key
-  **`DEPLOY_SIGNING_KEYS_KEY`** (Secrets Store, binding `SIGNING_KEYS_KEY`; 32 random bytes
-  made in the store, never seen by anyone), with `deploy-key:<APP_ID>` as additional
-  authenticated data, so a sealed key cannot be moved to another folder. A key is opened only to
-  sign, for that one request (`src/vault.ts`).
-- **Lost KEK = every key here lost.** Controllers carrying those public keys then only accept
-  firmware signed with the backup of the key (if it was kept) or after their public key is
-  changed with the Deployment Tool. The store cannot be exported; keep the backups.
-- **Rotating the KEK needs a re-seal path that does not exist yet**: a second binding with the
-  new key, code that opens every `keys/*.json` with the old one and seals it with the new one,
-  and only after every key is shown to open, the switch and removal of the old one. Until that
-  code exists, do not change `DEPLOY_SIGNING_KEYS_KEY`. An unreadable store or a key that does
-  not open is a 503; it is never treated as "no key".
-- **Replacing a key** asks for the App ID as confirmation: controllers that carry the old public
-  key refuse firmware signed with the new one. The old key moves to `keys-retired/`.
-- A folder with a Linux manifest gets no key (signing is for S1 firmware). A key can be made
-  before the folder has anything in the bucket (Keys page, or a new application's page).
-- **Deleting a folder keeps its key**: controllers in the field carry its public key, and a
-  folder made again under that App ID signs with the same key.
-- Why one KEK and not a Secrets Store secret per App ID: a Worker cannot create store secrets it
-  can read; every secret needs its own binding in `wrangler.toml` and a deploy.
+- One ECDSA P-256 key pair per S1 App ID. The private key is the 32-byte scalar, the public key the
+  65-byte point `04 || X || Y` as 130 hex characters (`code-signing-local.md`, the formats of
+  `GOcontroll-Deployment-Tool/tools/keys.py`).
+- **Deploy keeps no private key** (since 0.7.0). The **Key generator** makes the pair in the
+  browser (`public/js/signing.js` `generateKeyPair`, WebCrypto) and shows it once: the public key,
+  the private key as base64 (the CI pipeline's `FW_PRIVATE_KEY_B64`) and as PKCS#8 PEM, and two
+  downloads, `<APP_ID>-signing-key.pem` and `<APP_ID>-signing-key.pub` (the hex and a newline): the
+  files `s1_ble.py keygen --out <APP_ID>-signing-key.pem` writes. The colleague stores the private
+  key in 1Password (the `.pem` as a document, or the base64 value), or as `private_key` in the
+  application's `.cred` file for the Deployment Tool.
+- **The public key is kept with the application** (`STATE` `keys/<APP_ID>.json`, `PUT
+  /api/folders/:appId/key`): on its page to copy or download as `.pub`, and on Applications next
+  to the App ID, for provisioning a controller (Deployment Tool → Configuration). It is attached
+  from the key pair window (only once *I have stored the private key* is ticked), from the Key
+  generator page afterwards, or on the application's page: a new pair, or a public key there is
+  already (pasted, a `.pub` file, `public_key` of `deploy/metadata.json`, or the key the signed
+  releases of that application carry). The Worker checks that it is a point on P-256. A Linux
+  application can hold one too (for provisioning; nothing Linux is signed).
+- **Signing** (`src/release.ts`, `public/js/release.js`): for an application with a public key,
+  New release asks for the private key (pasted, or a `.pem`, base64 or `.cred` file, read with
+  `readPrivateKey` as `keys.py load_private_key()` reads it). The page checks at once that it belongs
+  to the public key (`signerFor`: a signature over random bytes must verify against the public key;
+  a key that does not belong is refused with "does not belong to the public key of …" before
+  anything is sent). On Publish or *Download signed file instead*, the page asks the Worker for the
+  scope (`POST /api/sign/scope`: the signed header's common body + the public key, built by
+  `src/goco.ts` `signedScope` from the payload's size, raw size and SHA-256, or from the header of
+  an unsigned container), signs scope + payload (`signScope`, raw R || S) and sends the 64-byte
+  `signature` with the upload. The Worker builds the scope again from what was uploaded, puts the
+  header together (`headerWithSignature`) and refuses it unless the signature verifies against the
+  application's public key (422, `signature`), before anything is written. `src/goco.ts` stays the
+  only producer of the container; the private key never leaves the browser, and a request that
+  carries one is refused unread (400, `privateKey`).
+- **Replacing a public key** asks for the App ID as confirmation: controllers that carry the old
+  public key refuse firmware signed with the new one. The old key moves to `keys-retired/`, never
+  deleted.
+- **Deleting a folder keeps its public key**: controllers in the field carry it, and a folder made
+  again under that App ID is signed with the same pair.
+- **Keys made before 0.7.0.** Until 0.6.1 a key generated or imported here was kept with its private
+  key sealed: AES-256-GCM under the key-encryption key **`DEPLOY_SIGNING_KEYS_KEY`** (Secrets Store,
+  binding `SIGNING_KEYS_KEY`), AAD `deploy-key:<APP_ID>` (format in `src/keys.ts`). Those objects stay
+  as they are, the binding stays, `/api/health` still says whether the KEK is readable
+  (`signingKeys`); nothing opens them any more. Their public key is the application's public key,
+  and signing for them, too, asks for the private key (the backup shown when the key was made). The
+  API says only that a sealed copy exists (`sealedPrivateKey`), never more. Whether to export them
+  once (to 1Password) or keep them as a fallback is the owner's decision; until then: do not delete
+  them and do not change `DEPLOY_SIGNING_KEYS_KEY` (rotating it needs a re-seal path that does not
+  exist). Stand 2026-10-29: one such key, `gocontroll-application` (generated 2026-10-29 06:51 UTC).
 
 ## Download counts
 
@@ -595,7 +635,7 @@ npm install
 cp .dev.vars.example .dev.vars   # DEV_USER_* stands in for the Access token, on localhost only
 npm run db:setup:local           # local D1s from the pinned schemas in test/fixtures
 npm run dev                      # http://localhost:8787 (local R2 buckets: nothing reaches the real bucket)
-curl localhost:8787/api/health   # {"ok":true,"version":…,"signingKeys":false,"downloads":false}
+curl localhost:8787/api/health   # {"ok":true,"version":…,"signingKeys":false,"downloads":false} (signingKeys: the KEK of the keys sealed before 0.7.0 is readable)
 npm test                         # vitest in the Workers runtime; Cloudflare's API mocked
 npm run typecheck                # strict TS for the Worker, JSDoc-checked JS for public/js
 npm run fixtures:goco            # only when the container format changes (needs Python + cryptography)
@@ -618,16 +658,16 @@ every pull request.
 
 All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "…", "field"?: "…" }`
 (`field`: `appId`, `version`, `description`, `file`, `tarball`, `manifest`, `files.<n>.<name>`,
-`privateKey`, `sign`, `distributionUrl`, `confirm`, `customerId`, `controller`, `reason`,
-`acknowledgeControllers`, `days`) with
-400/403/404/409/413/415/422/500/503.
+`publicKey`, `signature`, `privateKey` (a private key sent: refused unread), `distributionUrl`, `confirm`,
+`customerId`, `controller`, `reason`, `acknowledgeControllers`, `days`) with
+400/403/404/409/410/413/415/422/500/503.
 
 | Method | Path | |
 |---|---|---|
 | GET | `/api/me` | Signed-in colleague: email, name, groups (object IDs and names, to look an ID up) |
 | GET | `/api/health` | `{ ok, version, signingKeys, downloads }`: whether the KEK and the API token are readable |
-| GET | `/api/overview` | Every folder (kind s1/linux/unknown, `controller` + `controllerSource`, latest, releases, bytes, last upload, distribution URL, key, `inBucket`, customer, controllers), the customers with their folders, totals, `distributionUrls`, download totals of 7 and 30 days |
-| GET | `/api/folders/:appId` | One folder: kind, controller, customer, key; releases with their stored header (range read), `keyMatches`, `digestMatches`, size, upload time and downloads; Linux versions; objects the manifest does not name; `objects: { count, bytes }`; `deleting` (an unfinished delete, or null); for a Linux application `package`, `packageSource`, and `latestVersionManifest` (the parsed version manifest of the latest release) or `latestVersionManifestError`; controllers per version and per distribution URL; downloads per day. 404 when nothing exists for it |
+| GET | `/api/overview` | Every folder (kind s1/linux/unknown, `controller` + `controllerSource`, latest, releases, bytes, last upload, distribution URL, `hasKey` and `publicKey`, `inBucket`, customer, controllers), the customers with their folders, totals, `distributionUrls`, download totals of 7 and 30 days |
+| GET | `/api/folders/:appId` | One folder: kind, controller, customer, `key` (as `GET …/key`); releases with their stored header (range read), `keyMatches`, `digestMatches`, size, upload time and downloads; Linux versions; objects the manifest does not name; `objects: { count, bytes }`; `deleting` (an unfinished delete, or null); for a Linux application `package`, `packageSource`, and `latestVersionManifest` (the parsed version manifest of the latest release) or `latestVersionManifestError`; controllers per version and per distribution URL; downloads per day. 404 when nothing exists for it |
 | POST | `/api/folders` | `{ appId, customerId, controller: "S1" \| "M1" \| "L4" \| "HMI1", distributionUrl }` (no `distributionUrl` for Linux) → 201 `{ appId }`: a new application (settings only). 409 when it exists |
 | PUT | `/api/folders/:appId/package` | A Linux application's package definition `{ owner?, group?, files: [ { name, destination, mode, owner?, group? } ], post_install?: { mode: "none" } \| { mode: "services", services } \| { mode: "script", script } }` → `{ package, packageSource: "manual" }` |
 | POST | `/api/linux-releases` | multipart `appId`, `version`, `description`, `replace`, `tarball` (gzip, ≤ 100 MB), `manifest` (the version manifest, text or file) → `{ tarballKey, manifestKey, rootManifestKey, version, released, sha256, sizeBytes, previousLatest, latestVersion, replaced }` |
@@ -635,12 +675,13 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
 | PUT | `/api/folders/:appId/settings` | `{ customerId?: number \| null, controller?: "S1" \| "M1" \| "L4" \| "HMI1" \| null }` (absent: unchanged, null: derived) → `{ customer, controller, controllerSource }` |
 | PUT | `/api/folders/:appId/customer` | `{ customerId: number \| null }` → `{ customer }` (the milestone-1 call; same as settings with the customer only) |
 | DELETE | `/api/folders/:appId` | `{ confirm, reason, acknowledgeControllers }` → `{ done, deleted, remaining, archive }`; repeat until `done` ([Deleting a folder](#deleting-a-folder)) |
-| GET | `/api/keys` | `{ keys: [ { appId, publicKey, source, createdAt, createdBy, inBucket, customer, controller } ], withoutKey: [ { appId, customer, controller } ] }` (S1 folders without a key) |
 | GET | `/api/customers` | `[ { id, name } ]` from gocontroll-business, for the picker |
-| GET | `/api/folders/:appId/key` | The active key's public part, or 404. Works for an App ID without a folder yet |
-| POST | `/api/folders/:appId/key` | `{ action: "generate" }` or `{ action: "import", privateKey }`, with `{ replace: true, confirm: "<APP_ID>" }` when a key exists (else 409) → key info, plus `backup` on generate only |
-| POST | `/api/sign` | multipart `appId`, `version`, and `payload` (zlib) + `rawSize`, or `container` → the signed container as a download `<APP_ID>-<version>.bin`; nothing goes into the bucket |
-| POST | `/api/releases` | multipart `appId`, `version`, `description`, `sign`, `replace`, `distributionUrl` (new folder only), and `payload` + `rawSize` or `container` → `{ binaryKey, binaryUrl, manifestKey, version, releaseDate, previousLatest, replaced, latestMovedBack, signed }` |
+| GET | `/api/folders/:appId/key` | `{ publicKey, source: "attached" \| "generated" \| "imported", createdAt, createdBy, sealedPrivateKey }` (`sealedPrivateKey`: a key of before 0.7.0 whose private key Deploy holds sealed; never the sealed value), or 404 |
+| PUT | `/api/folders/:appId/key` | `{ publicKey }` (130 hex, a point on P-256), with `{ replace: true, confirm: "<APP_ID>" }` when there is one (else 409; the same key: 422) → the key as `GET`. An existing folder (S1 or Linux), or a new S1 App ID. A body with `privateKey`: 400, nothing stored |
+| POST | `/api/folders/:appId/key` | 410: generating and importing in the Worker ended with 0.7.0 (the body is not read) |
+| POST | `/api/sign/scope` | `{ appId, version, payload: { size, rawSize, sha256 } }` or `{ appId, version, containerHeader }` (base64 of the first ≤ 211 bytes of an unsigned container) → `{ appId, version, publicKey, scope, payloadOffset }`: the bytes to sign (base64), followed by the payload from `payloadOffset`. 422 without a public key, for a Linux application, for a container of another App ID or version, or one signed already |
+| POST | `/api/sign` | multipart `appId`, `version`, `signature` (base64, 64 bytes), and `payload` (zlib) + `rawSize`, or `container` → the signed container as a download `<APP_ID>-<version>.bin`; nothing goes into the bucket. A container signed with the application's key already needs no signature (it comes back as it is) |
+| POST | `/api/releases` | multipart `appId`, `version`, `description`, `replace`, `distributionUrl` (new folder only), `signature` (an application with a public key), and `payload` + `rawSize` or `container` → `{ binaryKey, binaryUrl, manifestKey, version, releaseDate, previousLatest, replaced, latestMovedBack, signed }` |
 | GET | `/api/firmware` | `{ github: { configured, repos }, updated, modules: [ { id, name, hardwareVersion, latest, releases: [ { version, file, date, sha256, changelog, publishedBy: { email, at, source } \| null } ], error? } ], manifestError?, firmwareUrl, moduleTypeNames }` |
 | GET | `/api/firmware/github?repo=owner/name[&commit=<sha>&branch=<name>]` | `{ configured, allowed, readable, canPush, error, sync, syncError }`: whether Deploy can tag and release there (one read on GitHub; the page shows it next to the repository). With `commit` (HEAD of the chosen clone; `branch` omitted = the default branch) also `sync` = `{ branch, head: { sha, date, subject } \| null, state: "up-to-date" \| "github-newer" \| "local-newer" \| "diverged" \| "not-on-github" \| "no-branch", githubNewer, localNewer }` (two more reads at most: the branch, then the comparison), or `syncError` with the reason; 400 for a commit that is not a full id |
 | POST | `/api/firmware/releases` | `{ repo: "GOcontroll/Module-…", commit, version, files: [ { file, path } ], replaceTag? }` → `{ repo, tag, tagState: "created" \| "kept" \| "replaced", tagUrl, releaseUrl, releaseState, assets, safetyNet }`; 409 `field: "files" \| "commit" \| "version"`, or `conflict: "tag"` with `existingMessage`/`existingCommit`; 403 repository not in `GITHUB_REPOS`; 503 without a token ([GitHub releases](#github-releases)) |
@@ -670,7 +711,7 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
 | R2 (read + write) | `FIRMWARE_BUCKET` → `gocontroll-firmware` (module firmware; `brcm/` is never touched), public as `firmware.gocontroll.tech` and `firmware.gocontroll.com` |
 | R2 (read + write) | `IMAGES_BUCKET` → `gocontroll-images` (created 2026-10-28; no public access, no custom domain: only the Worker `gocontroll-images` serves it) |
 | D1 (read only) | `BUSINESS_DB` → `gocontroll-business`, `MODULINE_DB` → `gocontroll-db` |
-| Secrets Store | `SIGNING_KEYS_KEY` → `DEPLOY_SIGNING_KEYS_KEY` (exists); `GITHUB_TOKEN` → `DEPLOY_GITHUB_TOKEN` (exists since 2026-10-28; the owner set the token, [GitHub releases](#github-releases)); `MS365_CLIENT_SECRET` → `MS365_CLIENT_SECRET` (since 0.6.0; shared with Hours, the Configurator and Finance); `CF_API_TOKEN` → `DEPLOY_CF_API_TOKEN` (to be made, [Download counts](#download-counts)) |
+| Secrets Store | `SIGNING_KEYS_KEY` → `DEPLOY_SIGNING_KEYS_KEY` (exists; the KEK of the private keys sealed before 0.7.0, which stay; nothing opens them now); `GITHUB_TOKEN` → `DEPLOY_GITHUB_TOKEN` (exists since 2026-10-28; the owner set the token, [GitHub releases](#github-releases)); `MS365_CLIENT_SECRET` → `MS365_CLIENT_SECRET` (since 0.6.0; shared with Hours, the Configurator and Finance); `CF_API_TOKEN` → `DEPLOY_CF_API_TOKEN` (to be made, [Download counts](#download-counts)) |
 | Vars | `TEAM_DOMAIN`, `POLICY_AUD`, `DEPLOY_GROUPS`, `DISTRIBUTION_URLS`, `DOWNLOAD_HOSTS`, `FIRMWARE_URLS`, `IMAGES_URL`, `GITHUB_REPOS`, `MAIL_FROM`, `MS365_TENANT_ID`, `MS365_CLIENT_ID`, `IMAGES_MAIL_REPLY_TO` |
 | RPC entrypoint | `ImagesMail` (`src/images-mail.ts`), bound by `gocontroll-images` as `MAIL`: deploy this Worker before the download site |
 | Second Worker | `gocontroll-images` on `images.gocontroll.tech` ([`images/`](images/README.md), `npm run deploy:images`) |
@@ -732,6 +773,13 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
   manifest) and the root manifest before every publish is in its `publish-linux` log entry
   (`previous_manifest`); put them back with `npx wrangler r2 object put`, the root manifest last
   (`application/gzip` for the package, `application/json` for the manifests).
+- **0.7.0** (tabs Applications, Firmware, Images, Key generator; key pairs in the browser, only the public key in Deploy;
+  signing in the browser, the signature checked here; 2026-10-29; no binding changed, no existing object changed):
+  back to 0.6.1 with `npx wrangler rollback ebd51294-6086-4a8e-8587-a702b9a945b6`. Public keys attached with 0.7.0
+  (`keys/<APP_ID>.json` with `source: "attached"`, no `sealed_private_key`) then show in 0.6.1, but 0.6.1 cannot sign with them
+  (it answers 503 for that folder: the sealed key is missing); remove such a key (copy it to `keys-retired/` first) or roll
+  forward again. Releases signed with 0.7.0 stay valid: the container format did not change. The keys of before 0.7.0 were not
+  touched, so 0.6.1 signs with them again.
 - **0.6.1** (the Firmware tab compares HEAD with its branch on GitHub, 2026-10-29; no data or binding changed):
   back to 0.6.0 with `npx wrangler rollback 86d281d3-446d-4fd5-a2e0-ac7199b6a11e` (the page then says again
   only whether HEAD is on `origin/<branch>` as of the last fetch). images.gocontroll.tech is not touched.
@@ -759,13 +807,13 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
   should not stay there (`git push origin --delete v<version>`).
 - **An image release**: *Withdraw* takes it off images.gocontroll.tech at once; the files stay until the
   draft is deleted.
-- **A key**: the replaced one is in `keys-retired/<APP_ID>/`; copying it back to
-  `keys/<APP_ID>.json` makes it active again (it stays sealed for that App ID).
+- **A public key**: the replaced one is in `keys-retired/<APP_ID>/`; copying it back to
+  `keys/<APP_ID>.json` makes it active again (a key of before 0.7.0 keeps its sealed part, for that App ID).
 - **A deleted folder**: put it back from `deleted/…`, the manifest last
   ([Restoring a deleted folder](#deleting-a-folder)).
 - **Removing the app**: delete the Worker (`npx wrangler delete gocontroll-deploy-intranet`)
   and the hub tile. The distribution bucket is not this app's and stays as it is; keep the
-  state bucket (the sealed keys, the log).
+  state bucket (the public keys, the sealed keys of before 0.7.0, the log).
 
 ## Relation to the Deployment Tool, the CI pipeline and the specs
 
@@ -783,7 +831,9 @@ controller.
 
 The **Deployment Tool** (`GOcontroll-Deployment-Tool`) programs and provisions S1 controllers
 over Bluetooth and publishes from a laptop with a `.cred` file; Deploy publishes to the same
-bucket in the same format from the browser, with the key kept here instead of in a file. Both
+bucket in the same format from the browser, signed there with the same private key (the
+colleague's: from the `.cred` file, a `.pem` or 1Password; Deploy keeps only the public key). The
+Key generator's downloads are the files of `s1_ble.py keygen`. Both
 follow the S1 knowledge base (`cloud-r2-distribution.md`, `code-signing-local.md`,
 `deployment-tool.md`); when a format changes there, both follow. Provisioning a controller's
 App ID, distribution URL and public key stays the Deployment Tool's job; moving an App ID from
