@@ -29,7 +29,7 @@
   secret in `IMAGES_TURNSTILE_SECRET` (gecontroleerd: siteverify accepteert hem; een fout secret geeft 503, niet 403); nog geen
   echte link gemaild en geopend. Terug: eerst `gocontroll-images` naar `9a2c1639`
   (`-c images/wrangler.toml`), dan deze Worker naar 0.5.1 (`e582f30e-2524-4ea3-9859-92736792a705`).
-- **0.6.1 (2026-10-29, wens gebruiker)**: bij elke keuze van een repo-map op de tab Firmware vraagt de pagina GitHub of
+- **0.6.1 (2026-10-29, versie `ebd51294-6086-4a8e-8587-a702b9a945b6`, wens gebruiker)**: bij elke keuze van een repo-map op de tab Firmware vraagt de pagina GitHub of
   HEAD de nieuwste commit van zijn branch is (`GET /api/firmware/github` met `commit` en `branch`, `checkGitHub` →
   `compareWithGitHub`, alleen lezen) en meldt het boven de bestanden: GitHub nieuwer (eerst pullen), HEAD niet gepusht, beide,
   of branch niet op GitHub; zonder GitHub uit `origin/<branch>` van de laatste fetch. Waarschuwing, geen blokkade. Terug naar

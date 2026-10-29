@@ -18,7 +18,7 @@ Images tab shows how often each release is downloaded. For the members of the En
 **`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> The Worker, the API and the pages are deployed (0.6.1 on 2026-10-29: choosing a module's repository folder on the Firmware tab
+> The Worker, the API and the pages are deployed (0.6.1 on 2026-10-29, version `ebd51294`: choosing a module's repository folder on the Firmware tab
 > asks GitHub whether HEAD is the newest commit of its branch and warns when GitHub has newer commits, when HEAD is not pushed, or
 > both ([Module firmware](#module-firmware-firmwaregocontrolltech)); 0.6.0 on 2026-10-28, version `86d281d3`, `gocontroll-images` version `5cb45e29`: images.gocontroll.tech signs customers in with
 > their e-mail address and a link by mail instead of Access with a one-time PIN; this Worker sends that mail through its RPC
