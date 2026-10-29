@@ -81,19 +81,21 @@
 
 ## Module-firmware (`src/firmware.ts`, tab Firmware)
 - Vervangt agent 08 (*Moduline Module Firmware Deployer*, `18-Agents/08 - …`, sinds 28-10 buiten gebruik) en volgt diens
-  regels. Contract `GOcontroll-Architecture/cloudflare/firmware/spec.md` (≥ 1.2.1). Deploy is **tweede producent** naast de CI van
-  de `Module-*`-repos (`.github/scripts/publish_firmware.py`, skill `module-firmware-deployment`) en schrijft wat dat script
-  schrijft, in die volgorde: `modules/<hw_id>/<file>.srec`, `modules/<hw_id>/manifest.json`, `modules/manifest.json`
-  (`JSON.stringify(…, 2)` zonder newline = `json.dumps(indent=2, ensure_ascii=False)`). `npm run fixtures:firmware` draait
-  het echte script (boto3 gestubd, `python -I`); `test/firmware.test.ts` eist dezelfde bytes (op `updated` na). Fixtures
-  niet met de hand wijzigen.
+  regels. Contract `GOcontroll-Architecture/cloudflare/firmware/spec.md` (≥ 1.4.0). Deploy is sinds 29-10 de **enige producent**: de CI van
+  de `Module-*`-repos (`.github/workflows/publish-firmware.yml`, `.github/scripts/publish_firmware.py`, skill
+  `module-firmware-deployment`) is die dag verwijderd (wens gebruiker). Deploy schrijft wat dat script schreef, in die
+  volgorde: `modules/<hw_id>/<file>.srec`, `modules/<hw_id>/manifest.json`, `modules/manifest.json`
+  (`JSON.stringify(…, 2)` zonder newline = `json.dumps(indent=2, ensure_ascii=False)`). `test/firmware.test.ts` eist
+  dezelfde bytes als het echte script (op `updated` na), tegen `test/fixtures/firmware/ci-manifests.json`. Fixtures niet
+  met de hand wijzigen; `npm run fixtures:firmware` (boto3 gestubd, `python -I`) draait alleen met het script terug op
+  zijn pad uit de historie (`Module-4-20mA` commit `61fa466`).
 - Bewust anders dan het script (regels van agent 08): `releases` **aflopend op versie** (go-modules flasht `releases[0]`);
   **`latest_firmware` nooit omlaag**; **een gepubliceerde `.srec` verandert nooit** (andere bytes onder dezelfde naam = altijd
   409, correctie = nieuw versienummer); bestaande versie = 409 tenzij `replace` (alleen de manifest-entry opnieuw, zelfde
   bestand); manifests etag-conditioneel met retry; `dry_run` = alles controleren, niets schrijven (de pagina toont dat altijd
-  eerst); changelog genormaliseerd zoals de CI hem uit een tag leest (`normaliseChangelog`).
+  eerst); changelog genormaliseerd zoals de CI hem uit een tag las (`normaliseChangelog`).
 - **Het bestand zoals git het heeft**: vanuit een repo stuurt de pagina de blob op HEAD (`git.js` `fileAt`), nooit de
-  werkkopie (Windows + `core.autocrlf` = CRLF, andere SHA-256 dan de CI); niet gecommit of afwijkend van de commit = niet
+  werkkopie (Windows + `core.autocrlf` = CRLF, andere SHA-256 dan in git); niet gecommit of afwijkend van de commit = niet
   te publiceren. Losse bestanden: CRLF → LF. Worker weigert CR.
 - **Is HEAD de nieuwste commit?** Bij elke mapkeuze vergelijkt de Worker HEAD met de branch op GitHub (`compareWithGitHub`:
   `branches/<branch>`, dan `compare/<HEAD>...<branch-head>`; `ahead` = GitHub nieuwer); detached HEAD = default branch.
@@ -109,18 +111,20 @@
   commits sinds de vorige versietag ernaast. **`public/js/git.js`** (alleen lezen: loose + packs met OFS/REF-delta,
   `packed-refs`, geannoteerde tags, bestanden van een commit, origin-URL en tracking branch; geen SHA-256-repos, reftable,
   worktrees/submodules). Fixture `test/fixtures/git/` komt van `npm run fixtures:git` (git CLI); niet met de hand wijzigen.
-- **Vangnet**: de `publish-firmware.yml` van elke module-repo blijft (keuze 21-07). Vooraf `safetyNetFindings`: workflow
-  ontbreekt, `MODULE_NAME` ≠ manifestnaam, secrets, script ontbreekt of mist de versiecheck.
+- **Geen vangnet meer** (29-10, wens gebruiker; de keuze van 21-07 vervalt): geen `Module-*`-repo heeft nog
+  `publish-firmware.yml`, een tag pushen publiceert niets. `safetyNetFindings` (workflow ontbreekt, `MODULE_NAME` ≠
+  manifestnaam, secrets, script ontbreekt of mist de versiecheck) en *geen tag voor een oudere versie* in `src/github.ts`
+  staan er nog, maar slaan alleen aan als een repo de workflow terugkrijgt.
 - **Tag en GitHub Release** (`src/github.ts`, `POST /api/firmware/releases`, wens gebruiker 28-10): na publiceren zet Deploy
   per versie (aangevinkt in de review) zelf tag `v<versie>` en maakt de release met de `.srec` als asset. Tekst uit de
   gepubliceerde manifests (niet uit de browser); bestanden op die commit op GitHub moeten de gepubliceerde SHA-256 hebben
   (= gepusht); **geen tag voor een oudere versie als de repo de workflow heeft** (die zet hem bovenaan → controllers terug);
-  **altijd een annotated tag via `git/tags` + `git/refs`**, nooit de lightweight tag van de release-API (de workflow zou een
-  lege annotatie lezen); bestaande tag met andere tekst alleen vervangen na bevestiging. Token `DEPLOY_GITHUB_TOKEN`
+  **altijd een annotated tag via `git/tags` + `git/refs`**, nooit de lightweight tag van de release-API (geen annotatie
+  om datum en changelog uit te lezen); bestaande tag met andere tekst alleen vervangen na bevestiging. Token `DEPLOY_GITHUB_TOKEN`
   (binding `GITHUB_TOKEN`, fine-grained, Contents read/write op `Module-*`; `not-set` = uit, dan commando's zoals in 0.4.1),
   repos beperkt door `GITHUB_REPOS`. Tests mocken GitHub altijd (`test/github.test.ts`).
 - Log: `publish-firmware` met `previous_module_manifest` en `previous_master_manifest` (terugzetten = die terugschrijven);
-  `firmware-log/<hw_id>/<versie>.json` (+ custom metadata) = wie publiceerde uit welke repo/commit; zonder = de CI.
+  `firmware-log/<hw_id>/<versie>.json` (+ custom metadata) = wie publiceerde uit welke repo/commit; zonder = de CI (tot 29-10).
 
 ## Images voor klanten (`src/images.ts`, tab Images, `images/`)
 - Formaat en bucketindeling: **`src/images-format.ts`** (geen imports; door beide Workers gebundeld). Contract
