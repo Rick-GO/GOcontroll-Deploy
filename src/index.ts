@@ -143,6 +143,7 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 export { ImagesMail } from './images-mail';
+export { RelationUse } from './relation-use';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (ch) => (
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as Record<string, string>)[ch]

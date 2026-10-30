@@ -819,6 +819,11 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
 
 ### Rolling back
 
+- 0.11.1 (2026-10-30, no data or bindings) adds the entrypoint `RelationUse` (`src/relation-use.ts`): the CRM asks how many
+  folders are assigned to a relation before it deletes one, and only a count crosses. Back:
+  `npx wrangler rollback 2c77e8e1-cff3-44eb-b5b8-b7e7ea7d3887`, **after** the CRM is back on `f3203c24` (its 0.14.0 binds
+  the entrypoint).
+
 - **Code**: `npx wrangler deployments list`, then `npx wrangler rollback <version-id>`.
   0.3.1 (HTTPS redirect and security headers on `/pub/`, 2026-10-23; no data or binding
   changed): back to 0.3.0 with `npx wrangler rollback 961ad1da-be9c-47f0-b196-f26f035a16bf`, which
