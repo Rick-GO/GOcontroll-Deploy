@@ -181,6 +181,26 @@ async function columnsOf(part: ExportDatabase, name: string): Promise<{ columns:
   return { columns: results.map((r) => r.name), key };
 }
 
+/**
+ * Rows whose foreign key points at nothing. D1 enforces foreign keys at the end of a restore and cannot
+ * turn them off, so one such row stops the whole restore. The dump writes NULL there and keeps the
+ * value in the manifest. Listed per scope: only the tables of this scope.
+ */
+async function orphansOf(part: ExportDatabase, tables: Set<string>) {
+  const { results } = await part.db.prepare(`SELECT "table" AS name, rowid, fkid FROM pragma_foreign_key_check`)
+    .all<{ name: string; rowid: number | null; fkid: number }>();
+  const inScope = results.filter((r) => tables.has(r.name) && r.rowid !== null);
+  const keys = new Map<string, { id: number; from: string }[]>();
+  for (const name of new Set(inScope.map((r) => r.name))) {
+    const list = await part.db.prepare(`SELECT id, "from" FROM pragma_foreign_key_list(?1)`).bind(name).all<{ id: number; from: string }>();
+    keys.set(name, list.results);
+  }
+  return inScope.map((r) => ({
+    table: r.name, rowid: r.rowid as number,
+    columns: (keys.get(r.name) ?? []).filter((k) => k.id === r.fkid).map((k) => k.from),
+  }));
+}
+
 const hasRowid = (sql: string) => !/\)\s*(STRICT\s*,\s*)?WITHOUT\s+ROWID/i.test(sql);
 
 async function tableInfo(part: ExportDatabase, name: string, sql: string): Promise<TableInfo> {
@@ -214,6 +234,7 @@ export async function exportPlan(scope: ExportScope, includeFiles: boolean) {
       // A view belongs to the scope that includes its name, and so do the triggers on it.
       after: results.filter((r) => names.has(r.tbl_name) || (r.type !== 'index' && part.include(r.tbl_name))).map((r) => r.sql),
       tables,
+      orphans: await orphansOf(part, new Set(tables.map((t) => t.name))),
     });
   }
   const stores = [];

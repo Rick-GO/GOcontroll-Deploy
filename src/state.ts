@@ -21,6 +21,7 @@
 //                                           (src/firmware.ts); none for a version the module repo's CI published
 //   images/releases/<product>/<version>.json a release of images.gocontroll.tech (src/images.ts)
 //   images/uploads/<id>.json                an upload to the images bucket that is under way (src/images.ts)
+//   cache/firmware-repos.json               the last answer of the admin tool firmware_repos, for 5 minutes (src/admin-api.ts)
 //
 // Writes that must not overwrite each other are conditional (an R2 etag): a key is created
 // only where none is, replaced only when it is still the one that was read.

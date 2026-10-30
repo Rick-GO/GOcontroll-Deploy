@@ -235,7 +235,7 @@
 - **`AdminApi`** (`src/admin-api.ts`, `export { AdminApi }` in `src/index.ts`, sinds 0.12.0): de tools van de MCP-connector en de
   backup voor de admin-Worker van de hub (contract `GOcontroll-Architecture/cloudflare/admin-api/spec.md`, README → *Admin API*).
   Alleen `read`-tools; geen tool roept `imagesOverview` aan (die bevat e-mailadressen van klanten) en geen tool geeft een
-  key terug. Backup: `gocontroll-deploy-state` zonder `images/uploads/`; de release-buckets niet. Deploy deze Worker vóór
+  key terug. `firmware_repos` vraagt GitHub hooguit eens per 5 minuten (`cache/firmware-repos.json` in `STATE`): hetzelfde token als tag en release, dus een lus mag het uurquotum niet opmaken. Backup: `gocontroll-deploy-state` zonder `images/uploads/` en `cache/`; de release-buckets niet. Deploy deze Worker vóór
   `gocontroll-admin`.
 - `images/` heeft eigen `wrangler.toml`, tests (`npm run test:images`, deel van `npm test`) en deploy
   (`npm run deploy:images`). Bindt `IMAGES_BUCKET`, `MAIL` (`ImagesMail`), `RL_ACCESS` en de store-secrets
@@ -304,7 +304,7 @@
 - **Geen eigen D1** (bij het bouwen op 21-10 zat het account aan de Free-plan-D1-limiet; R2 volstaat voor deze data,
   dus het blijft zo): app-state is JSON in R2 **`gocontroll-deploy-state`**
   (`STATE`, privé): `keys/` (public keys; van vóór 0.7.0 ook verzegelde private keys), `keys-retired/`, `folders/`, `log/`, `replaced/`, `deleted/`, `deleting/`, `downloads/`,
-  `firmware-log/`, `images/releases/`, `images/uploads/` (zie README → *Data*).
+  `firmware-log/`, `images/releases/`, `images/uploads/`, `cache/` (zie README → *Data*).
 - **`gocontroll-firmware`** (`FIRMWARE_BUCKET`, publiek via `firmware.gocontroll.tech`/`.com`) en **`gocontroll-images`**
   (`IMAGES_BUCKET`, privé; alleen via `images.gocontroll.tech`): lezen en schrijven, zie de secties hierboven.
 - **`gocontroll-business`** (eigenaar Hours) en **`gocontroll-db`** (eigenaar GOcontroll-Database): **alleen lezen**,

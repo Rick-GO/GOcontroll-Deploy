@@ -24,7 +24,7 @@ import { HttpError } from './lib/http';
 import { secretConfigured } from './lib/secret';
 import { folderParam } from './lib/validate';
 import { controllerGroups } from './moduline';
-import { listAll, readJson, sealedKeyCount, type AuditEntry } from './state';
+import { listAll, readJson, sealedKeyCount, writeJson, type AuditEntry } from './state';
 import { folderDetail, folderSummaries, type FolderSummary } from './status';
 import { APP_VERSION } from './version';
 
@@ -40,6 +40,13 @@ const DRAFT_DAYS = 14;
 const UPLOAD_DAYS = 1;
 /** R2 drops a multipart upload that is never completed after this many days. */
 const UPLOAD_EXPIRES_DAYS = 7;
+/**
+ * The last answer of firmware_repos. It takes two or three GitHub calls per repository, on the token
+ * that tags and releases need too: asked in a loop it would use up the hourly quota and stop those. In
+ * STATE, not in memory, so it holds across isolates.
+ */
+const REPOS_CACHE_KEY = 'cache/firmware-repos.json';
+const REPOS_CACHE_MS = 5 * 60 * 1000;
 /** What recent_publications shows unless it is asked for everything. */
 const PUBLISHING = new Set(['publish', 'publish-linux', 'publish-firmware', 'github-release', 'images-publish', 'images-withdraw', 'distribution', 'delete-folder']);
 
@@ -248,10 +255,19 @@ async function attention(env: Env) {
   return { items };
 }
 
-/** The module repositories Deploy published from, each against its branch on GitHub. */
+/** firmware_repos: the answer of the last REPOS_CACHE_MS, or GitHub's, which is then kept. */
 async function firmwareRepos(env: Env) {
   const token = await githubToken(env).catch(() => undefined);
   if (!token) return { configured: false, note: 'GitHub is not set up (DEPLOY_GITHUB_TOKEN).' };
+  const cached = await readJson<{ checked_at: string }>(env.STATE, REPOS_CACHE_KEY).catch(() => null);
+  if (cached && Date.now() - Date.parse(cached.value.checked_at) < REPOS_CACHE_MS) return cached.value;
+  const answer = await askGitHub(env);
+  await writeJson(env.STATE, REPOS_CACHE_KEY, answer).catch((err) => console.error(`firmware_repos cache: ${(err as Error).message}`));
+  return answer;
+}
+
+/** The module repositories Deploy published from, each against its branch on GitHub. */
+async function askGitHub(env: Env) {
   const overview = await firmwareOverview(env);
   const newest = new Map<string, { module: string; version: string; at: string; branch: string | null; commit: string }>();
   let unknown = 0;
@@ -285,6 +301,7 @@ async function firmwareRepos(env: Env) {
   items.sort((a, b) => (b.commits_after_publish ?? 0) - (a.commits_after_publish ?? 0) || a.repo.localeCompare(b.repo));
   return {
     configured: true,
+    checked_at: new Date().toISOString(),
     items,
     total: items.length,
     truncated: false,
@@ -456,7 +473,7 @@ export const TOOLS: AdminTool<Env>[] = [
   {
     name: 'firmware_repos',
     title: 'Module repositories ahead of what is published',
-    description: 'For the module repositories Deploy published from: how many commits their branch on GitHub has after the last published firmware. Asks GitHub. Only versions published from Deploy are known; it says how many modules are not. Use for "is there unpublished firmware work".',
+    description: 'For the module repositories Deploy published from: how many commits their branch on GitHub has after the last published firmware. Asks GitHub at most every 5 minutes; `checked_at` says when. Only versions published from Deploy are known; it says how many modules are not. Use for "is there unpublished firmware work".',
     kind: 'read',
     run: (env) => firmwareRepos(env),
   },
@@ -570,8 +587,8 @@ export const TOOLS: AdminTool<Env>[] = [
 ];
 
 /**
- * The backup: Deploy has no D1, its data is the state bucket, whole, except uploads under way. The
- * sealed keys of before 0.7.0 stay in as they are: useless without DEPLOY_SIGNING_KEYS_KEY in the
+ * The backup: Deploy has no D1, its data is the state bucket, whole, except uploads under way and the
+ * cache. The sealed keys of before 0.7.0 stay in as they are: useless without DEPLOY_SIGNING_KEYS_KEY in the
  * Secrets Store, and without them the keys would be gone. Published files stay out: large, and they
  * come from the builds.
  */
@@ -582,7 +599,10 @@ export function exportScope(env: Env, scope: string): ExportScope {
     stores: [{
       name: 'gocontroll-deploy-state',
       store: env.STATE,
-      skip: { 'images/uploads/': 'Uploads under way: R2 drops an upload after 7 days, and it cannot go on after a restore.' },
+      skip: {
+        'images/uploads/': 'Uploads under way: R2 drops an upload after 7 days, and it cannot go on after a restore.',
+        'cache/': 'Cache: the last answer of GitHub, asked again after 5 minutes.',
+      },
     }],
     skipped: [
       { what: 'gocontroll-deploy', reason: 'Release artefacts: S1 binaries and Linux packages, large, and they come from the builds. A replaced or deleted one is archived in gocontroll-deploy-state.' },

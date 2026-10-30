@@ -577,6 +577,7 @@ enough for this data, so it stays there.
 | `images/releases/<key>.json` | A release for images.gocontroll.tech; `<key>` = `<product>/<id>`, its folder `images/<key>/` (new: `moduline-hmi1/<12 hex>`; before 0.11.0 the folder it had, `moduline-hmi1/AV101_6.12.87`): controller, type, version (labels), release date, notes, files (name, path, size, SHA-256, role, platform, who uploaded it when), `draft`/`published`, who made, changed and published it when. |
 | `images/uploads/<id>.json` | An upload to `gocontroll-images` under way: R2 upload ID, object key, size, part size and count, who started it. Gone once completed or aborted. |
 | `images/stats/<yyyy-mm>.json` | The downloads of a finished month on images.gocontroll.tech: in all, different addresses (a number), per release, per file, per country. No e-mail address. Kept after the download log expires. |
+| `cache/firmware-repos.json` | The last answer of the admin tool `firmware_repos`, used for 5 minutes ([Admin API](#admin-api)). Not in the backup. |
 
 Read it with `npx wrangler r2 object get gocontroll-deploy-state/<key> --remote --file=-`.
 
@@ -703,7 +704,7 @@ copy of the canonical helper; a fix belongs there first.
 | `rollout` | read | per application how many controllers are behind the latest release, and on which versions |
 | `module_firmware` | read | every module: hardware version, `latest_firmware`, newest release, who published it (an address, or `CI`) |
 | `module_firmware_releases` | read | the history of one module: date, changelog, who, repository and commit |
-| `firmware_repos` | read | commits on GitHub after the last firmware published from Deploy, per module repository (asks GitHub; `configured: false` without a token). Only versions published from Deploy name a commit, so this is empty until the first one |
+| `firmware_repos` | read | commits on GitHub after the last firmware published from Deploy, per module repository (`configured: false` without a token). It asks GitHub at most every 5 minutes (`cache/firmware-repos.json` in STATE, `checked_at` says when): two or three calls per repository on the token that tags and releases need too, so a loop must not use up the hourly quota. Only versions published from Deploy name a commit, so this is empty until the first one |
 | `images` | read | per controller or type the latest published image: date, files, size, complete image or not, downloads; drafts |
 | `image_downloads` | read | downloads per month, per country and per release, the number of different addresses; numbers only |
 | `application_downloads` | read | S1 downloads per application and file over at most 30 days, Cloudflare's estimate (`configured: false` without `DEPLOY_CF_API_TOKEN`) |
@@ -723,8 +724,8 @@ copy of the canonical helper; a fix belongs there first.
   keys, retired keys, folder settings, audit log, download counts, firmware log, image release records, monthly image
   stats, and the archives `replaced/` and `deleted/`, the only copy of a replaced or deleted release. The sealed keys of
   before 0.7.0 go along as ciphertext: useless without `DEPLOY_SIGNING_KEYS_KEY` in the Secrets Store. **Left out**:
-  `images/uploads/` (uploads under way, which R2 drops after 7 days and which cannot go on after a restore) and, as
-  release artefacts that come from the builds, the buckets `gocontroll-deploy`, `gocontroll-firmware` and
+  `images/uploads/` (uploads under way, which R2 drops after 7 days and which cannot go on after a restore), `cache/`
+  (the last answer of GitHub) and, as release artefacts that come from the builds, the buckets `gocontroll-deploy`, `gocontroll-firmware` and
   `gocontroll-images`. That last one also holds `downloads/`, the log with an e-mail address per download: it is **not**
   in the state bucket and not in the backup. It is kept 13 months; its monthly counts without addresses
   (`images/stats/`) are in the backup. `manifest.json` of the images follows from the release records, by publishing again.

@@ -179,22 +179,44 @@ describe('the tools', () => {
     ]);
   });
 
-  test('firmware_repos: off without a token; with one, the commits GitHub has after the publish', async () => {
+  test('firmware_repos: off without a token; with one, the commits GitHub has after the publish, asked once in 5 minutes', async () => {
     expect(await call('firmware_repos')).toEqual({ configured: false, note: 'GitHub is not set up (DEPLOY_GITHUB_TOKEN).' });
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const github = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input instanceof Request ? input.url : input);
       if (url.endsWith('/repos/GOcontroll/Module-Test')) return Response.json({ default_branch: 'main', permissions: { push: true } });
       if (url.endsWith('/branches/main')) return Response.json({ commit: { sha: 'b'.repeat(40), commit: { message: 'Add a filter\n\nbody', committer: { date: '2026-10-29T08:00:00Z' } } } });
       if (url.includes('/compare/')) return Response.json({ status: 'ahead', ahead_by: 3, behind_by: 0 });
       throw new Error(`unexpected fetch ${url}`);
     });
-    const out = await TOOLS.find((t) => t.name === 'firmware_repos')!.run({ ...env, GITHUB_TOKEN: 'TOKEN-OF-GITHUB', GITHUB_REPOS: 'GOcontroll/Module-*' } as typeof env, {}, ACTOR) as any;
+    const tool = TOOLS.find((t) => t.name === 'firmware_repos')!;
+    const withToken = { ...env, GITHUB_TOKEN: 'TOKEN-OF-GITHUB', GITHUB_REPOS: 'GOcontroll/Module-*' } as typeof env;
+    const out = await tool.run(withToken, {}, ACTOR) as any;
     expect(out.configured).toBe(true);
     expect(out.items).toEqual([{
       repo: 'GOcontroll/Module-Test', branch: 'main', published: { module: MOD, version: '1.0.0', at: '2026-10-28T10:00:00Z', commit: 'aaaaaaaaaaaa' },
       state: 'github-newer', commits_after_publish: 3, newest_commit: { date: '2026-10-29T08:00:00Z', subject: 'Add a filter' },
     }]);
     expect(json(out)).not.toContain('TOKEN-OF-GITHUB');
+
+    // A loop asks GitHub once: the answer is kept, in the state bucket, without the token.
+    const calls = github.mock.calls.length;
+    expect(calls).toBeGreaterThan(0);
+    expect(await tool.run(withToken, {}, ACTOR)).toEqual(out);
+    expect(await tool.run(withToken, {}, ACTOR)).toEqual(out);
+    expect(github.mock.calls.length).toBe(calls);
+    const stored = await (await env.STATE.get('cache/firmware-repos.json'))!.text();
+    expect(stored).not.toContain('TOKEN-OF-GITHUB');
+
+    // Without a token the cache says nothing; after 5 minutes GitHub is asked again.
+    expect(await call('firmware_repos')).toEqual({ configured: false, note: 'GitHub is not set up (DEPLOY_GITHUB_TOKEN).' });
+    await env.STATE.put('cache/firmware-repos.json', json({ ...out, checked_at: iso(Date.now() - 5 * 60 * 1000 - 1000) }));
+    await tool.run(withToken, {}, ACTOR);
+    expect(github.mock.calls.length).toBe(calls * 2);
+
+    // A cache that cannot be read is no cache.
+    await env.STATE.put('cache/firmware-repos.json', 'not json');
+    expect((await tool.run(withToken, {}, ACTOR) as any).configured).toBe(true);
+    expect(github.mock.calls.length).toBe(calls * 3);
   });
 
   test('images: per system the latest published release with its downloads, and the drafts', async () => {
@@ -287,7 +309,7 @@ describe('the backup', () => {
     expect(plan.stores[0].files).toBeGreaterThan(5);
     expect(plan.stores[0].bytes).toBeGreaterThan(0);
     const what = plan.skipped.map((s) => s.what);
-    expect(what).toEqual(expect.arrayContaining(['gocontroll-deploy', 'gocontroll-firmware', 'gocontroll-images', 'gocontroll-images/downloads/', 'gocontroll-deploy-state/images/uploads/']));
+    expect(what).toEqual(expect.arrayContaining(['gocontroll-deploy', 'gocontroll-firmware', 'gocontroll-images', 'gocontroll-images/downloads/', 'gocontroll-deploy-state/images/uploads/', 'gocontroll-deploy-state/cache/']));
     for (const s of plan.skipped) expect(s.reason.length).toBeGreaterThan(10);
     expect(plan.skipped.find((s) => s.what === 'gocontroll-images/downloads/')?.reason).toMatch(/e-mail/);
   });
@@ -313,7 +335,7 @@ describe('the backup', () => {
       cursor = pageOf.cursor;
     } while (cursor);
     expect(keys).toEqual(expect.arrayContaining([`keys/${APP}.json`, `folders/${APP}.json`, 'images/releases/moduline-l4/abc123def456.json', 'deleting/STUCKAPP.json']));
-    expect(keys.filter((k) => k.startsWith('images/uploads/'))).toEqual([]);
+    expect(keys.filter((k) => k.startsWith('images/uploads/') || k.startsWith('cache/'))).toEqual([]);
     const body = await new Response(await entry.exportFile('deploy', 'gocontroll-deploy-state', `keys/${APP}.json`)).text();
     expect(JSON.parse(body).sealed_private_key).toBe(SEALED);
     await expect(entry.exportFile('deploy', 'gocontroll-deploy-state', 'images/uploads/aaaabbbbccccddddaaaabbbbccccdddd.json')).rejects.toThrow('Not part of the backup');
