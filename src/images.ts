@@ -219,20 +219,20 @@ export interface ImagesOverview {
 
 /** Releases (drafts and published), unfinished uploads, the downloads of this and last month and the counts (src/images-stats.ts). */
 export async function imagesOverview(env: Env, now = new Date()): Promise<ImagesOverview> {
-  const [releases, uploads, downloads, stats] = await Promise.all([
-    allReleases(env),
-    listAll(env.STATE, { prefix: 'images/uploads/' }),
-    recentDownloads(env, now),
-    imagesStats(env, now),
-  ]);
-  const out: ImagesOverview = {
-    releases: [],
-    uploads: [],
+  const [releases, downloads, stats] = await Promise.all([imageReleases(env), recentDownloads(env, now), imagesStats(env, now)]);
+  return {
+    ...releases,
     downloads,
     stats,
     publicUrl: env.IMAGES_URL || 'https://images.gocontroll.tech',
     limits: { partSize: PART_SIZE, maxFileSize: MAX_FILE_SIZE },
   };
+}
+
+/** Releases (drafts and published) and unfinished uploads: the Images tab without who downloaded what. */
+export async function imageReleases(env: Env): Promise<Pick<ImagesOverview, 'releases' | 'uploads' | 'catalogueError'>> {
+  const [releases, uploads] = await Promise.all([allReleases(env), listAll(env.STATE, { prefix: 'images/uploads/' })]);
+  const out: Pick<ImagesOverview, 'releases' | 'uploads' | 'catalogueError'> = { releases: [], uploads: [] };
   let catalogue = emptyCatalogue();
   try {
     catalogue = (await readCatalogue(env)).catalogue;

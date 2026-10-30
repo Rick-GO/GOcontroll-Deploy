@@ -232,6 +232,11 @@
   ene adres en alleen met een link `<IMAGES_URL>/access?t=<LINK_TOKEN_RE>`; al het andere geweigerd vóór Microsoft. Antwoordt
   `{ ok }`, gooit niet; log noemt alleen het domein van het adres. `src/mail/graph.ts` is een kopie van die van de
   Configurator: houd ze in de pas. Deploy deze Worker vóór `gocontroll-images` (die bindt het entrypoint).
+- **`AdminApi`** (`src/admin-api.ts`, `export { AdminApi }` in `src/index.ts`, sinds 0.12.0): de tools van de MCP-connector en de
+  backup voor de admin-Worker van de hub (contract `GOcontroll-Architecture/cloudflare/admin-api/spec.md`, README → *Admin API*).
+  Alleen `read`-tools; geen tool roept `imagesOverview` aan (die bevat e-mailadressen van klanten) en geen tool geeft een
+  key terug. Backup: `gocontroll-deploy-state` zonder `images/uploads/`; de release-buckets niet. Deploy deze Worker vóór
+  `gocontroll-admin`.
 - `images/` heeft eigen `wrangler.toml`, tests (`npm run test:images`, deel van `npm test`) en deploy
   (`npm run deploy:images`). Bindt `IMAGES_BUCKET`, `MAIL` (`ImagesMail`), `RL_ACCESS` en de store-secrets
   `IMAGES_SESSION_KEY` en `IMAGES_TURNSTILE_SECRET` (`not-set` = geen links); **nooit** een Microsoft 365-secret, `STATE` of een

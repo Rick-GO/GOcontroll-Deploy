@@ -688,6 +688,47 @@ is always live. A day without counts comes back with `null`s and `unavailable: t
 
 Without the binding every answer says `configured: false` and no call is made.
 
+## Admin API
+
+`src/admin-api.ts` is the Deploy side of the admin contract (`GOcontroll-Architecture/cloudflare/admin-api/spec.md`,
+domain `deploy`, scope `deploy`): the RPC entrypoint `AdminApi` (`export { AdminApi }` in `src/index.ts`) gives the
+hub's admin Worker `gocontroll-admin` the tools of the MCP connector and the backup, for Entra group CF_Admin only.
+There is no route: only a Worker in the account with a service binding reaches it. `src/lib/admin-contract.ts` is a
+copy of the canonical helper; a fix belongs there first.
+
+| Tool | Kind | What it returns |
+|---|---|---|
+| `applications` | read | every S1 and Linux application: customer, controller type, latest version, releases, last upload, controllers (total, online, up to date), totals; whether there is a public key, not the key |
+| `application` | read | one application: releases with date, description, size, signature; controllers per version and host; downloads of the last 30 days where counted |
+| `rollout` | read | per application how many controllers are behind the latest release, and on which versions |
+| `module_firmware` | read | every module: hardware version, `latest_firmware`, newest release, who published it (an address, or `CI`) |
+| `module_firmware_releases` | read | the history of one module: date, changelog, who, repository and commit |
+| `firmware_repos` | read | commits on GitHub after the last firmware published from Deploy, per module repository (asks GitHub; `configured: false` without a token). Only versions published from Deploy name a commit, so this is empty until the first one |
+| `images` | read | per controller or type the latest published image: date, files, size, complete image or not, downloads; drafts |
+| `image_downloads` | read | downloads per month, per country and per release, the number of different addresses; numbers only |
+| `application_downloads` | read | S1 downloads per application and file over at most 30 days, Cloudflare's estimate (`configured: false` without `DEPLOY_CF_API_TOKEN`) |
+| `recent_publications` | read | the audit log, newest first: what was published, moved or deleted and by whom (`all`: every action); at most the newest 300 entries of a period are read |
+| `attention` | read | an unfinished delete, manifests that cannot be read or do not agree, a published image outside the catalogue, unfinished uploads, old drafts, controllers behind, sealed keys of before 0.7.0, missing tokens; no external call |
+| `customer` | read | the applications of a relation, or `{ none: true }` |
+
+- **No action**: publishing, signing and deleting stay with a colleague on the page.
+- **Never in a tool result**: a private key, a sealed key, a public key's hex, a token, a customer's e-mail address, the
+  local path of a repository. The tools build every result field by field; `image_downloads` reads
+  `src/images-stats.ts`, which keeps numbers only, and no tool calls `imagesOverview`, which holds addresses
+  (`imageReleases` is that function without them). `test/admin-api.test.ts` puts a recognisable value in each of these
+  and runs every tool.
+- **Customer of an application**: as on the Applications page, so through `customerNames`, which still reads the view
+  `customers` until the central move reaches Deploy (step 3).
+- **Backup**: `databases: []` (no D1 of its own; `exportRows` is an `AdminError`), store `gocontroll-deploy-state`, whole:
+  keys, retired keys, folder settings, audit log, download counts, firmware log, image release records, monthly image
+  stats, and the archives `replaced/` and `deleted/`, the only copy of a replaced or deleted release. The sealed keys of
+  before 0.7.0 go along as ciphertext: useless without `DEPLOY_SIGNING_KEYS_KEY` in the Secrets Store. **Left out**:
+  `images/uploads/` (uploads under way, which R2 drops after 7 days and which cannot go on after a restore) and, as
+  release artefacts that come from the builds, the buckets `gocontroll-deploy`, `gocontroll-firmware` and
+  `gocontroll-images`. That last one also holds `downloads/`, the log with an e-mail address per download: it is **not**
+  in the state bucket and not in the backup. It is kept 13 months; its monthly counts without addresses
+  (`images/stats/`) are in the backup. `manifest.json` of the images follows from the release records, by publishing again.
+
 ## Development
 
 ```sh
@@ -775,6 +816,7 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
 | Secrets Store | `SIGNING_KEYS_KEY` → `DEPLOY_SIGNING_KEYS_KEY` (exists; the KEK of the private keys sealed before 0.7.0, which stay; nothing opens them now); `GITHUB_TOKEN` → `DEPLOY_GITHUB_TOKEN` (exists since 2026-10-28; the owner set the token, [GitHub releases](#github-releases)); `MS365_CLIENT_SECRET` → `MS365_CLIENT_SECRET` (since 0.6.0; shared with Hours, the Configurator and Finance); `CF_API_TOKEN` → `DEPLOY_CF_API_TOKEN` (to be made, [Download counts](#download-counts)) |
 | Vars | `TEAM_DOMAIN`, `POLICY_AUD`, `DEPLOY_GROUPS`, `DISTRIBUTION_URLS`, `DOWNLOAD_HOSTS`, `FIRMWARE_URLS`, `IMAGES_URL`, `GITHUB_REPOS`, `MAIL_FROM`, `MS365_TENANT_ID`, `MS365_CLIENT_ID`, `IMAGES_MAIL_REPLY_TO` |
 | RPC entrypoint | `ImagesMail` (`src/images-mail.ts`), bound by `gocontroll-images` as `MAIL`: deploy this Worker before the download site |
+| RPC entrypoint | `AdminApi` (`src/admin-api.ts`), bound by the hub's `gocontroll-admin` ([Admin API](#admin-api)): deploy this Worker before it |
 | Second Worker | `gocontroll-images` on `images.gocontroll.tech` ([`images/`](images/README.md), `npm run deploy:images`) |
 | Cron | `17 2 * * *`: stores the download counts of finished days ([Download counts](#download-counts)) and the image download counts of finished months |
 
@@ -819,6 +861,8 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
 
 ### Rolling back
 
+- 0.12.0 (2026-10-30, no data or bindings) adds the entrypoint `AdminApi` ([Admin API](#admin-api)). Back: the version
+  before it, **after** the hub's `gocontroll-admin` no longer binds the entrypoint.
 - 0.11.1 (2026-10-30, no data or bindings) adds the entrypoint `RelationUse` (`src/relation-use.ts`): the CRM asks how many
   folders are assigned to a relation before it deletes one, and only a count crosses. Back:
   `npx wrangler rollback 2c77e8e1-cff3-44eb-b5b8-b7e7ea7d3887`, **after** the CRM is back on `f3203c24` (its 0.14.0 binds

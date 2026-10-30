@@ -117,6 +117,13 @@ export async function publicKeys(env: Env): Promise<Map<string, string>> {
   return out;
 }
 
+/** How many applications still have a sealed private key of before 0.7.0: the number, nothing of the keys. */
+export async function sealedKeyCount(env: Env): Promise<number> {
+  const objects = (await listAll(env.STATE, { prefix: 'keys/' })).filter((o) => o.key.endsWith('.json'));
+  const keys = await Promise.all(objects.map((o) => readJson<StoredKey>(env.STATE, o.key)));
+  return keys.filter((k) => typeof k?.value.sealed_private_key === 'string' && k.value.sealed_private_key.length > 0).length;
+}
+
 /** What the API says about a key: never the sealed private key of a key of before 0.7.0, only that there is one. */
 export function keyInfo(key: StoredKey) {
   return {

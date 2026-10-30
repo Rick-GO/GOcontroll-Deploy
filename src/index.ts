@@ -13,8 +13,10 @@
 // image download counts of finished months (src/images-stats.ts).
 //
 // ImagesMail (src/images-mail.ts) is the RPC entrypoint images.gocontroll.tech binds as MAIL: it
-// mails a customer's sign-in link, so the Microsoft 365 secret stays in this Worker. A class is a
-// handler, so workerd accepts it as a named export of this module (constants it does not).
+// mails a customer's sign-in link, so the Microsoft 365 secret stays in this Worker. AdminApi
+// (src/admin-api.ts) is the one the hub's admin Worker binds: the tools of the MCP connector and the
+// backup. A class is a handler, so workerd accepts it as a named export of this module (constants
+// it does not).
 
 import { Hono } from 'hono';
 import type { AppEnv, Env } from './env';
@@ -142,6 +144,7 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
+export { AdminApi } from './admin-api';
 export { ImagesMail } from './images-mail';
 export { RelationUse } from './relation-use';
 
