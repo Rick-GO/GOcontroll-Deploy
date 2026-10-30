@@ -155,7 +155,13 @@ const quote = (name: string) => `"${name.replace(/"/g, '""')}"`;
 /** Tables that are D1's or SQLite's own; a dump of them cannot be restored. */
 const systemTable = (name: string) => name.startsWith('sqlite_') || name.startsWith('_cf_');
 
-async function tablesOf(part: ExportDatabase): Promise<{ table: string; sql: string; virtual: boolean }[]> {
+interface ListedTable { table: string; sql: string; virtual: boolean; skipped: boolean }
+
+/**
+ * Every table of this scope. A table in `skip` is listed too: its rows stay out, its schema does not.
+ * Without the schema a restored database lacks a table that d1_migrations says exists.
+ */
+async function tablesOf(part: ExportDatabase): Promise<ListedTable[]> {
   const { results } = await part.db.prepare(
     `SELECT name, sql FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL ORDER BY rowid`,
   ).all<{ name: string; sql: string }>();
@@ -163,23 +169,24 @@ async function tablesOf(part: ExportDatabase): Promise<{ table: string; sql: str
     .all<{ name: string; type: string }>();
   const shadows = new Set(shadow.results.filter((r) => r.type === 'shadow').map((r) => r.name));
   return results
-    .filter((r) => !systemTable(r.name) && !shadows.has(r.name) && part.include(r.name) && !part.skip?.[r.name])
-    .map((r) => ({ table: r.name, sql: r.sql, virtual: /^\s*CREATE\s+VIRTUAL\s/i.test(r.sql) }));
+    .filter((r) => !systemTable(r.name) && !shadows.has(r.name) && part.include(r.name))
+    .map((r) => ({
+      table: r.name, sql: r.sql, virtual: /^\s*CREATE\s+VIRTUAL\s/i.test(r.sql), skipped: Boolean(part.skip?.[r.name]),
+    }));
 }
 
-async function columnsOf(part: ExportDatabase, name: string): Promise<string[]> {
-  const { results } = await part.db.prepare(`SELECT name FROM pragma_table_info(?1)`).bind(name).all<{ name: string }>();
-  return results.map((r) => r.name);
+async function columnsOf(part: ExportDatabase, name: string): Promise<{ columns: string[]; key: string[] }> {
+  const { results } = await part.db.prepare(`SELECT name, pk FROM pragma_table_info(?1)`).bind(name).all<{ name: string; pk: number }>();
+  const key = results.filter((r) => r.pk > 0).sort((a, b) => a.pk - b.pk).map((r) => r.name);
+  return { columns: results.map((r) => r.name), key };
 }
 
 const hasRowid = (sql: string) => !/\)\s*(STRICT\s*,\s*)?WITHOUT\s+ROWID/i.test(sql);
 
 async function tableInfo(part: ExportDatabase, name: string, sql: string): Promise<TableInfo> {
   const count = await part.db.prepare(`SELECT COUNT(*) AS n FROM ${quote(name)}`).first<{ n: number }>();
-  return {
-    name, columns: await columnsOf(part, name), redacted: Object.keys(part.redact?.[name] ?? {}),
-    rowid: hasRowid(sql), rows: count?.n ?? 0,
-  };
+  const { columns } = await columnsOf(part, name);
+  return { name, columns, redacted: Object.keys(part.redact?.[name] ?? {}), rowid: hasRowid(sql), rows: count?.n ?? 0 };
 }
 
 /** Plan of a scope: the schema, the tables and the files, without a single row of data. */
@@ -189,13 +196,13 @@ export async function exportPlan(scope: ExportScope, includeFiles: boolean) {
   for (const part of scope.databases) {
     const listed = await tablesOf(part);
     const tables: TableInfo[] = [];
-    for (const t of listed.filter((l) => !l.virtual)) tables.push(await tableInfo(part, t.table, t.sql));
-    const names = new Set(tables.map((t) => t.name));
+    for (const t of listed.filter((l) => !l.virtual && !l.skipped)) tables.push(await tableInfo(part, t.table, t.sql));
+    const names = new Set(listed.map((t) => t.table));
     const { results } = await part.db.prepare(
       `SELECT type, name, tbl_name, sql FROM sqlite_master WHERE type IN ('index', 'view', 'trigger') AND sql IS NOT NULL ORDER BY rowid`,
     ).all<{ type: string; name: string; tbl_name: string; sql: string }>();
     for (const [what, reason] of Object.entries(part.skip ?? {})) skipped.push({ what: `${part.name}.${what}`, reason });
-    for (const t of listed.filter((l) => l.virtual)) {
+    for (const t of listed.filter((l) => l.virtual && !l.skipped)) {
       skipped.push({ what: `${part.name}.${t.table}`, reason: 'Search index: schema only, rebuild it after a restore.' });
     }
     for (const t of tables) {
@@ -243,16 +250,16 @@ function partOf(scope: ExportScope, database: string): ExportDatabase {
  */
 export async function exportRows(scope: ExportScope, database: string, table: string, after: number | null, limit: number) {
   const part = partOf(scope, database);
-  const listed = (await tablesOf(part)).find((t) => t.table === table && !t.virtual);
+  const listed = (await tablesOf(part)).find((t) => t.table === table && !t.virtual && !t.skipped);
   if (!listed) throw new AdminError(`Unknown table: ${table}.`);
-  const columns = await columnsOf(part, table);
+  const { columns, key } = await columnsOf(part, table);
   const rowid = hasRowid(listed.sql);
   const replace = part.redact?.[table] ?? {};
   const select = columns.map((c) => (c in replace ? 'NULL' : quote(c))).join(', ');
   const size = Math.min(Math.max(limit, 1), 1000);
   const start = after ?? 0;
-  // Without a rowid the page is an offset, so the order must be complete: every column.
-  const order = columns.map(quote).join(', ');
+  // Without a rowid the page is an offset, in the order of the primary key: complete, and no sort.
+  const order = key.map(quote).join(', ');
   const rows = rowid
     ? await part.db.prepare(`SELECT rowid, ${select} FROM ${quote(table)} WHERE rowid > ?1 ORDER BY rowid LIMIT ?2`).bind(after ?? Number.MIN_SAFE_INTEGER, size).raw()
     : await part.db.prepare(`SELECT 0, ${select} FROM ${quote(table)} ORDER BY ${order} LIMIT ?1 OFFSET ?2`).bind(size, start).raw();
