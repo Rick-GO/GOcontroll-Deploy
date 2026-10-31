@@ -718,8 +718,8 @@ copy of the canonical helper; a fix belongs there first.
   `src/images-stats.ts`, which keeps numbers only, and no tool calls `imagesOverview`, which holds addresses
   (`imageReleases` is that function without them). `test/admin-api.test.ts` puts a recognisable value in each of these
   and runs every tool.
-- **Customer of an application**: as on the Applications page, so through `customerNames`, which still reads the view
-  `customers` until the central move reaches Deploy (step 3).
+- **Customer of an application**: as on the Applications page, so through `customerNames`, which reads the view
+  `customers` (the read model of a customer in `gocontroll-business`; it stays, read only since CRM 0.18.0).
 - **Backup**: `databases: []` (no D1 of its own; `exportRows` is an `AdminError`), store `gocontroll-deploy-state`, whole:
   keys, retired keys, folder settings, audit log, download counts, firmware log, image release records, monthly image
   stats, and the archives `replaced/` and `deleted/`, the only copy of a replaced or deleted release. The sealed keys of
