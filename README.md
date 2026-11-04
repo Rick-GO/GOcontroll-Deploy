@@ -66,6 +66,11 @@ no build step. Older links keep working (bookmarks), replaced without a new hist
 `?q=&show=`) go to `#/applications`, `#/folders/<APP_ID>` to `#/applications/<APP_ID>`, `#/keys` (the Keys tab until 0.6.1) to
 `#/key-generator`, and `#/publish` and `#/sign` (milestone 1) to the application of their `?app=`, else to Applications.
 
+The header is that of every intranet app: the GOcontroll logo leads to the hub (gocontroll.tools); the arrow before *Deploy*
+goes one step back within Deploy (a tab, an application page) and never out of it, greyed out when there is nothing to go back to
+(`public/pub/back.js`, a copy of `GOcontroll-Architecture/styling/back.js`; style guide → *Header navigation*). *Deploy* itself
+goes to Applications.
+
 | Page | What you do there |
 |---|---|
 | **Applications** (`#/applications`) | Totals, then every customer with its applications and the folders without a customer. Columns: App ID, Controller (S1, M1, L4, HMI1 or a derived type), latest, releases, public key ("Yes"; "No" for an S1 application without one, "n/a" for a Linux application without one; the key itself is on the application's page, to copy or download), last upload. Search and a filter (all / S1 / S1 without public key / M1 / L4 / HMI1 / controller unknown) stay in the address. At the bottom, **New application…**: controller S1, M1, L4 or HMI1, then the App ID (S1: up to 32 characters, no spaces or "/"; Linux: lower case `^[a-z0-9][a-z0-9._-]*$`, up to 64), customer, and for S1 the distribution host. Creating it opens its folder page. |
@@ -862,6 +867,8 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
 
 ### Rolling back
 
+- 0.12.1 (2026-11-04, only assets, no data or bindings): the logo leads to the hub and an arrow steps back within the
+  app instead of "← Team". Back: `npx wrangler rollback 2e5bc796-a6e8-4df4-9af0-029e92ea77a6` (0.12.0).
 - 0.12.0 (2026-10-30, no data or bindings) adds the entrypoint `AdminApi` ([Admin API](#admin-api)). Back: the version
   before it, **after** the hub's `gocontroll-admin` no longer binds the entrypoint.
 - 0.11.1 (2026-10-30, no data or bindings) adds the entrypoint `RelationUse` (`src/relation-use.ts`): the CRM asks how many

@@ -47,8 +47,8 @@ body {
 .muted { color: var(--muted); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-/* ── Header and hero: same as the hub, gocontroll.tools (GOcontroll-Team/public/styles.css),
-      with the "← Team /" crumb of suppliers.gocontroll.tools. Mobile first. ── */
+/* ── Header and hero: same as the hub, gocontroll.tools (GOcontroll-Team/public/styles.css); the logo leads
+      to the hub, the arrow steps back within the app. Mobile first. ── */
 .topbar {
   height: 60px;
   background: var(--white);
@@ -65,14 +65,20 @@ body {
 .brand { display: flex; border-radius: 4px; flex: none; }
 .brand img { height: 28px; width: auto; display: block; }
 .divider { display: none; width: 1px; height: 28px; background: var(--border); }
-.crumb {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 13px; color: var(--muted); text-decoration: none;
-  border-radius: 4px; transition: color .15s;
+/* The arrow goes one step back within the app and never out of it (/pub/back.js, GOcontroll-Architecture/styling/README.md
+   → "Header navigation"). 32px visible, 44px to touch; greyed out when there is no step back within the app. */
+.back {
+  position: relative; flex: none;
+  display: inline-grid; place-items: center;
+  width: 32px; height: 32px; padding: 0; margin: 0 -6px;
+  border: 0; border-radius: 50%; background: none;
+  color: var(--muted); cursor: pointer;
+  transition: color .15s, background-color .15s;
 }
-.crumb:hover { color: var(--brand); }
-.crumb svg { width: 14px; height: 14px; }
-.crumb-sep { color: var(--border2); margin: 0 -6px; }
+.back::after { content: ""; position: absolute; inset: -6px; }
+.back:hover:not(:disabled) { color: var(--brand); background: var(--brand-light); }
+.back:disabled { color: var(--border2); cursor: default; }
+.back svg { width: 18px; height: 18px; }
 .app-title { font-size: 15px; font-weight: 600; color: inherit; text-decoration: none; white-space: nowrap; }
 .app-title .long { display: none; }
 .spacer { flex: 1; }

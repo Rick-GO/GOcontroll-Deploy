@@ -10,6 +10,17 @@ import { TABS, applicationHref, redirectFor, tabOf } from '../public/js/routes.j
 import { normaliseChangelog as workerNormalise, parseSrecName as workerParse } from '../src/firmware';
 import { FILE_ROLE_LABELS, PLATFORM_LABELS } from '../src/images-format';
 import indexHtml from '../public/index.html?raw';
+import backJs from '../public/pub/back.js?raw';
+
+describe('header', () => {
+  it('the logo leads to the hub, the arrow only steps back inside Deploy (/pub/back.js)', () => {
+    expect(indexHtml).toContain('<a class="brand" href="https://gocontroll.tools" aria-label="GOcontroll Team">');
+    expect(indexHtml).toMatch(/<button type="button" class="back" data-back aria-label="Back"[^>]* disabled><\/button>\s*<a class="app-title" href="#\/applications">/);
+    expect(indexHtml).toContain('<script src="/pub/back.js" defer></script>');
+    expect(indexHtml).not.toMatch(/class="crumb"|<span>Team<\/span>/);
+    expect(backJs).toContain('nav.canGoBack');
+  });
+});
 
 describe('tabs and routes', () => {
   it('has the tabs Applications, Firmware, Images, Key generator, in that order, on the page too', () => {
