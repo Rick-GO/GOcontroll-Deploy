@@ -1,2 +1,2 @@
 // Shown by /api/health. Bump together with package.json on every release.
-export const APP_VERSION = '0.12.1';
+export const APP_VERSION = '0.13.0';

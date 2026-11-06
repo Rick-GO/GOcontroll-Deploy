@@ -14,13 +14,21 @@ const ACTOR = { email: 'admin@gocontroll.com', name: 'An Admin', client: 'Claude
 const SEALED = 'v1.SEALED-IV.SEALED-CIPHERTEXT';
 const CUSTOMER_MAIL = 'secret.customer@example.com';
 const PUBLIC_KEY = `04${'AB'.repeat(64)}`;
-const SECRETS = [SEALED, 'SEALED-CIPHERTEXT', CUSTOMER_MAIL, PUBLIC_KEY, 'UPLOAD-ID-SECRET', 'TOKEN-OF-GITHUB', 'C:/Users/secret/path'];
+const DELETE_REASON = 'A-REASON-NOT-FOR-THE-MODEL';
+const SECRETS = [SEALED, 'SEALED-CIPHERTEXT', CUSTOMER_MAIL, PUBLIC_KEY, 'UPLOAD-ID-SECRET', 'TOKEN-OF-GITHUB', 'C:/Users/secret/path', DELETE_REASON];
 
 const APP = 'ADMINAPP';
 const LINUX = 'ADMINLNX';
+const NOKEY = 'ADMNOKEY';
 const MOD = '20700101';
 const DAY = 86_400_000;
 const iso = (ms: number) => new Date(ms).toISOString();
+const TODAY = iso(Date.now()).slice(0, 10);
+/** A day of its own for the activity fixtures, outside the default periods of the other tools. */
+const ACTIVITY_DAY = iso(Date.now() - 60 * DAY).slice(0, 10);
+const LONG_CHANGELOG = `First ${'x'.repeat(400)}`;
+const TECH = 'https://deploy.gocontroll.tech';
+const COM = 'https://deploy.gocontroll.com';
 
 let acme: number;
 const api = () => new AdminApi(createExecutionContext(), env);
@@ -42,8 +50,13 @@ beforeAll(async () => {
   } });
   await env.STATE.put(`keys/${APP}.json`, json({ app_id: APP, public_key: PUBLIC_KEY, sealed_private_key: SEALED, source: 'generated', created_at: '2026-10-01T00:00:00Z', created_by: 'jane.doe@gocontroll.com' }));
   await env.STATE.put(`folders/${APP}.json`, json({ customer_id: acme, updated_at: '2026-10-01T00:00:00Z', updated_by: 'jane.doe@gocontroll.com' }));
-  await controller({ app_id: APP, app_version: '1.2.0', client_id: acme, online: 1, type: 'Moduline S1' });
-  await controller({ app_id: APP, app_version: '1.1.0', client_id: acme, online: 0, type: 'Moduline S1' });
+  await controller({ app_id: APP, app_version: '1.2.0', client_id: acme, online: 1, type: 'Moduline S1', distribution_url: TECH });
+  await controller({ app_id: APP, app_version: '1.1.0', client_id: acme, online: 0, type: 'Moduline S1', distribution_url: COM });
+
+  // An S1 application without a public key.
+  await putManifest(NOKEY, { application_id: NOKEY, latest: '0.1.0', binaries: {
+    '0.1.0': { url: `${TECH}/${NOKEY}/${NOKEY}-0.1.0.bin?v=0011223344556677`, release_date: '2026-10-01', description: 'First' },
+  } });
 
   // A Linux application.
   await putManifest(LINUX, { app_id: LINUX, latest_version: '2.0.0', versions: [{ version: '2.0.0', released: today, description: 'Linux', size_bytes: 1000, tarball: 'v2.0.0/update.tar.gz', manifest: 'v2.0.0/manifest.json' }] });
@@ -52,7 +65,7 @@ beforeAll(async () => {
   await env.FIRMWARE_BUCKET.put('modules/manifest.json', json({ updated: today, modules: [{ id: MOD, name: 'Test Input module', hardware_version: '1.01', latest_firmware: '1.1.0', manifest: `modules/${MOD}/manifest.json` }] }));
   await env.FIRMWARE_BUCKET.put(`modules/${MOD}/manifest.json`, json({ id: MOD, name: 'Test Input module', hardware_version: '1.01', releases: [
     { sw_version: '1.0.0', file: `modules/${MOD}/x.srec`, date: '28/10/26', sha256: 'ab', changelog: 'Older' },
-    { sw_version: '0.9.0', file: `modules/${MOD}/y.srec`, date: '01/09/26', sha256: 'cd', changelog: 'First' },
+    { sw_version: '0.9.0', file: `modules/${MOD}/y.srec`, date: '01/09/26', sha256: 'cd', changelog: LONG_CHANGELOG },
   ] }));
   const source = json({ repo: 'Module-Test', branch: 'main', commit: 'a'.repeat(40), tag: 'v1.0.0', path: 'C:/Users/secret/path', pushed: true });
   await env.STATE.put(`firmware-log/${MOD}/1.0.0.json`, '{}', { customMetadata: { email: 'jane.doe@gocontroll.com', at: '2026-10-28T10:00:00Z', source } });
@@ -81,6 +94,23 @@ beforeAll(async () => {
   await putLog(iso(Date.now() - 2 * DAY), 'image-moduline-l4', 'abc123def456', { action: 'images-publish', files: [] });
   await putLog(iso(Date.now() - 3 * DAY), APP, 'settings', { action: 'settings', version: undefined });
   await putLog(iso(Date.now() - 40 * DAY), APP, '1.1.0', { action: 'publish', signed: true });
+  // Today: a public key attached (the line holds the key itself).
+  await putLog(iso(Date.now()), APP, 'key-attach', { action: 'key-attach', version: undefined, source: 'attached', public_key: PUBLIC_KEY });
+  // A day with one line of every kind activity knows, and an image draft it leaves out, oldest first.
+  const at = (minute: number) => `${ACTIVITY_DAY}T08:${String(minute).padStart(2, '0')}:00.000Z`;
+  await putLog(at(0), 'ADMINNEW', 'create-folder', { action: 'create-folder', version: undefined, controller: 'S1', customer_id: null });
+  await putLog(at(5), APP, 'settings', { action: 'settings', version: undefined, customer_id: acme });
+  await putLog(at(10), LINUX, 'package', { action: 'package', version: undefined, package: { files: [] } });
+  await putLog(at(15), APP, '1.1.0', { action: 'sign', signed: true, sha256: 'ab' });
+  await putLog(at(16), APP, '1.1.0', { action: 'sign', signed: true, sha256: 'ab' });
+  await putLog(at(20), LINUX, '2.0.0', { action: 'publish-linux', replaced: false, description: 'Linux' });
+  await putLog(at(25), `module-${MOD}`, '1.0.0', { action: 'publish-firmware', description: 'Older', source: { repo: 'Module-Test', path: 'C:/Users/secret/path' } });
+  await putLog(at(30), 'repo-GOcontroll_Module-Test', '1.0.0', { action: 'github-release', repo: 'GOcontroll/Module-Test', tagState: 'created', releaseState: 'created' });
+  await putLog(at(35), 'image-moduline-l4', 'abc123def456', { action: 'images-create', controller: 'L4' });
+  await putLog(at(40), 'image-moduline-l4', 'abc123def456', { action: 'images-withdraw' });
+  await putLog(at(45), APP, 'distribution', { action: 'distribution', version: undefined, from: COM, to: TECH, moved: true, previous_manifest: { secret: SEALED } });
+  await putLog(at(50), APP, 'key-replace', { action: 'key-replace', version: undefined, public_key: PUBLIC_KEY });
+  await putLog(at(55), 'ADMINOLD', 'delete-folder', { action: 'delete-folder', version: undefined, reason: DELETE_REASON, objects: 3 });
 
   // A delete that stopped halfway.
   await env.STATE.put('deleting/STUCKAPP.json', json({ started_at: '2026-10-29T10:00:00Z', actor: 'jane.doe@gocontroll.com', reason: 'test' }));
@@ -100,8 +130,9 @@ describe('describe', () => {
       expect(t.description.length, t.name).toBeGreaterThan(40);
       expect(t.kind).toBe('read');
     }
-    expect(names).toEqual(expect.arrayContaining(['attention', 'customer']));
-    expect(names.length).toBeLessThanOrEqual(12);
+    expect(names).toEqual(expect.arrayContaining(['attention', 'customer', 'activity']));
+    // activity is only asked for by hub_activity and costs the connector no place.
+    expect(names.filter((n) => n !== 'activity').length).toBeLessThanOrEqual(12);
   });
 
   test('the Worker exports the entrypoint', async () => {
@@ -115,6 +146,7 @@ describe('the data boundary', () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('no network in this test'));
     const args: Record<string, Record<string, unknown>> = {
       application: { app_id: APP }, module_firmware_releases: { hw_id: MOD }, customer: { relation_id: acme }, recent_publications: { all: true }, rollout: { all: true },
+      activity: { from: ACTIVITY_DAY, to: TODAY },
     };
     for (const tool of TOOLS) {
       const out = json(await call(tool.name, args[tool.name] ?? {}));
@@ -132,6 +164,8 @@ describe('the data boundary', () => {
     expect(await call('application', { app_id: 'NOSUCHAPP' })).toEqual({ error: 'There is no folder NOSUCHAPP in the bucket.' });
     expect(await call('application', { app_id: 'a/b' })).toEqual({ error: 'Not found.' });
     expect(await call('module_firmware_releases', { hw_id: '99999999' })).toEqual({ error: 'There is no module 99999999 on firmware.gocontroll.tech.' });
+    expect(await call('rollout', { host: 'not a host!' })).toEqual({ error: 'host must be a host name such as deploy.gocontroll.tech, or a URL.' });
+    expect(await call('activity', { from: '2026-02-01', to: '2026-01-01' })).toEqual({ error: 'from must not be after to.' });
   });
 });
 
@@ -149,6 +183,19 @@ describe('the tools', () => {
     expect((await call('applications', { controller: 's1', relation_id: acme })).total).toBe(1);
   });
 
+  test('applications: with or without a public key, and how many S1 applications have none, never the key', async () => {
+    const without = await call('applications', { has_public_key: false, kind: 's1' });
+    expect(without.items.map((i: any) => i.app_id)).toContain(NOKEY);
+    expect(without.items.map((i: any) => i.app_id)).not.toContain(APP);
+    expect(without.items.every((i: any) => i.has_public_key === false)).toBe(true);
+    expect((await call('applications', { has_public_key: true, search: 'adminapp' })).total).toBe(1);
+    expect((await call('applications', { has_public_key: false, search: 'adminapp' })).total).toBe(0);
+    const all = await call('applications');
+    expect(all.totals.s1_without_key).toBe(all.items.filter((i: any) => i.kind === 's1' && !i.has_public_key).length);
+    expect(all.totals.s1_without_key).toBeGreaterThanOrEqual(1);
+    expect(json(all)).not.toContain(PUBLIC_KEY);
+  });
+
   test('application: releases, versions on the controllers, only that there is a key', async () => {
     const out = await call('application', { app_id: APP });
     expect(out.releases.map((r: any) => r.version)).toEqual(['1.2.0', '1.1.0']);
@@ -159,11 +206,35 @@ describe('the tools', () => {
     expect((await call('application', { app_id: LINUX })).linux_versions).toEqual([{ version: '2.0.0', released: expect.any(String), description: 'Linux', size: 1000 }]);
   });
 
-  test('rollout: who is behind, with the versions they run', async () => {
+  test('rollout: who is behind, with the versions they run, the hosts they fetch from and the customer', async () => {
     const out = await call('rollout');
     const app = out.items.find((i: any) => i.app_id === APP);
-    expect(app).toMatchObject({ latest: '1.2.0', controllers: 2, up_to_date: 1, behind: 1, customer: 'Acme Pumps' });
+    expect(app).toMatchObject({ latest: '1.2.0', controllers: 2, up_to_date: 1, behind: 1, customer: { relation_id: acme, name: 'Acme Pumps' } });
     expect(app.versions).toEqual([{ version: '1.2.0', count: 1 }, { version: '1.1.0', count: 1 }]);
+    expect(app.hosts).toEqual([{ url: COM, count: 1 }, { url: TECH, count: 1 }]);
+    expect(out.totals.hosts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ url: COM, behind: expect.any(Number), applications: expect.any(Number) }),
+      expect.objectContaining({ url: TECH }),
+    ]));
+    const com = out.totals.hosts.find((h: any) => h.url === COM);
+    expect(com.controllers).toBeGreaterThanOrEqual(1);
+    expect(com.behind).toBeGreaterThanOrEqual(1);
+    expect(out.totals.controllers).toBe(out.totals.hosts.reduce((n: number, h: any) => n + h.controllers, 0) + out.totals.controllers_without_host);
+  });
+
+  test('rollout per host: only the controllers on that host, as a host name or a URL', async () => {
+    const com = await call('rollout', { host: 'deploy.gocontroll.com' });
+    expect(com.host).toBe('deploy.gocontroll.com');
+    const app = com.items.find((i: any) => i.app_id === APP);
+    expect(app).toMatchObject({ controllers: 1, up_to_date: 0, behind: 1, versions: [{ version: '1.1.0', count: 1 }], hosts: [{ url: COM, count: 1 }] });
+    expect(com.totals.hosts.map((h: any) => h.url)).toEqual([COM]);
+    expect(com.totals.controllers_without_host).toBe(0);
+    expect(await call('rollout', { host: 'HTTPS://Deploy.GOcontroll.com/' })).toEqual(com);
+    // On .tech the application is up to date: only with all.
+    expect((await call('rollout', { host: 'deploy.gocontroll.tech' })).items.map((i: any) => i.app_id)).not.toContain(APP);
+    const tech = await call('rollout', { host: 'deploy.gocontroll.tech', all: true });
+    expect(tech.items.find((i: any) => i.app_id === APP)).toMatchObject({ controllers: 1, up_to_date: 1, behind: 0, hosts: [{ url: TECH, count: 1 }] });
+    expect((await call('rollout', { host: 'nowhere.example' })).items).toEqual([]);
   });
 
   test('module_firmware and its history: latest_firmware, dates as YYYY-MM-DD, who published, without the local path', async () => {
@@ -175,8 +246,12 @@ describe('the tools', () => {
     const history = await call('module_firmware_releases', { hw_id: MOD });
     expect(history.items).toEqual([
       { version: '1.0.0', date: '2026-10-28', changelog: 'Older', published_by: 'jane.doe@gocontroll.com', published_at: '2026-10-28T10:00:00Z', repo: 'Module-Test', commit: 'aaaaaaaaaaaa', tag: 'v1.0.0' },
-      { version: '0.9.0', date: '2026-09-01', changelog: 'First', published_by: 'CI', published_at: null, repo: null, commit: null, tag: null },
+      { version: '0.9.0', date: '2026-09-01', changelog: LONG_CHANGELOG.slice(0, 300), published_by: 'CI', published_at: null, repo: null, commit: null, tag: null },
     ]);
+    expect(history).toMatchObject({ total: 2, truncated: false });
+    const newest = await call('module_firmware_releases', { hw_id: MOD, limit: 1 });
+    expect(newest.items.map((i: any) => i.version)).toEqual(['1.0.0']);
+    expect(newest).toMatchObject({ total: 2, truncated: true });
   });
 
   test('firmware_repos: off without a token; with one, the commits GitHub has after the publish, asked once in 5 minutes', async () => {
@@ -289,6 +364,86 @@ describe('the tools', () => {
     expect(items.find((i: any) => /big\.zip/.test(i.title)).due).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(external).not.toHaveBeenCalled();
     for (const i of items) expect(['high', 'medium', 'low']).toContain(i.severity);
+  });
+
+  test('attention: an application whose manifest cannot be read, with its App ID, a fixed sentence and a url', async () => {
+    await env.DEPLOY_BUCKET.put('BADJSON1/manifest.json', '{ "latest": "1.0.0", IGNORE-THIS-TEXT');
+    await env.DEPLOY_BUCKET.put('BADJSON2/manifest.json', '["not", "an", "object"]');
+    await controller({ app_id: 'BADJSON1', app_version: '1.0.0', online: 1, type: 'Moduline S1' });
+    const { items } = await call('attention');
+    const one = items.find((i: any) => i.app_id === 'BADJSON1');
+    expect(one).toEqual({
+      severity: 'high', title: 'Controllers of BADJSON1 cannot update: manifest.json is not valid JSON', app_id: 'BADJSON1',
+      detail: '1 controller reports this App ID. Publish its latest release again, or put back previous_manifest of its last publish from the audit log.',
+      url: 'https://deploy.gocontroll.tools/#/applications/BADJSON1',
+    });
+    expect(items.find((i: any) => i.app_id === 'BADJSON2')).toMatchObject({ severity: 'high', title: 'Controllers of BADJSON2 cannot update: manifest.json is not a JSON object' });
+    expect(json(items)).not.toContain('IGNORE-THIS-TEXT');
+    expect((await call('applications', { search: 'badjson1' })).items[0].manifest_error).toBe('manifest.json is not valid JSON');
+    await env.DEPLOY_BUCKET.delete(['BADJSON1/manifest.json', 'BADJSON2/manifest.json']);
+  });
+
+  test('attention: module repositories ahead, from the last firmware_repos answer only', async () => {
+    const external = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('no external call'));
+    const before = await env.STATE.get('cache/firmware-repos.json');
+    const kept = before ? await before.text() : null;
+    await env.STATE.put('cache/firmware-repos.json', json({ configured: true, checked_at: '2026-11-06T08:15:30.000Z', items: [
+      { repo: 'GOcontroll/Module-Test', commits_after_publish: 3 },
+      { repo: 'GOcontroll/Module-Other', commits_after_publish: 0 },
+      { repo: 'GOcontroll/Module-Third', commits_after_publish: null },
+    ] }));
+    const tool = TOOLS.find((t) => t.name === 'attention')!;
+    const withToken = { ...env, GITHUB_TOKEN: 'TOKEN-OF-GITHUB', GITHUB_REPOS: 'GOcontroll/Module-*' } as typeof env;
+    const { items } = await tool.run(withToken, {}, ACTOR) as any;
+    expect(items.find((i: any) => /module repo/.test(i.title))).toEqual({
+      severity: 'low', title: '1 module repo has commits after the last publish (checked 2026-11-06 08:15 UTC)',
+      detail: 'GOcontroll/Module-Test (3)', url: 'https://deploy.gocontroll.tools/#/firmware',
+    });
+    await env.STATE.put('cache/firmware-repos.json', json({ configured: true, checked_at: '2026-11-06T08:15:30.000Z', items: [{ repo: 'GOcontroll/Module-Test', commits_after_publish: 0 }] }));
+    expect(((await tool.run(withToken, {}, ACTOR)) as any).items.some((i: any) => /module repo/.test(i.title))).toBe(false);
+    await env.STATE.put('cache/firmware-repos.json', 'not json');
+    expect(((await tool.run(withToken, {}, ACTOR)) as any).items.some((i: any) => /module repo/.test(i.title))).toBe(false);
+    expect(external).not.toHaveBeenCalled();
+    if (kept === null) await env.STATE.delete('cache/firmware-repos.json');
+    else await env.STATE.put('cache/firmware-repos.json', kept);
+  });
+
+  test('activity: today by default, newest first, within the period', async () => {
+    const out = await call('activity');
+    expect(out).toMatchObject({ from: TODAY, to: TODAY, truncated: false });
+    expect(out.items).toContainEqual({
+      at: expect.stringMatching(new RegExp(`^${TODAY}T`)), kind: 'public_key_attached', title: `${APP}: public key attached`,
+      detail: 'By jane.doe@gocontroll.com.', url: `https://deploy.gocontroll.tools/#/applications/${APP}`,
+    });
+    for (const i of out.items) expect(i.at.slice(0, 10)).toBe(TODAY);
+    expect(json(out)).not.toContain(PUBLIC_KEY);
+  });
+
+  test('activity: every kind of a day, the same event twice as one item, image drafts and free text left out', async () => {
+    const out = await call('activity', { from: ACTIVITY_DAY, to: ACTIVITY_DAY });
+    expect(out.items.map((i: any) => i.kind)).toEqual([
+      'application_deleted', 'public_key_replaced', 'host_changed', 'image_withdrawn', 'github_release', 'module_firmware_published',
+      'linux_release_published', 'release_signed', 'package_changed', 'application_changed', 'application_created',
+    ]);
+    expect(out).toMatchObject({ from: ACTIVITY_DAY, to: ACTIVITY_DAY, total: 11, truncated: false });
+    const ats = out.items.map((i: any) => i.at);
+    expect([...ats].sort().reverse()).toEqual(ats);
+    for (const at of ats) expect(at.slice(0, 10)).toBe(ACTIVITY_DAY);
+    const by = (kind: string) => out.items.find((i: any) => i.kind === kind);
+    expect(by('release_signed')).toMatchObject({ title: `${APP} 1.1.0 signed`, count: 2, at: `${ACTIVITY_DAY}T08:16:00.000Z` });
+    expect(by('host_changed')).toMatchObject({ title: `${APP} moved to deploy.gocontroll.tech`, detail: 'From deploy.gocontroll.com; every URL of the manifest moved. By jane.doe@gocontroll.com.' });
+    expect(by('module_firmware_published').title).toBe(`Firmware 1.0.0 of Test Input module (${MOD}) published`);
+    expect(by('github_release').title).toBe('GitHub release v1.0.0 of GOcontroll/Module-Test');
+    expect(by('image_withdrawn')).toMatchObject({ title: 'Moduline L4 6.12.87 withdrawn from images.gocontroll.tech', url: 'https://deploy.gocontroll.tools/#/images' });
+    expect(by('application_changed').title).toBe(`${APP}: customer changed`);
+    expect(by('application_deleted')).toMatchObject({ title: 'ADMINOLD deleted', detail: '3 objects archived first. By jane.doe@gocontroll.com.' });
+    expect(by('linux_release_published').title).toBe(`${LINUX} 2.0.0 published (Linux package)`);
+    expect(json(out)).not.toContain(DELETE_REASON);
+    expect(json(out)).not.toContain('Older');
+    expect(json(out)).not.toContain(SEALED);
+    const two = await call('activity', { from: ACTIVITY_DAY, to: ACTIVITY_DAY, limit: 2 });
+    expect(two.items.map((i: any) => i.kind)).toEqual(['application_deleted', 'public_key_replaced']);
+    expect(two).toMatchObject({ total: 11, truncated: true });
   });
 
   test('attention: a published release that is not in the catalogue', async () => {

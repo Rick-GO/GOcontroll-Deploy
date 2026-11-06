@@ -41,10 +41,10 @@ import { folderKey, isLinuxController, rootEntry } from './linux';
 export interface FolderCustomer { id: number; name: string; source: 'manual' | 'controllers' | 'project' }
 export type ControllerSource = 'manual' | 'manifest' | 'controllers' | null;
 
-interface ControllerStats { total: number; online: number; upToDate: number }
+export interface ControllerStats { total: number; online: number; upToDate: number }
 
 /** Controller counts of one App ID. Up to date: on the folder's latest version, or (latest unknown) app_uptodate. */
-function controllerStats(groups: ControllerGroup[], latest: string | null): ControllerStats {
+export function controllerStats(groups: ControllerGroup[], latest: string | null): ControllerStats {
   let total = 0, online = 0, upToDate = 0;
   for (const g of groups) {
     total += g.total;
@@ -52,6 +52,26 @@ function controllerStats(groups: ControllerGroup[], latest: string | null): Cont
     upToDate += latest ? (g.app_version?.trim() === latest ? g.total : 0) : g.up_to_date;
   }
   return { total, online, upToDate };
+}
+
+/** How many controllers run each version, newest version first; no version reported = "unknown". */
+export function versionCounts(groups: ControllerGroup[]): { version: string; count: number }[] {
+  const versions = new Map<string, number>();
+  for (const g of groups) {
+    const v = g.app_version?.trim() || 'unknown';
+    versions.set(v, (versions.get(v) ?? 0) + g.total);
+  }
+  return [...versions].map(([version, count]) => ({ version, count })).sort((a, b) => compareVersions(b.version, a.version));
+}
+
+/** How many controllers fetch from each distribution URL they report, most first; none reported = left out. */
+export function hostCounts(groups: ControllerGroup[]): { url: string; count: number }[] {
+  const hosts = new Map<string, number>();
+  for (const g of groups) {
+    const h = g.distribution_url?.trim() || '';
+    if (h) hosts.set(h, (hosts.get(h) ?? 0) + g.total);
+  }
+  return [...hosts].map(([url, count]) => ({ url, count })).sort((a, b) => b.count - a.count || a.url.localeCompare(b.url));
 }
 
 /** The most common client_id of one App ID's controllers (ties: the lowest id). */
@@ -157,6 +177,8 @@ export interface FolderSummary {
   inBucket: boolean;
   customer: FolderCustomer | null;
   controllers: ControllerStats;
+  /** Why manifest.json cannot be read (readManifest: not valid JSON, not a JSON object), or null. Controllers cannot update then. */
+  manifestError: string | null;
 }
 
 /** Every folder: what the bucket holds, every key and every settings record. */
@@ -210,6 +232,7 @@ export async function folderSummaries(env: Env): Promise<FolderSummary[]> {
       inBucket: stats.objects > 0,
       customer: resolveCustomer(appId, sources),
       controllers: controllerStats(appGroups, latest),
+      manifestError: manifest?.error ?? null,
     };
   }));
 }
@@ -328,15 +351,6 @@ export async function folderDetail(env: Env, appId: string, days = 30) {
     for (const rel of [v.tarball, v.manifest]) if (rel) namedKeys.add(`${appId}/${rel.replace(/^\/+/, '')}`);
   }
 
-  const versions = new Map<string, number>();
-  const hosts = new Map<string, number>();
-  for (const g of groups) {
-    const v = g.app_version?.trim() || 'unknown';
-    versions.set(v, (versions.get(v) ?? 0) + g.total);
-    const h = g.distribution_url?.trim() || '';
-    if (h) hosts.set(h, (hosts.get(h) ?? 0) + g.total);
-  }
-
   const manual = new Map<string, number | null>(settings ? [[appId, settings.customer_id]] : []);
   const customer = resolveCustomer(appId, await customerSources(env, manual, groups, appId));
 
@@ -353,8 +367,8 @@ export async function folderDetail(env: Env, appId: string, days = 30) {
     customer,
     controllers: {
       ...controllerStats(groups, latest),
-      versions: [...versions].map(([version, count]) => ({ version, count })).sort((a, b) => compareVersions(b.version, a.version)),
-      hosts: [...hosts].map(([url, count]) => ({ url, count })).sort((a, b) => b.count - a.count),
+      versions: versionCounts(groups),
+      hosts: hostCounts(groups),
     },
     releases,
     linuxVersions: linux.map(({ version, released, description, sizeBytes, sha256 }) => ({ version, released, description, sizeBytes, sha256 })),

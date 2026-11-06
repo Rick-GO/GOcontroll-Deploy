@@ -582,7 +582,7 @@ enough for this data, so it stays there.
 | `images/releases/<key>.json` | A release for images.gocontroll.tech; `<key>` = `<product>/<id>`, its folder `images/<key>/` (new: `moduline-hmi1/<12 hex>`; before 0.11.0 the folder it had, `moduline-hmi1/AV101_6.12.87`): controller, type, version (labels), release date, notes, files (name, path, size, SHA-256, role, platform, who uploaded it when), `draft`/`published`, who made, changed and published it when. |
 | `images/uploads/<id>.json` | An upload to `gocontroll-images` under way: R2 upload ID, object key, size, part size and count, who started it. Gone once completed or aborted. |
 | `images/stats/<yyyy-mm>.json` | The downloads of a finished month on images.gocontroll.tech: in all, different addresses (a number), per release, per file, per country. No e-mail address. Kept after the download log expires. |
-| `cache/firmware-repos.json` | The last answer of the admin tool `firmware_repos`, used for 5 minutes ([Admin API](#admin-api)). Not in the backup. |
+| `cache/firmware-repos.json` | The last answer of the admin tool `firmware_repos`, used for 5 minutes; `attention` reads it too, to name the module repositories with commits after their last publish without asking GitHub ([Admin API](#admin-api)). Not in the backup. |
 
 Read it with `npx wrangler r2 object get gocontroll-deploy-state/<key> --remote --file=-`.
 
@@ -704,18 +704,19 @@ copy of the canonical helper; a fix belongs there first.
 
 | Tool | Kind | What it returns |
 |---|---|---|
-| `applications` | read | every S1 and Linux application: customer, controller type, latest version, releases, last upload, controllers (total, online, up to date), totals; whether there is a public key, not the key |
+| `applications` | read | every S1 and Linux application: customer, controller type, latest version, releases, last upload, controllers (total, online, up to date), `manifest_error` when `manifest.json` cannot be read; totals with `s1_without_key`; whether there is a public key, never the key (filter `has_public_key`) |
 | `application` | read | one application: releases with date, description, size, signature; controllers per version and host; downloads of the last 30 days where counted |
-| `rollout` | read | per application how many controllers are behind the latest release, and on which versions |
+| `rollout` | read | per application how many controllers are behind the latest release, on which versions, from which distribution hosts (`hosts: [{ url, count }]`, as `controllers.distribution_url` reports them) and its `customer { relation_id, name }`; totals per host (`controllers`, `behind`, `applications`) and `controllers_without_host`. `host` (a host name or URL) keeps only the controllers on that host; `all` adds the applications that are up to date. Up to date = exactly the latest release; Moduline's `updates_pending` counts a newer version as up to date, the description says so |
 | `module_firmware` | read | every module: hardware version, `latest_firmware`, newest release, who published it (an address, or `CI`) |
-| `module_firmware_releases` | read | the history of one module: date, changelog, who, repository and commit |
+| `module_firmware_releases` | read | the history of one module, newest version first: date, changelog cut to 300 characters, who, repository and commit; `limit` (default 50), `total`, `truncated` |
 | `firmware_repos` | read | commits on GitHub after the last firmware published from Deploy, per module repository (`configured: false` without a token). It asks GitHub at most every 5 minutes (`cache/firmware-repos.json` in STATE, `checked_at` says when): two or three calls per repository on the token that tags and releases need too, so a loop must not use up the hourly quota. Only versions published from Deploy name a commit, so this is empty until the first one |
 | `images` | read | per controller or type the latest published image: date, files, size, complete image or not, downloads; drafts |
 | `image_downloads` | read | downloads per month, per country and per release, the number of different addresses; numbers only |
 | `application_downloads` | read | S1 downloads per application and file over at most 30 days, Cloudflare's estimate (`configured: false` without `DEPLOY_CF_API_TOKEN`) |
 | `recent_publications` | read | the audit log, newest first: what was published, moved or deleted and by whom (`all`: every action); at most the newest 300 entries of a period are read |
-| `attention` | read | an unfinished delete, manifests that cannot be read or do not agree, a published image outside the catalogue, unfinished uploads, old drafts, controllers behind, sealed keys of before 0.7.0, missing tokens; no external call |
+| `attention` | read | an unfinished delete; an application whose `manifest.json` cannot be read, so its controllers cannot update (`high`, with `app_id`; the sentence is `readManifest`'s, never text from the file); firmware or image manifests that cannot be read or do not agree, a published image outside the catalogue, unfinished uploads, old drafts, controllers behind, module repositories with commits after their last publish (`low`, only from `cache/firmware-repos.json`, with when it was checked), sealed keys of before 0.7.0, missing tokens; no external call |
 | `customer` | read | the applications of a relation, or `{ none: true }` |
+| `activity` | read | what happened in a period (default today), newest first, from the audit log: S1 and Linux releases, module firmware and GitHub releases, signing, images published or withdrawn, host moves, applications created, changed (customer, controller, package, public key) or deleted, each with who; the same event twice in a row is one item with `count`. Image drafts and uploads are left out, and so are release descriptions and the reason of a delete. The connector does not show it as a tool of its own: only `hub_activity` asks for it |
 
 - **No action**: publishing, signing and deleting stay with a colleague on the page.
 - **Never in a tool result**: a private key, a sealed key, a public key's hex, a token, a customer's e-mail address, the
@@ -773,7 +774,7 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
 |---|---|---|
 | GET | `/api/me` | Signed-in colleague: email, name, groups (object IDs and names, to look an ID up) |
 | GET | `/api/health` | `{ ok, version, signingKeys, downloads }`: whether the KEK and the API token are readable |
-| GET | `/api/overview` | Every folder (kind s1/linux/unknown, `controller` + `controllerSource`, latest, releases, bytes, last upload, distribution URL, `hasKey` and `publicKey`, `inBucket`, customer, controllers), the customers with their folders, totals, `distributionUrls`, download totals of 7 and 30 days |
+| GET | `/api/overview` | Every folder (kind s1/linux/unknown, `controller` + `controllerSource`, latest, releases, bytes, last upload, distribution URL, `hasKey` and `publicKey`, `inBucket`, customer, controllers, `manifestError`: why `manifest.json` cannot be read, or null), the customers with their folders, totals, `distributionUrls`, download totals of 7 and 30 days |
 | GET | `/api/folders/:appId` | One folder: kind, controller, customer, `key` (as `GET …/key`); releases with their stored header (range read), `keyMatches`, `digestMatches`, size, upload time and downloads; Linux versions; objects the manifest does not name; `objects: { count, bytes }`; `deleting` (an unfinished delete, or null); for a Linux application `package`, `packageSource`, and `latestVersionManifest` (the parsed version manifest of the latest release) or `latestVersionManifestError`; controllers per version and per distribution URL; `distributionUrls` (the bucket's hosts); downloads per day. 404 when nothing exists for it |
 | POST | `/api/folders` | `{ appId, customerId, controller: "S1" \| "M1" \| "L4" \| "HMI1", distributionUrl }` (no `distributionUrl` for Linux) → 201 `{ appId }`: a new application (settings only). 409 when it exists |
 | PUT | `/api/folders/:appId/distribution` | `{ distributionUrl }` (one of `DISTRIBUTION_URLS`) → `{ appId, distributionUrl, previous, moved }`: every URL of an S1 manifest on that host ([Moving to another distribution host](#moving-to-another-distribution-host)); a folder without releases: its settings. 422 for the host it is on, a host or URL outside the bucket's, a Linux folder; 409 when the manifest changed meanwhile |
@@ -867,6 +868,10 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
 
 ### Rolling back
 
+- 0.13.0 (2026-11-06, no data or bindings): the admin tools grow (`rollout` per host, `applications` by public key,
+  `module_firmware_releases` with a limit, two more `attention` items, the new `activity`; [Admin API](#admin-api)), and
+  `/api/overview` gives `manifestError` per folder. Back: `npx wrangler rollback b7376711-926d-4519-8a5d-ba887a2b211a` (0.12.1);
+  the hub's `gocontroll-admin` needs nothing first (a domain without `activity` is named in `without_activity`).
 - 0.12.1 (2026-11-04, only assets, no data or bindings): the logo leads to the hub and an arrow steps back within the
   app instead of "← Team". Back: `npx wrangler rollback 2e5bc796-a6e8-4df4-9af0-029e92ea77a6` (0.12.0).
 - 0.12.0 (2026-10-30, no data or bindings) adds the entrypoint `AdminApi` ([Admin API](#admin-api)). Back: the version

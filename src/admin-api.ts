@@ -2,6 +2,12 @@
 // tools of the MCP connector and the backup. Contract: GOcontroll-Architecture/cloudflare/admin-api/spec.md.
 // No action here: publishing is what Deploy is for and stays with a colleague on the page.
 //
+// attention calls nothing outside Cloudflare: what it says about the module repositories on GitHub
+// comes from the last answer of firmware_repos (cache/firmware-repos.json), never from GitHub itself.
+// activity is the audit log as events, without the free text a colleague typed (release
+// descriptions, the reason of a delete) and without image drafts and uploads: what happened, not
+// what was written.
+//
 // What a tool returns goes to an AI provider, so it never holds a private key, a sealed key, a token,
 // or the address of a customer who downloaded an image (the log in gocontroll-images): the tools below
 // build every result field by field from the app's own read functions, and the download figures come
@@ -9,7 +15,6 @@
 
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from './env';
-import { compareVersions } from './bucket';
 import { loadWindow } from './downloads';
 import { compareFirmwareVersions, firmwareOverview, type FirmwareModule, type FirmwareRelease } from './firmware';
 import { checkGitHub, githubToken } from './github';
@@ -23,9 +28,9 @@ import {
 import { HttpError } from './lib/http';
 import { secretConfigured } from './lib/secret';
 import { folderParam } from './lib/validate';
-import { controllerGroups } from './moduline';
+import { controllerGroups, type ControllerGroup } from './moduline';
 import { listAll, readJson, sealedKeyCount, writeJson, type AuditEntry } from './state';
-import { folderDetail, folderSummaries, type FolderSummary } from './status';
+import { controllerStats, folderDetail, folderSummaries, hostCounts, versionCounts, type FolderSummary } from './status';
 import { APP_VERSION } from './version';
 
 const BASE = 'https://deploy.gocontroll.tools';
@@ -47,6 +52,8 @@ const UPLOAD_EXPIRES_DAYS = 7;
  */
 const REPOS_CACHE_KEY = 'cache/firmware-repos.json';
 const REPOS_CACHE_MS = 5 * 60 * 1000;
+/** How much of a module firmware changelog module_firmware_releases gives. */
+const CHANGELOG_CHARS = 300;
 /** What recent_publications shows unless it is asked for everything. */
 const PUBLISHING = new Set(['publish', 'publish-linux', 'publish-firmware', 'github-release', 'images-publish', 'images-withdraw', 'distribution', 'delete-folder']);
 
@@ -78,8 +85,21 @@ function applicationItem(f: FolderSummary) {
     has_public_key: f.hasKey,
     distribution_url: f.distributionUrl,
     controllers: { total: f.controllers.total, online: f.controllers.online, up_to_date: f.controllers.upToDate },
+    ...(f.manifestError ? { manifest_error: f.manifestError } : {}),
     url: appUrl(f.appId),
   };
+}
+
+/** "deploy.gocontroll.com" of a distribution URL or a bare host name, lower case; null when it is neither. */
+function hostOf(value: string | null | undefined): string | null {
+  const v = value?.trim();
+  if (!v) return null;
+  try {
+    const host = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `https://${v}`).host.toLowerCase();
+    return host || null;
+  } catch {
+    return null;
+  }
 }
 
 /** DD/MM/YY of a module manifest as YYYY-MM-DD; anything else as it is. */
@@ -190,10 +210,26 @@ function logItem(e: LogEntry, labels: Map<string, string>) {
   };
 }
 
+interface CachedRepos { checked_at: string; items?: { repo: string; commits_after_publish: number | null }[] }
+
+/** The repositories of the last firmware_repos answer that have commits after their last publish; null without an answer. */
+async function reposAhead(env: Env): Promise<{ checkedAt: string; repos: { repo: string; commits: number }[] } | null> {
+  const cached = await readJson<CachedRepos>(env.STATE, REPOS_CACHE_KEY).catch(() => null);
+  const value = cached?.value;
+  if (!value || typeof value.checked_at !== 'string' || !Array.isArray(value.items)) return null;
+  const repos = value.items
+    .filter((i) => typeof i?.repo === 'string' && typeof i.commits_after_publish === 'number' && i.commits_after_publish > 0)
+    .map((i) => ({ repo: i.repo, commits: i.commits_after_publish as number }));
+  return { checkedAt: value.checked_at, repos };
+}
+
+/** "2026-11-06 08:15 UTC" of an ISO time; anything else as it is. */
+const utcMinute = (at: string) => (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(at) ? `${at.slice(0, 10)} ${at.slice(11, 16)} UTC` : at);
+
 async function attention(env: Env) {
   const now = Date.now();
   const iso = (ms: number) => new Date(ms).toISOString();
-  const [folders, firmware, images, deleting, sealed, downloads, github] = await Promise.all([
+  const [folders, firmware, images, deleting, sealed, downloads, github, ahead] = await Promise.all([
     folderSummaries(env),
     firmwareOverview(env),
     imageReleases(env),
@@ -201,12 +237,23 @@ async function attention(env: Env) {
     sealedKeyCount(env),
     secretConfigured(env.CF_API_TOKEN),
     githubToken(env).then(Boolean, () => true),
+    reposAhead(env),
   ]);
-  const items: { severity: 'high' | 'medium' | 'low'; title: string; detail?: string; url?: string; due?: string }[] = [];
+  const items: { severity: 'high' | 'medium' | 'low'; title: string; detail?: string; url?: string; due?: string; app_id?: string }[] = [];
 
   for (const o of deleting) {
     const appId = o.key.slice('deleting/'.length, -'.json'.length);
     items.push({ severity: 'high', title: `Deleting ${appId} did not finish`, detail: 'Its objects are archived in part. Open the application and finish or check it.', url: appUrl(appId) });
+  }
+  // The error is one of readManifest's fixed sentences, never text out of the file.
+  for (const f of folders.filter((x) => x.manifestError)) {
+    items.push({
+      severity: 'high',
+      title: `Controllers of ${f.appId} cannot update: ${f.manifestError}`,
+      detail: `${plural(f.controllers.total, 'controller')} ${f.controllers.total === 1 ? 'reports' : 'report'} this App ID. Publish its latest release again, or put back previous_manifest of its last publish from the audit log.`,
+      url: appUrl(f.appId),
+      app_id: f.appId,
+    });
   }
   if (firmware.manifestError) items.push({ severity: 'high', title: 'modules/manifest.json cannot be read', detail: firmware.manifestError, url: FIRMWARE_URL });
   for (const m of firmware.modules) {
@@ -249,10 +296,123 @@ async function attention(env: Env) {
       url: `${BASE}/#/applications`,
     });
   }
+  if (ahead?.repos.length) {
+    const n = ahead.repos.length;
+    items.push({
+      severity: 'low',
+      title: `${plural(n, 'module repo')} ${n === 1 ? 'has' : 'have'} commits after the last publish (checked ${utcMinute(ahead.checkedAt)})`,
+      detail: [...ahead.repos].sort((a, b) => b.commits - a.commits).slice(0, 10).map((r) => `${r.repo} (${r.commits})`).join(', '),
+      url: FIRMWARE_URL,
+    });
+  }
   if (sealed) items.push({ severity: 'low', title: `${plural(sealed, 'signing key')} of before 0.7.0 still sealed in Deploy`, detail: 'To decide: export it to 1Password or keep it as a fallback.', url: `${BASE}/#/applications` });
   if (!downloads) items.push({ severity: 'low', title: 'Download counts of S1 applications are off', detail: 'DEPLOY_CF_API_TOKEN is not in the Secrets Store.', url: `${BASE}/#/applications` });
   if (!github) items.push({ severity: 'low', title: 'Deploy cannot tag or release on GitHub', detail: 'DEPLOY_GITHUB_TOKEN is not set.', url: FIRMWARE_URL });
   return { items };
+}
+
+// ── activity ────────────────────────────────────────────────────────────────
+
+/** The kind of an audit line in `activity`; an action that is not here (image drafts, uploads) is left out. */
+const ACTIVITY_KINDS: Partial<Record<string, string>> = {
+  publish: 's1_release_published',
+  'publish-linux': 'linux_release_published',
+  'publish-firmware': 'module_firmware_published',
+  'github-release': 'github_release',
+  sign: 'release_signed',
+  'images-publish': 'image_published',
+  'images-withdraw': 'image_withdrawn',
+  distribution: 'host_changed',
+  'create-folder': 'application_created',
+  settings: 'application_changed',
+  package: 'package_changed',
+  'key-attach': 'public_key_attached',
+  'key-replace': 'public_key_replaced',
+  'delete-folder': 'application_deleted',
+};
+
+interface ActivityItem { at: string; kind: string; title: string; detail?: string; url?: string; count?: number }
+
+const text = (v: unknown) => (typeof v === 'string' ? v : '');
+
+/** One audit line as an event: fixed words, App IDs, versions, hosts and who; never a description or a reason. */
+function activityItem(e: LogEntry, imageLabels: Map<string, string>, moduleNames: Map<string, string>): ActivityItem | null {
+  const kind = ACTIVITY_KINDS[e.action];
+  if (!kind) return null;
+  const app = e.app_id;
+  const v = text(e.version);
+  const by = `By ${e.actor}.`;
+  const item = (title: string, detail: string, url: string): ActivityItem => ({ at: e.at, kind, title, detail, url });
+  switch (e.action) {
+    case 'publish':
+      return item(`${app} ${v} published`, `${e.signed ? 'Signed' : 'Unsigned'}${e.replaced ? ', replaced the earlier upload of this version' : ''}. ${by}`, appUrl(app));
+    case 'publish-linux':
+      return item(`${app} ${v} published (Linux package)`, `${e.replaced ? 'Replaced the earlier upload of this version. ' : ''}${by}`, appUrl(app));
+    case 'publish-firmware': {
+      const hw = app.replace(/^module-/, '');
+      const name = moduleNames.get(hw);
+      return item(`Firmware ${v} of ${name ? `${name} (${hw})` : `module ${hw}`} published`, by, FIRMWARE_URL);
+    }
+    case 'github-release': {
+      const repo = text(e.repo) || app.replace(/^repo-/, '').replace('_', '/');
+      return item(`GitHub release v${v} of ${repo}`, by, FIRMWARE_URL);
+    }
+    case 'sign':
+      return item(`${app} ${v} signed`, by, appUrl(app));
+    case 'images-publish':
+    case 'images-withdraw': {
+      const key = `${app.replace(/^image-/, '')}/${v}`;
+      const label = imageLabels.get(key) ?? key;
+      return item(e.action === 'images-publish' ? `${label} published on images.gocontroll.tech` : `${label} withdrawn from images.gocontroll.tech`, by, IMAGES_URL);
+    }
+    case 'distribution': {
+      const to = text(e.to);
+      const from = text(e.from);
+      return item(`${app} moved to ${hostOf(to) ?? to}`, `From ${hostOf(from) ?? (from || 'no host')}; ${e.moved ? 'every URL of the manifest moved' : 'no release yet, only the host of its first'}. ${by}`, appUrl(app));
+    }
+    case 'create-folder':
+      return item(`${app} created`, `${e.controller ? `Controller ${text(e.controller)}. ` : ''}${by}`, appUrl(app));
+    case 'settings': {
+      const what = [...('customer_id' in e ? ['customer'] : []), ...('controller' in e ? ['controller'] : [])];
+      return item(`${app}: ${what.length ? what.join(' and ') : 'settings'} changed`, by, appUrl(app));
+    }
+    case 'package':
+      return item(`${app}: package definition changed`, by, appUrl(app));
+    case 'key-attach':
+      return item(`${app}: public key attached`, by, appUrl(app));
+    case 'key-replace':
+      return item(`${app}: public key replaced`, `The old key is kept as retired. ${by}`, appUrl(app));
+    case 'delete-folder':
+      return item(`${app} deleted`, `${typeof e.objects === 'number' ? `${plural(e.objects, 'object')} archived first. ` : ''}${by}`, `${BASE}/#/applications`);
+    default:
+      return null;
+  }
+}
+
+async function activity(env: Env, args: Record<string, any>) {
+  const { from, to } = rangeOf(args, 1);
+  const { entries, more } = await logEntries(env, from, to);
+  const wanted = entries.filter((e) => ACTIVITY_KINDS[e.action]);
+  // Names only when there is something to name: each costs reads of its own.
+  const [imageLabels, moduleNames] = await Promise.all([
+    wanted.some((e) => e.action.startsWith('images-'))
+      ? imageReleases(env).then(({ releases }) => new Map(releases.map((r) => [r.key, imageLabel(r)])))
+      : new Map<string, string>(),
+    wanted.some((e) => e.action === 'publish-firmware')
+      ? firmwareOverview(env).then((o) => new Map(o.modules.map((m) => [m.id, m.name])))
+      : new Map<string, string>(),
+  ]);
+  const items: ActivityItem[] = [];
+  for (const e of wanted) {
+    const item = activityItem(e, imageLabels, moduleNames);
+    if (!item) continue;
+    // The same thing again right after (signing one release twice): one line with a count.
+    const last = items[items.length - 1];
+    if (last && last.kind === item.kind && last.title === item.title) last.count = (last.count ?? 1) + 1;
+    else items.push(item);
+  }
+  const limit = limitOf(args);
+  return { from, to, items: items.slice(0, limit), total: items.length, truncated: more || items.length > limit };
 }
 
 /** firmware_repos: the answer of the last REPOS_CACHE_MS, or GitHub's, which is then kept. */
@@ -315,7 +475,7 @@ export const TOOLS: AdminTool<Env>[] = [
   {
     name: 'applications',
     title: 'Applications and their latest release',
-    description: 'Every application (S1 firmware and Linux packages for M1, L4, HMI1) with its customer, controller type, latest version, number of releases, last upload and how many controllers run it, are online and are up to date, plus totals. Use for "what is deployed" and "what runs at this customer". The public key itself is not given, only whether there is one.',
+    description: 'Every application (S1 firmware and Linux packages for M1, L4, HMI1) with its customer, controller type, latest version, number of releases, last upload and how many controllers run it, are online and are up to date, plus totals (s1_without_key: S1 applications that cannot be signed yet). Use for "what is deployed" and "what runs at this customer"; has_public_key: false finds the applications without a public key. The public key itself is never given, only whether there is one. manifest_error appears when manifest.json cannot be read.',
     input: {
       type: 'object',
       properties: {
@@ -323,6 +483,7 @@ export const TOOLS: AdminTool<Env>[] = [
         controller: { type: 'string', maxLength: 40, description: 'Only this controller type, e.g. S1, M1, L4, HMI1.' },
         relation_id: RELATION_ARG,
         search: { type: 'string', maxLength: 100, description: 'Part of the App ID.' },
+        has_public_key: { type: 'boolean', description: 'Only the applications with (true) or without (false) a public key to sign with.' },
         limit: LIMIT_ARG,
       },
       additionalProperties: false,
@@ -334,12 +495,14 @@ export const TOOLS: AdminTool<Env>[] = [
       const found = all.filter((f) => (args.kind === undefined || f.kind === args.kind)
         && (args.controller === undefined || f.controller?.toLowerCase() === args.controller.toLowerCase())
         && (args.relation_id === undefined || f.customer?.id === args.relation_id)
+        && (args.has_public_key === undefined || f.hasKey === args.has_public_key)
         && (!search || f.appId.toLowerCase().includes(search)));
       return {
         ...page(found.map(applicationItem), limitOf(args)),
         totals: {
           applications: all.length,
           s1: all.filter((f) => f.kind === 's1').length,
+          s1_without_key: all.filter((f) => f.kind === 's1' && !f.hasKey).length,
           linux: all.filter((f) => f.kind === 'linux').length,
           releases: all.reduce((n, f) => n + f.releases, 0),
           controllers: all.reduce((n, f) => n + f.controllers.total, 0),
@@ -393,32 +556,70 @@ export const TOOLS: AdminTool<Env>[] = [
   },
   {
     name: 'rollout',
-    title: 'Which controllers lag behind',
-    description: 'Per application with controllers: how many run the latest release, how many do not, and the versions they run, most behind first. Use for "is everybody updated". Set `all` to include the applications that are fully up to date.',
-    input: { type: 'object', properties: { all: { type: 'boolean', description: 'Also the applications without a controller behind.' }, limit: LIMIT_ARG }, additionalProperties: false },
+    title: 'Which controllers lag behind, per host',
+    description: 'Per application with controllers: how many run the latest release, how many do not, the versions they run and the distribution hosts they fetch from (as the controllers report them), most behind first, plus totals per host. Use for "is everybody updated" and "who still fetches from deploy.gocontroll.com". host keeps only the controllers on that host; all adds the applications that are fully up to date. Up to date here means exactly the latest release: moduline_updates_pending counts a controller on a newer version as up to date too, so the two can differ.',
+    input: {
+      type: 'object',
+      properties: {
+        host: { type: 'string', maxLength: 200, description: 'Only the controllers that fetch from this distribution host, e.g. deploy.gocontroll.com (a URL works too).' },
+        all: { type: 'boolean', description: 'Also the applications without a controller behind.' },
+        limit: LIMIT_ARG,
+      },
+      additionalProperties: false,
+    },
     kind: 'read',
     async run(env, args) {
+      const host = args.host === undefined ? undefined : hostOf(args.host);
+      if (host === null) throw new AdminError('host must be a host name such as deploy.gocontroll.tech, or a URL.');
       const [folders, groups] = await Promise.all([folderSummaries(env), controllerGroups(env)]);
-      const items = folders.filter((f) => f.controllers.total > 0).map((f) => {
-        const versions = new Map<string, number>();
-        for (const g of groups.filter((x) => x.app_id === f.appId)) {
-          const v = g.app_version?.trim() || 'unknown';
-          versions.set(v, (versions.get(v) ?? 0) + g.total);
+      const byApp = new Map<string, ControllerGroup[]>();
+      for (const g of groups) if (!host || hostOf(g.distribution_url) === host) byApp.set(g.app_id, [...(byApp.get(g.app_id) ?? []), g]);
+      const rows = folders.map((f) => ({ f, own: byApp.get(f.appId) ?? [] }))
+        .map((r) => ({ ...r, stats: controllerStats(r.own, r.f.latest) }))
+        .filter((r) => r.stats.total > 0);
+
+      const perHost = new Map<string, { controllers: number; behind: number; applications: Set<string> }>();
+      let withoutHost = 0;
+      for (const { f, own } of rows) {
+        for (const g of own) {
+          const url = g.distribution_url?.trim() || '';
+          if (!url) {
+            withoutHost += g.total;
+            continue;
+          }
+          const h = perHost.get(url) ?? { controllers: 0, behind: 0, applications: new Set<string>() };
+          h.controllers += g.total;
+          h.behind += g.total - controllerStats([g], f.latest).upToDate;
+          h.applications.add(f.appId);
+          perHost.set(url, h);
         }
-        return {
-          app_id: f.appId,
-          controller: f.controller,
-          customer: f.customer?.name ?? null,
-          latest: f.latest,
-          controllers: f.controllers.total,
-          online: f.controllers.online,
-          up_to_date: f.controllers.upToDate,
-          behind: f.controllers.total - f.controllers.upToDate,
-          versions: [...versions].map(([version, count]) => ({ version, count })).sort((a, b) => compareVersions(b.version, a.version)),
-          url: appUrl(f.appId),
-        };
-      }).filter((i) => args.all || i.behind > 0).sort((a, b) => b.behind - a.behind || a.app_id.localeCompare(b.app_id));
-      return page(items, limitOf(args));
+      }
+
+      const items = rows.map(({ f, own, stats }) => ({
+        app_id: f.appId,
+        controller: f.controller,
+        customer: f.customer ? { relation_id: f.customer.id, name: f.customer.name } : null,
+        latest: f.latest,
+        controllers: stats.total,
+        online: stats.online,
+        up_to_date: stats.upToDate,
+        behind: stats.total - stats.upToDate,
+        versions: versionCounts(own),
+        hosts: hostCounts(own),
+        url: appUrl(f.appId),
+      })).filter((i) => args.all || i.behind > 0).sort((a, b) => b.behind - a.behind || a.app_id.localeCompare(b.app_id));
+      return {
+        ...(host ? { host } : {}),
+        ...page(items, limitOf(args)),
+        totals: {
+          applications: rows.length,
+          controllers: rows.reduce((n, r) => n + r.stats.total, 0),
+          behind: rows.reduce((n, r) => n + r.stats.total - r.stats.upToDate, 0),
+          hosts: [...perHost].map(([url, h]) => ({ url, controllers: h.controllers, behind: h.behind, applications: h.applications.size }))
+            .sort((a, b) => b.controllers - a.controllers || a.url.localeCompare(b.url)),
+          controllers_without_host: withoutHost,
+        },
+      };
     },
   },
   {
@@ -442,8 +643,8 @@ export const TOOLS: AdminTool<Env>[] = [
   {
     name: 'module_firmware_releases',
     title: 'Firmware history of one module',
-    description: 'Every firmware release of one module with its date, changelog, who published it, and for a release from Deploy the repository and commit. Use after `module_firmware`.',
-    input: { type: 'object', properties: { hw_id: { type: 'string', pattern: '^\\d{8}$', description: 'Hardware ID, 8 digits.' } }, required: ['hw_id'], additionalProperties: false },
+    description: 'The firmware releases of one module, newest version first: date, changelog (cut to 300 characters), who published it, and for a release from Deploy the repository and commit. Default the newest 50; total says how many there are. Use after `module_firmware`.',
+    input: { type: 'object', properties: { hw_id: { type: 'string', pattern: '^\\d{8}$', description: 'Hardware ID, 8 digits.' }, limit: LIMIT_ARG }, required: ['hw_id'], additionalProperties: false },
     kind: 'read',
     async run(env, args) {
       const overview = await firmwareOverview(env);
@@ -454,18 +655,16 @@ export const TOOLS: AdminTool<Env>[] = [
         name: m.name,
         latest_firmware: m.latest,
         ...(m.error ? { error: m.error } : {}),
-        items: m.releases.map((r) => ({
+        ...page(m.releases.map((r) => ({
           version: r.version,
           date: isoDate(r.date),
-          changelog: r.changelog,
+          changelog: r.changelog.slice(0, CHANGELOG_CHARS),
           published_by: publisher(r),
           published_at: r.publishedBy?.at || null,
           repo: r.publishedBy?.source?.repo ?? null,
           commit: r.publishedBy?.source?.commit?.slice(0, 12) ?? null,
           tag: r.publishedBy?.source?.tag ?? null,
-        })),
-        total: m.releases.length,
-        truncated: false,
+        })), limitOf(args)),
         url: FIRMWARE_URL,
       };
     },
@@ -562,7 +761,7 @@ export const TOOLS: AdminTool<Env>[] = [
   {
     name: 'attention',
     title: 'What needs attention',
-    description: 'What needs action in Deploy now: an unfinished delete, firmware or image manifests that cannot be read or do not agree, unfinished uploads, old drafts, controllers behind the latest release, and open setup such as missing tokens. Reads the buckets and databases only.',
+    description: 'What needs action in Deploy now: an unfinished delete, an application whose manifest.json cannot be read (its controllers cannot update), firmware or image manifests that cannot be read or do not agree, unfinished uploads, old drafts, controllers behind the latest release, module repositories with commits after their last publish (from the last firmware_repos answer), and open setup such as missing tokens. Reads the buckets and databases only, never GitHub.',
     kind: 'read',
     run: (env) => attention(env),
   },
@@ -583,6 +782,14 @@ export const TOOLS: AdminTool<Env>[] = [
         url: `${BASE}/#/applications`,
       };
     },
+  },
+  {
+    name: 'activity',
+    title: 'What happened in Deploy',
+    description: 'What happened in Deploy in a period, newest first, from the audit log: S1 and Linux releases, module firmware and GitHub releases, signing, images published or withdrawn, applications moved to another distribution host, created, changed (customer, controller, package, public key) or deleted, each with who did it. Image drafts and uploads are left out, and so are descriptions and reasons. The same event twice in a row is one item with count. Default today (UTC); at most the newest 300 log lines of a period are read.',
+    input: { type: 'object', properties: { from: FROM_ARG, to: TO_ARG, limit: LIMIT_ARG }, additionalProperties: false },
+    kind: 'read',
+    run: (env, args) => activity(env, args),
   },
 ];
 
