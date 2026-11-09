@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { configDefaults, defineConfig } from 'vitest/config';
 import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-plugin';
 
@@ -16,12 +17,22 @@ import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-plugin';
 export default defineConfig(async () => {
   const businessSchema = await readD1Migrations('./test/fixtures/business');
   const modulineSchema = await readD1Migrations('./test/fixtures/moduline');
+  // Every D1 database, R2 bucket and KV namespace the Worker binds, as `D1 <database_name>`, `R2 <bucket_name>`
+  // and `KV <binding>`: test/admin-api.test.ts holds them against the backup, so a new one cannot fall out of it
+  // unseen. workerd cannot read wrangler.toml itself.
+  const toml = readFileSync('./wrangler.toml', 'utf8');
+  const storage = [
+    ...[...toml.matchAll(/^\s*database_name\s*=\s*"([^"]+)"/gm)].map((m) => `D1 ${m[1]}`),
+    ...[...toml.matchAll(/^\s*bucket_name\s*=\s*"([^"]+)"/gm)].map((m) => `R2 ${m[1]}`),
+    ...[...toml.matchAll(/^\[\[kv_namespaces\]\][^[]*?^\s*binding\s*=\s*"([^"]+)"/gm)].map((m) => `KV ${m[1]}`),
+  ];
   return {
     plugins: [
       cloudflareTest({
         wrangler: { configPath: './wrangler.toml' },
         miniflare: {
           bindings: {
+            TEST_STORAGE: storage,
             TEST_BUSINESS_SCHEMA: businessSchema,
             TEST_MODULINE_SCHEMA: modulineSchema,
             POLICY_AUD: 'test-aud-tag',

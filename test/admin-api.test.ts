@@ -469,6 +469,21 @@ describe('the backup', () => {
     expect(plan.skipped.find((s) => s.what === 'gocontroll-images/downloads/')?.reason).toMatch(/e-mail/);
   });
 
+  test('every database, bucket and KV namespace in wrangler.toml is in the backup, left out with a reason, or read here only', async () => {
+    // A new binding fails here until it is a database or store of the scope, named in skipped, or a database
+    // of another domain that this Worker only reads (with the scope that backs it up).
+    const READ_ONLY: Record<string, string> = {
+      'D1 gocontroll-db': 'Controllers and series: scope moduline (GOcontroll-Database).',
+      'D1 gocontroll-business': 'Relations and projects: scope central (GOcontroll-CRM).',
+    };
+    const plan = await api().exportPlan('deploy', true);
+    const covered = new Set([...plan.databases.map((d) => `D1 ${d.name}`), ...plan.stores.map((s) => `R2 ${s.name}`)]);
+    const named = new Set(plan.skipped.map((s) => s.what));
+    expect(env.TEST_STORAGE.length).toBeGreaterThan(0);
+    expect(env.TEST_STORAGE.filter((b) => !covered.has(b) && !named.has(b.slice(3)) && !(b in READ_ONLY))).toEqual([]);
+    expect(Object.keys(READ_ONLY).filter((b) => !env.TEST_STORAGE.includes(b))).toEqual([]);
+  });
+
   test('without files the plan names the store as not selected', async () => {
     const plan = await api().exportPlan('deploy', false);
     expect(plan.stores).toEqual([]);

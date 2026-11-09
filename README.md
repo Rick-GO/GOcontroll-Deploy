@@ -736,6 +736,8 @@ copy of the canonical helper; a fix belongs there first.
   in the state bucket and not in the backup. It is kept 13 months; its monthly counts without addresses
   (`images/stats/`) are in the backup. `manifest.json` of the images follows from the release records, by publishing again.
 
+**A new database, bucket or KV namespace** in `wrangler.toml` fails `test/admin-api.test.ts` until it is in the scope, named in `skipped` with a reason, or, for a database of another domain that this Worker only reads, listed in the test with the scope that backs it up (`vitest.config.ts` hands the names to the test).
+
 ## Development
 
 ```sh
