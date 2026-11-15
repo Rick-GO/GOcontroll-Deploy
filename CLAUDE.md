@@ -90,6 +90,11 @@
   oudere terugzetten naar hun map (type leeg, versie = laatste deel van de map) en `manifest.json` verwijderen (README → *Rolling
   back*).
 
+- **0.14.0 (2026-11-15, versie `29b78b37-5a88-464f-a45a-479eafdadc6d`; vorige live versie `ae7d5f85-b478-438e-b252-f5ed61e3ab8a`,
+  0.13.0)**: het manifest van een S1-applicatie beslist welke versies installeerbaar zijn (`min_version`, `withdrawn`,
+  S1-kennisbank `cloud-r2-distribution.md` §3 v0.21.x): *Earlier versions* en *Withdraw / Restore* op de applicatiepagina;
+  publiceren zet `latest` niet meer terug. Gedeployd met `npm run deploy` (typecheck en 357 + 70 tests groen); de
+  controles uit de README (302 naar Access, 301 naar https, 200 met CSP/HSTS) geslaagd.
 ## Architectuur
 - **Worker met static assets** (geen Pages), zelfde opzet als GOcontroll-Logistic: `run_worker_first = true`,
   `workers_dev = false`, `preview_urls = false`, custom domain `deploy.gocontroll.tools`. Worker-naam

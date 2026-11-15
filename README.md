@@ -20,7 +20,9 @@ Images tab shows how often each release is downloaded. For the members of the En
 **`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> The Worker, the API and the pages are deployed (0.11.0 on 2026-10-29, version `2c77e8e1`, `gocontroll-images` version `5dfee268`:
+> The Worker, the API and the pages are deployed (0.14.0 on 2026-11-15, version `29b78b37`: the manifest of an S1
+> application decides which versions can be installed — *Earlier versions* and *Withdraw / Restore* on its page
+> ([Which versions can be installed](#which-versions-can-be-installed)); 0.11.0 on 2026-10-29, version `2c77e8e1`, `gocontroll-images` version `5dfee268`:
 > every release has a folder of its own, fixed when it is made (`images/<product>/<id>`, its key); type and version are labels
 > that *Edit…* changes, of a published release too, without moving or uploading a file (`manifest.json` format 5,
 > [Images for customers](#images-for-customers-imagesgocontrolltech)); 0.10.0 on 2026-10-29, version `9bdee976`, `gocontroll-images` version `74d51437`:
@@ -930,7 +932,7 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
 
 - 0.14.0 (no bindings; S1 manifests can get `min_version` and `withdrawn`): which versions can be installed
   ([Which versions can be installed](#which-versions-can-be-installed)), and publishing an older version leaves `latest`
-  on the newest. Back: the 0.13.0 version from `npx wrangler deployments list`, then `npx wrangler rollback <it>`. 0.13.0
+  on the newest. Back: `npx wrangler rollback ae7d5f85-b478-438e-b252-f5ed61e3ab8a` (the 0.13.0 version that was live before). 0.13.0
   keeps both fields when it publishes (every other field stays; republishing a version gives it a new entry, so that
   clears its `withdrawn` too), but it does not show them, cannot change them, and sets `latest` to whatever it publishes,
   also an older version or one above a withdrawn release: set *Earlier versions* and restore what should be installable
