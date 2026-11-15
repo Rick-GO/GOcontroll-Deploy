@@ -28,7 +28,7 @@ describe('a new folder', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body).toMatchObject({
       binaryKey: `${id}/${id}-1.0.0.bin`, manifestKey: `${id}/manifest.json`, version: '1.0.0', releaseDate: today(),
-      previousLatest: null, replaced: false, latestMovedBack: false, signed: false,
+      latest: '1.0.0', previousLatest: null, replaced: false, latestMovedBack: false, withdrawnCleared: false, installable: true, minVersion: null, signed: false,
     });
 
     const bin = await env.DEPLOY_BUCKET.get(`${id}/${id}-1.0.0.bin`);
@@ -46,6 +46,7 @@ describe('a new folder', () => {
     const url = `https://deploy.gocontroll.tech/${id}/${id}-1.0.0.bin?v=${toHex(h.sha256).slice(0, 16)}`;
     expect(res.body.binaryUrl).toBe(url);
     expect(doc).toEqual({ application_id: id, latest: '1.0.0', binaries: { '1.0.0': { url, release_date: today(), description: 'Release 1.0.0' } } });
+    expect(Object.keys(doc)).toEqual(['application_id', 'latest', 'binaries']);
   });
 
   test('a description of 500 characters (and more) is taken as it is', async () => {
@@ -102,14 +103,69 @@ describe('an existing folder', () => {
     expect(entry.previous_manifest.binaries['1.0.0'].description).toBe('Release 1.0.0');
   });
 
-  test('latest moves to the new version; an older one moves it back and says so', async () => {
+  test('latest moves to a newer version; an older one leaves it on the newest (§3) and says whether it can be installed', async () => {
     const id = appId();
     await release(id, '1.0.0');
     const next = await release(id, '1.1.0');
-    expect(next.body).toMatchObject({ previousLatest: '1.0.0', latestMovedBack: false });
-    const back = await release(id, '1.0.5');
-    expect(back.body).toMatchObject({ previousLatest: '1.1.0', latestMovedBack: true });
-    expect(JSON.parse((await manifest(id)).text).latest).toBe('1.0.5');
+    expect(next.body).toMatchObject({ latest: '1.1.0', previousLatest: '1.0.0', latestMovedBack: false, installable: true });
+    const older = await release(id, '1.0.5');
+    expect(older.body).toMatchObject({ version: '1.0.5', latest: '1.1.0', previousLatest: '1.1.0', latestMovedBack: false, installable: false, minVersion: null });
+    expect(JSON.parse((await manifest(id)).text).latest).toBe('1.1.0');
+    // With Earlier versions from 1.0.0 an older release can be picked.
+    expect((await ok('PUT', `/api/folders/${id}/min-version`, { minVersion: '1.0.0' })).installable).toEqual(['1.1.0', '1.0.5', '1.0.0']);
+    const hotfix = await release(id, '1.0.6');
+    expect(hotfix.body).toMatchObject({ latest: '1.1.0', installable: true, minVersion: '1.0.0' });
+  });
+
+  test('min_version and the other entries\' withdrawn stay; latest skips a withdrawn release; publishing a withdrawn version again clears it', async () => {
+    const id = appId();
+    const url = (v: string) => `https://deploy.gocontroll.tech/${id}/${id}-${v}.bin`;
+    const old = {
+      application_id: id, latest: '0.0.4', min_version: '0.0.2',
+      binaries: {
+        '0.0.2': { url: url('0.0.2'), release_date: '2026-01-02', description: 'Two', withdrawn: true },
+        '0.0.3': { url: url('0.0.3'), release_date: '2026-01-03', description: 'Three' },
+        '0.0.5': { url: url('0.0.5'), release_date: '2026-01-05', description: 'Five, bad', withdrawn: true },
+        '0.0.4': { url: url('0.0.4'), release_date: '2026-01-04', description: 'Four' },
+      },
+    };
+    await putManifest(id, old);
+
+    // An older version: latest stays the newest that is not withdrawn (0.0.4, not the withdrawn 0.0.5).
+    const res = await release(id, '0.0.1');
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ latest: '0.0.4', previousLatest: '0.0.4', installable: false, minVersion: '0.0.2', withdrawnCleared: false });
+    let doc = JSON.parse((await manifest(id)).text);
+    expect(doc).toEqual({ ...old, binaries: { ...old.binaries, '0.0.1': { url: res.body.binaryUrl, release_date: today(), description: 'Release 0.0.1' } } });
+
+    // A newer version becomes latest; the withdrawn ones stay withdrawn.
+    expect((await release(id, '0.0.6')).body).toMatchObject({ latest: '0.0.6', previousLatest: '0.0.4' });
+    doc = JSON.parse((await manifest(id)).text);
+    expect([doc.latest, doc.min_version, doc.binaries['0.0.5'].withdrawn, doc.binaries['0.0.2'].withdrawn]).toEqual(['0.0.6', '0.0.2', true, true]);
+
+    // Replacing the withdrawn 0.0.5 ends the withdrawal (a new entry); 0.0.6 stays latest.
+    const again = await release(id, '0.0.5', { replace: '1', description: 'Five, fixed' });
+    expect(again.body).toMatchObject({ replaced: true, withdrawnCleared: true, latest: '0.0.6', installable: true });
+    doc = JSON.parse((await manifest(id)).text);
+    expect(doc.binaries['0.0.5']).toEqual({ url: again.body.binaryUrl, release_date: today(), description: 'Five, fixed' });
+    expect(doc.binaries['0.0.2'].withdrawn).toBe(true);
+    const [, , entry] = (await env.STATE.list({ prefix: 'log/' })).objects.filter((o) => o.key.includes(`-${id}-`)).map((o) => o.key).sort();
+    expect(JSON.parse(await (await env.STATE.get(entry))!.text())).toMatchObject({ action: 'publish', version: '0.0.5', withdrawn_cleared: true, latest: '0.0.6' });
+  });
+
+  test('a latest left on a withdrawn release is set to the newest that is not, and the answer says it moved back', async () => {
+    const id = appId();
+    await putManifest(id, {
+      application_id: id, latest: '2.0.0',
+      binaries: {
+        '1.0.0': { url: `https://deploy.gocontroll.tech/${id}/${id}-1.0.0.bin`, release_date: '', description: 'One' },
+        '2.0.0': { url: `https://deploy.gocontroll.tech/${id}/${id}-2.0.0.bin`, release_date: '', description: 'Two', withdrawn: true },
+      },
+    });
+    expect((await ok('GET', `/api/folders/${id}`))).toMatchObject({ latest: '1.0.0', manifestLatest: '2.0.0' });
+    const res = await release(id, '1.5.0');
+    expect(res.body).toMatchObject({ latest: '1.5.0', previousLatest: '2.0.0', latestMovedBack: true });
+    expect(await ok('GET', `/api/folders/${id}`)).toMatchObject({ latest: '1.5.0', manifestLatest: null });
   });
 
   test('unknown manifest fields are kept; the host its URLs name is kept (never two hosts)', async () => {

@@ -217,7 +217,7 @@ export async function deleteFolderSettings(env: Env, appId: string): Promise<voi
 
 export interface AuditEntry {
   action: 'publish' | 'publish-linux' | 'sign' | 'key-attach' | 'key-replace' | 'settings' | 'package' | 'create-folder' | 'delete-folder'
-    | 'distribution' | 'publish-firmware' | 'github-release'
+    | 'distribution' | 'min-version' | 'withdraw' | 'restore' | 'publish-firmware' | 'github-release'
     | 'images-create' | 'images-update' | 'images-delete' | 'images-publish' | 'images-withdraw' | 'images-upload' | 'images-abort' | 'images-remove-file';
   app_id: string;
   version?: string;

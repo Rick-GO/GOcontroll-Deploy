@@ -64,6 +64,28 @@ describe('PUT /api/folders/:appId/distribution', () => {
     expect(Object.values((await manifestDoc(id)).binaries).every((b: any) => b.url.startsWith(`${COM}/`))).toBe(true);
   });
 
+  test('min_version and withdrawn stay (cloud-r2-distribution.md §3); a latest left on a withdrawn release becomes the newest that is not', async () => {
+    const id = appId('H');
+    const old = {
+      application_id: id, latest: '2.0.0', min_version: '1.0.0',
+      binaries: {
+        '1.0.0': { url: `${COM}/${id}/${id}-1.0.0.bin`, release_date: '', description: 'One' },
+        '1.1.0': { url: `${COM}/${id}/${id}-1.1.0.bin`, release_date: '', description: 'One one', withdrawn: true },
+        '1.2.0': { url: `${COM}/${id}/${id}-1.2.0.bin`, release_date: '', description: 'One two' },
+        '2.0.0': { url: `${COM}/${id}/${id}-2.0.0.bin`, release_date: '', description: 'Two', withdrawn: true },
+      },
+    };
+    await putManifest(id, old);
+    expect((await ok('PUT', `/api/folders/${id}/distribution`, { distributionUrl: TECH })).moved).toBe(4);
+    const doc = await manifestDoc(id);
+    expect(doc).toEqual({
+      ...old, latest: '1.2.0',
+      binaries: Object.fromEntries(Object.entries(old.binaries).map(([v, e]) => [v, { ...e, url: e.url.replace(COM, TECH) }])),
+    });
+    const [log] = await logsOf(id);
+    expect(JSON.parse(await (await env.STATE.get(log.key))!.text())).toMatchObject({ latest: '1.2.0', previous_latest: '2.0.0', previous_manifest: old });
+  });
+
   test('a manifest with two hosts ends up on one', async () => {
     const id = appId('H');
     await putManifest(id, {

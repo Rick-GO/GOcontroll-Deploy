@@ -125,6 +125,17 @@
 - `src/goco.ts` en `src/keys.ts` hebben **geen imports** en alleen erasable TypeScript, `public/js/signing.js` geen imports en
   geen DOM: het fixture-script draait ze onder Node (de kruiscontrole signt zoals de browser: scope uit `goco.ts`, handtekening uit
   `signing.js`).
+- **Welke versies installeerbaar zijn** (sinds 0.14.0, `cloud-r2-distribution.md` §3 v0.21.0): `min_version` (afwezig = alleen
+  de nieuwste niet-ingetrokken release; aanwezig = elke niet-ingetrokken release vanaf die versie, numeriek per deel) en
+  `withdrawn: true` per release (nooit aangeboden of geïnstalleerd). **Elke schrijfactie van Deploy** (publiceren,
+  host wisselen, de policy-acties) laat `min_version` en de `withdrawn` van andere entries staan en zet `latest` op de
+  nieuwste niet-ingetrokken release (`settleLatest`/`newestNotWithdrawn` in `src/bucket.ts`); een oudere versie
+  publiceren verplaatst `latest` dus **niet** meer terug (tot 0.13.0 wel); een versie opnieuw publiceren = nieuwe entry
+  = `withdrawn` weg. *Latest* overal in Deploy (pagina's, `/api/overview`, admin-tools) = `latestOf`: de nieuwste
+  niet-ingetrokken release, ook als het manifest zelf iets anders zegt (`manifestLatest`, waarschuwing + `attention`).
+  Policy zetten alleen op de applicatiepagina (`src/policy.ts`: `PUT …/min-version`, `PUT …/releases/:version/withdrawn`),
+  één etag-conditionele schrijfactie per actie, `previous_manifest` in de logregel; de enige niet-ingetrokken release
+  intrekken = 422. `public/js/policy.js` rekent hetzelfde als `src/bucket.ts` (`test/pages.test.ts` houdt ze gelijk).
 - S1 publiceren: binary eerst, dan manifest (etag-conditioneel, 409 bij race); onbekende manifestvelden blijven;
   `?v=` = eerste 16 hex van de payload-SHA-256; een bestaande map houdt de host die zijn manifest noemt (nooit twee
   hosts, §2.1); van host wisselen alleen voor het hele manifest tegelijk (`src/distribution.ts`, etag-conditioneel, vorige manifest
@@ -259,6 +270,9 @@
   applicaties zonder key.
 - Distributiehost (S1): *Change…* op de applicatiepagina zet elke URL van het manifest op een andere host uit
   `DISTRIBUTION_URLS` (beide hosts = dezelfde bucket); een map zonder releases krijgt alleen de host in zijn settings.
+- Installeerbare versies (S1, kaart Releases): *Earlier versions* (*Only the newest* / *From version …*, Change…), kolom
+  *Install* (Installable / Not offered / Withdrawn, ingetrokken rij grijs en doorgestreept), per release *Withdraw…*
+  (altijd bevestigen) of *Restore* (alleen bevestigen als hij weer latest wordt). Zie *Formaten*.
 
 ## Linux-applicaties (M1, L4, HMI1)
 - Contract: `GOcontroll-Architecture/cloudflare/linux-application/spec.md`. Deploy is een **tweede producent** naast de

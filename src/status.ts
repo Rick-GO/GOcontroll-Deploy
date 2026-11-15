@@ -24,8 +24,8 @@
 
 import type { Env } from './env';
 import {
-  compareVersions, distributionUrls, folderDistribution, latestOf, linuxEntries, listBucket, listFolder, manifestKey,
-  manifestKind, objectKeyForUrl, readManifest, readStoredHeader, s1Entries, urlDigest, type FolderKind,
+  compareVersions, distributionUrls, folderDistribution, installableVersions, latestOf, linuxEntries, listBucket, listFolder, manifestKey,
+  manifestKind, manifestLatestOf, minVersionOf, objectKeyForUrl, readManifest, readStoredHeader, s1Entries, urlDigest, type FolderKind,
 } from './bucket';
 import { customerNames, projectCustomers } from './business';
 import { dayCounts, fileDownloads, lastDays, loadWindow, type DayCounts } from './downloads';
@@ -119,6 +119,17 @@ export function folderKind(manifestDoc: Record<string, unknown> | null | undefin
   return 'unknown';
 }
 
+/**
+ * The `latest` an S1 manifest says when that is not the newest release that is not withdrawn
+ * (`latest`): a writer of before the policy of §3 may have moved it back to undo a release. Clients
+ * that follow §3 install the newest that is not withdrawn; older ones follow `latest`. Else null.
+ */
+function otherLatest(doc: Record<string, unknown> | null | undefined, kind: FolderKind, latest: string | null): string | null {
+  if (kind !== 's1' || !s1Entries(doc).length) return null;
+  const said = manifestLatestOf(doc);
+  return said !== latest ? said : null;
+}
+
 interface CustomerSources {
   manual: Map<string, number | null>;
   groups: Map<string, ControllerGroup[]>;
@@ -167,7 +178,10 @@ export interface FolderSummary {
   kind: FolderKind;
   controller: string | null;
   controllerSource: ControllerSource;
+  /** S1: the newest installable release (cloud-r2-distribution.md §3), which is the newest that is not withdrawn. Linux: latest_version. */
   latest: string | null;
+  /** S1: the `latest` the manifest itself says, when it is not `latest` (left by a writer of before the policy); else null. */
+  manifestLatest: string | null;
   releases: number;
   bytes: number;
   lastUpload: string | null;
@@ -223,6 +237,7 @@ export async function folderSummaries(env: Env): Promise<FolderSummary[]> {
       kind,
       ...resolveController(realKind, own?.controller, appGroups),
       latest,
+      manifestLatest: otherLatest(manifest?.doc, realKind, latest),
       releases,
       bytes: stats.bytes,
       lastUpload: stats.lastUpload === null ? null : new Date(stats.lastUpload).toISOString(),
@@ -299,6 +314,7 @@ export async function folderDetail(env: Env, appId: string, days = 30) {
   const kind = folderKind(manifest?.doc, Boolean(manifest), own, Boolean(key));
   const latest = latestOf(manifest?.doc, realKind);
   const entries = realKind === 's1' ? s1Entries(manifest?.doc) : [];
+  const installable = new Set(realKind === 's1' ? installableVersions(manifest?.doc) : []);
   const named = folderDistribution(entries, latest);
   const distributionUrl = entries.length ? named.distributionUrl : kind === 's1' ? own?.distribution_url ?? null : null;
   const activeKey = key?.value.public_key ?? null;
@@ -335,6 +351,9 @@ export async function folderDetail(env: Env, appId: string, days = 30) {
       url: e.url,
       releaseDate: e.releaseDate,
       description: e.description,
+      // §3: withdrawn = never offered or installed; installable = not withdrawn, and the newest or from min_version up.
+      withdrawn: e.withdrawn,
+      installable: installable.has(e.version),
       objectKey,
       size: obj?.size ?? null,
       uploaded: obj ? obj.uploaded.toISOString() : null,
@@ -359,6 +378,9 @@ export async function folderDetail(env: Env, appId: string, days = 30) {
     kind,
     ...resolveController(realKind, own?.controller, groups),
     latest,
+    manifestLatest: otherLatest(manifest?.doc, realKind, latest),
+    // Which versions may be installed (§3): null = only the newest release that is not withdrawn.
+    minVersion: realKind === 's1' ? minVersionOf(manifest?.doc) : null,
     distributionUrl,
     mixedHosts: named.mixedHosts,
     // The bucket's distribution URLs (DISTRIBUTION_URLS): what an S1 folder can move to.

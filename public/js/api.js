@@ -10,10 +10,12 @@
  * @typedef {{ id: number, name: string, source: 'manual' | 'controllers' | 'project' }} FolderCustomer
  * @typedef {{ total: number, online: number, upToDate: number }} ControllerCounts
  * @typedef {'manual' | 'manifest' | 'controllers'} ControllerSource
- * @typedef {{ appId: string, kind: 's1' | 'linux' | 'unknown', latest: string | null, releases: number, bytes: number,
+ * @typedef {{ appId: string, kind: 's1' | 'linux' | 'unknown', latest: string | null, manifestLatest?: string | null, releases: number, bytes: number,
  *   lastUpload: string | null, distributionUrl: string | null, hasKey: boolean, publicKey: string | null, customer: FolderCustomer | null,
  *   controller?: string | null, controllerSource?: ControllerSource | null, controllers: ControllerCounts }} FolderSummary
  *   controller: S1, M1, L4, HMI1 (by hand) or a derived controller type such as M2
+ *   latest: for S1 the newest installable release (the newest that is not withdrawn, cloud-r2-distribution.md §3);
+ *   manifestLatest: the manifest's own `latest` when that is another (left by a writer of before the policy), else null
  * @typedef {{ configured: boolean, last7: number | null, last30: number | null, error?: string }} DownloadTotals
  * @typedef {{ folders: FolderSummary[], customers: { id: number, name: string, folders: string[] }[],
  *   totals: { folders: number, s1Folders: number, linuxFolders: number, releases: number, bytes: number, controllers: number },
@@ -26,19 +28,23 @@
  * @typedef {{ headerVersion: number, signed: boolean, appId: string, version: string | number[], compressedSize: number,
  *   uncompressedSize: number, sha256: string, publicKey: string | null }} ReleaseHeader
  * @typedef {{ version: string, url: string, releaseDate: string | null, description: string | null, objectKey: string,
+ *   withdrawn: boolean, installable: boolean,
  *   size: number | null, uploaded: string | null, header: ReleaseHeader | null, headerError: string | null,
  *   keyMatches: boolean | null, digestMatches: boolean | null, downloads: number | null }} Release
+ *   withdrawn: never offered or installed (§3); installable: not withdrawn, and the newest or from min_version up
  * @typedef {{ version: string, released: string | null, description: string | null, sizeBytes: number | null, sha256: string | null }} LinuxVersion
  * @typedef {{ day: string, downloads: number | null, headerReads: number | null, manifestReads: number | null, unavailable?: boolean }} DownloadDay
  * @typedef {{ configured: boolean, days: DownloadDay[], error?: string }} Downloads
- * @typedef {{ appId: string, kind: 's1' | 'linux' | 'unknown', latest: string | null, distributionUrl: string | null,
- *   mixedHosts: boolean, key: KeyInfo | null, customer: FolderCustomer | null,
+ * @typedef {{ appId: string, kind: 's1' | 'linux' | 'unknown', latest: string | null, manifestLatest?: string | null,
+ *   minVersion?: string | null, distributionUrl: string | null,
+ *   mixedHosts: boolean, key: KeyInfo | null, customer: FolderCustomer | null, deleting?: { startedAt: string, actor: string, reason: string } | null,
  *   controller?: string | null, controllerSource?: ControllerSource | null,
  *   controllers: ControllerCounts & { versions: { version: string | null, count: number }[], hosts?: { url: string, count: number }[] },
  *   releases: Release[], linuxVersions: LinuxVersion[], otherObjects: { key: string, size: number, uploaded: string | null }[],
  *   downloads: Downloads, manifestError?: string, distributionUrls?: string[],
  *   package?: import('./package.js').PackageDefinition | null, packageSource?: 'manual' | null,
  *   latestVersionManifest?: any, latestVersionManifestError?: string | null }} FolderDetail
+ *   latest, manifestLatest: as in FolderSummary; minVersion: the manifest's min_version, null = only the newest is installable;
  *   distributionUrl: the host of the manifest's binary URLs, or the one chosen at New application;
  *   distributionUrls: the bucket's hosts it can move to (PUT …/distribution); controllers.hosts: the hosts its controllers report
  *   package: a Linux application's package definition; latestVersionManifest: the parsed v<latest>/manifest.json
@@ -47,7 +53,13 @@
  * @typedef {{ customer: FolderCustomer | null, controller: string | null, controllerSource: ControllerSource | null }} FolderSettings
  * @typedef {{ done: boolean, deleted: number, remaining: number, archive: string }} DeleteStep
  * @typedef {{ binaryKey: string, binaryUrl: string, manifestKey: string, version: string, releaseDate: string,
- *   previousLatest: string | null, replaced: boolean, latestMovedBack: boolean, signed: boolean }} PublishResult
+ *   latest: string, previousLatest: string | null, replaced: boolean, latestMovedBack: boolean, withdrawnCleared: boolean,
+ *   installable: boolean, minVersion: string | null, signed: boolean }} PublishResult
+ *   latest: the newest release that is not withdrawn after the write (publishing an older version leaves it);
+ *   withdrawnCleared: the version was withdrawn and is not any more; installable: a client may install it now
+ * @typedef {{ appId: string, minVersion: string | null, latest: string | null, previousLatest: string | null,
+ *   withdrawn: string[], installable: string[] }} PolicyResult
+ *   the answer of PUT …/min-version and PUT …/releases/<version>/withdrawn (newest first)
  */
 
 export class ApiError extends Error {

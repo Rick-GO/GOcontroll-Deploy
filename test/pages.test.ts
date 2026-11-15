@@ -1,5 +1,6 @@
 // The pure helpers of the pages: the tabs and hash routes (public/js/routes.js, public/index.html),
-// and those of the Firmware and Images pages (public/js/release-helpers.js).
+// those of the Firmware and Images pages (public/js/release-helpers.js), and which versions of an S1
+// application can be installed (public/js/policy.js, held against src/bucket.ts).
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -7,6 +8,10 @@ import {
   previousTag, releaseDateFromTag, safetyNetFindings, syncState, tagAnnotation, toLf,
 } from '../public/js/release-helpers.js';
 import { TABS, applicationHref, redirectFor, tabOf } from '../public/js/routes.js';
+import {
+  compareVersions as pageCompare, installableVersions as pageInstallable, newestNotWithdrawn as pageNewest, onlyOneLeft, withWithdrawn,
+} from '../public/js/policy.js';
+import { compareVersions as workerCompare, installableVersions, newestNotWithdrawn } from '../src/bucket';
 import { normaliseChangelog as workerNormalise, parseSrecName as workerParse } from '../src/firmware';
 import { FILE_ROLE_LABELS, PLATFORM_LABELS } from '../src/images-format';
 import indexHtml from '../public/index.html?raw';
@@ -181,5 +186,46 @@ describe('images page', () => {
     expect(guessPlatform('flash_mini_111.ps1')).toBe('windows');
     expect(guessPlatform('flash_mini_111.sh')).toBe('linux');
     expect(guessPlatform('rootfs.ext4')).toBe('any');
+  });
+});
+
+describe('which versions can be installed (public/js/policy.js, the Worker\'s src/bucket.ts)', () => {
+  /** A manifest with these releases (`!` = withdrawn) and min_version. */
+  const manifest = (spec: string[], min: string | null) => ({
+    application_id: 'X', latest: '0.0.1', ...(min === null ? {} : { min_version: min }),
+    binaries: Object.fromEntries(spec.map((s) => [s.replace('!', ''), { url: '', release_date: '', description: '', ...(s.endsWith('!') ? { withdrawn: true } : {}) }])),
+  });
+  const releases = (spec: string[]) => spec.map((s) => ({ version: s.replace('!', ''), withdrawn: s.endsWith('!') }));
+  const cases: [string[], string | null][] = [
+    [['0.0.9', '0.0.10', '0.0.8'], null],
+    [['0.0.9', '0.0.10', '0.0.8'], '0.0.9'],
+    [['0.0.9', '0.0.10!', '0.0.8'], null],
+    [['0.0.9', '0.0.10!', '0.0.8'], '0.0.8'],
+    [['1.0.0!', '1.1.0!'], '1.0.0'],
+    [['1.2.3', '1.10.0', '1.9.255'], '1.9.0'],
+    [['2.0.0'], '9.9.9'],
+    [[], null],
+  ];
+
+  it('the page works out what the Worker does: latest and the installable releases, newest first', () => {
+    for (const [spec, min] of cases) {
+      const doc = manifest(spec, min);
+      expect(pageInstallable(releases(spec), min), JSON.stringify([spec, min])).toEqual(installableVersions(doc));
+      expect(pageNewest(releases(spec)), JSON.stringify(spec)).toBe(newestNotWithdrawn(doc));
+    }
+    expect(installableVersions(manifest(['0.0.9', '0.0.10', '0.0.8'], null))).toEqual(['0.0.10']);
+    expect(installableVersions(manifest(['0.0.9', '0.0.10!', '0.0.8'], '0.0.8'))).toEqual(['0.0.9', '0.0.8']);
+    expect(installableVersions(manifest(['1.0.0!', '1.1.0!'], '1.0.0'))).toEqual([]);
+    for (const [a, b] of [['0.0.10', '0.0.9'], ['1.0.0', '1.0'], ['1.2.3', '1.2.3'], ['x', '0.0.1']]) {
+      expect(Math.sign(pageCompare(a, b)), `${a} ${b}`).toBe(Math.sign(workerCompare(a, b)));
+    }
+  });
+
+  it('says what withdrawing does before it is done, and that the last release cannot be', () => {
+    const rs = releases(['0.0.9', '0.0.10', '0.0.8!']);
+    expect(pageNewest(withWithdrawn(rs, '0.0.10', true))).toBe('0.0.9');
+    expect(withWithdrawn(rs, '0.0.8', false).every((r) => !r.withdrawn)).toBe(true);
+    expect(onlyOneLeft(rs, '0.0.10')).toBe(false);
+    expect(onlyOneLeft(releases(['0.0.9!', '0.0.10']), '0.0.10')).toBe(true);
   });
 });

@@ -1,6 +1,6 @@
 // The status of the bucket (overview, one folder, downloads) and what is set per folder
-// (application): a new folder, its settings (customer, controller), its distribution host, its
-// public key, and the protected delete.
+// (application): a new folder, its settings (customer, controller), its distribution host, which of
+// its versions may be installed (min_version, withdrawn), its public key, and the protected delete.
 
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -14,6 +14,7 @@ import { KeyFormatError, checkedPublicKey } from '../keys';
 import { HttpError, parse } from '../lib/http';
 import { LINUX_APP_ID, LINUX_APP_ID_MAX, LINUX_VERSION, PackageSchema, folderKey, isLinuxController, normalisePackage, rootEntry } from '../linux';
 import { folderParam, s1AppId } from '../lib/validate';
+import { setMinVersion, setWithdrawn } from '../policy';
 import { downloadDays, folderDetail, folderIdentity, overview } from '../status';
 import {
   CONTROLLER_TYPES, audit, keyInfo, loadFolderSettingsVersioned, loadKey, saveFolderSettings, saveKey,
@@ -151,6 +152,24 @@ folders.put('/folders/:appId/distribution', async (c) => {
   const appId = folderParam(c.req.param('appId'));
   const { distributionUrl } = parse(z.object({ distributionUrl: z.string({ message: 'Choose the distribution host.' }) }), await c.req.json().catch(() => null));
   return c.json(await moveDistribution(c.env, c.get('user'), appId, distributionUrl));
+});
+
+// Which versions of an S1 application may be installed (src/policy.ts, cloud-r2-distribution.md §3):
+// "Earlier versions" (min_version: null = only the newest), and withdrawing or restoring one release.
+folders.put('/folders/:appId/min-version', async (c) => {
+  const appId = folderParam(c.req.param('appId'));
+  const { minVersion } = parse(z.object({
+    minVersion: z.union([z.string(), z.null()], { message: 'Choose the oldest version that may be installed, or null for only the newest.' }),
+  }), await c.req.json().catch(() => null));
+  return c.json(await setMinVersion(c.env, c.get('user'), appId, minVersion));
+});
+
+folders.put('/folders/:appId/releases/:version/withdrawn', async (c) => {
+  const appId = folderParam(c.req.param('appId'));
+  const { withdrawn } = parse(z.object({
+    withdrawn: z.boolean({ message: 'Say whether the release is withdrawn (true) or restored (false).' }),
+  }), await c.req.json().catch(() => null));
+  return c.json(await setWithdrawn(c.env, c.get('user'), appId, c.req.param('version'), withdrawn));
 });
 
 folders.put('/folders/:appId/package', async (c) => {

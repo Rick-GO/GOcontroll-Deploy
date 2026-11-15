@@ -19,8 +19,8 @@
 
 import type { Env, User } from './env';
 import {
-  binaryKey, binaryUrl, compareVersions, distributionUrls, folderDistribution, latestOf, manifestKey, manifestKind,
-  putBinary, readManifest, s1Entries, writeManifest,
+  binaryKey, binaryUrl, compareVersions, distributionUrls, folderDistribution, installableVersions, latestOf, manifestKey, manifestKind,
+  manifestLatestOf, minVersionOf, newestNotWithdrawn, putBinary, readManifest, s1Entries, writeManifest,
 } from './bucket';
 import { z } from 'zod';
 import {
@@ -261,9 +261,17 @@ export interface PublishResult {
   manifestKey: string;
   version: string;
   releaseDate: string;
+  /** `latest` after the write: the newest release that is not withdrawn (§3), not always this version. */
+  latest: string;
   previousLatest: string | null;
   replaced: boolean;
+  /** `latest` went down: only when the manifest's `latest` named a withdrawn or a not-newest release before. */
   latestMovedBack: boolean;
+  /** This version was withdrawn; publishing it again ended that (§3). */
+  withdrawnCleared: boolean;
+  /** Whether a client may install this version now (§3): the newest, or from `min_version` up. */
+  installable: boolean;
+  minVersion: string | null;
   signed: boolean;
 }
 
@@ -296,6 +304,7 @@ export async function publish(env: Env, user: User, form: FormData): Promise<Pub
 
   const standing = binaries[version];
   const exists = Boolean(standing) && typeof standing === 'object';
+  const wasWithdrawn = exists && (standing as Record<string, unknown>).withdrawn === true;
   if (exists && !replace) {
     const s = standing as Record<string, unknown>;
     throw new HttpError(409, `Version ${version} is already published (${s.release_date || 'date unknown'}: ${s.description || 'no description'}). Raise the version number, or replace it on purpose.`, 'version');
@@ -344,11 +353,15 @@ export async function publish(env: Env, user: User, form: FormData): Promise<Pub
 
   const releaseDate = new Date().toISOString().slice(0, 10);
   const url = binaryUrl(distribution, appId, version, prepared.payloadSha256);
-  const previousLatest = typeof doc.latest === 'string' && doc.latest ? doc.latest : null;
+  const previousLatest = manifestLatestOf(doc);
+  // A new entry: a withdrawn version published again is no longer withdrawn (§3). `min_version`
+  // and the other entries (their `withdrawn` too) stay as they are; `latest` is the newest release
+  // that is not withdrawn, so publishing an older version leaves it where it is.
   binaries[version] = { url, release_date: releaseDate, description };
   doc.application_id = appId;
-  doc.latest = version;
+  doc.latest = newestNotWithdrawn({ binaries }) ?? version;
   doc.binaries = binaries;
+  const latest = doc.latest as string;
 
   const written = await writeManifest(env.DEPLOY_BUCKET, appId, doc, manifest?.etag ?? null);
   if (!written) {
@@ -361,16 +374,21 @@ export async function publish(env: Env, user: User, form: FormData): Promise<Pub
     manifestKey: manifestKey(appId),
     version,
     releaseDate,
+    latest,
     previousLatest,
     replaced: exists,
-    latestMovedBack: Boolean(previousLatest) && compareVersions(previousLatest!, version) > 0,
+    latestMovedBack: Boolean(previousLatest) && compareVersions(previousLatest!, latest) > 0,
+    withdrawnCleared: wasWithdrawn,
+    installable: installableVersions(doc).includes(version),
+    minVersion: minVersionOf(doc),
     signed: prepared.signed,
   };
   try {
     await audit(env, {
       action: 'publish', app_id: appId, version, actor: user.email, signed: prepared.signed, replaced: exists,
       sha256: toHex(prepared.payloadSha256), size: prepared.header.length + prepared.payload.length, description,
-      url, previous_latest: previousLatest, public_key: prepared.publicKey,
+      url, latest, previous_latest: previousLatest, public_key: prepared.publicKey,
+      ...(wasWithdrawn ? { withdrawn_cleared: true } : {}),
       // The way back: the manifest as it stood, and where a replaced binary went.
       previous_manifest: manifest?.doc ?? null, ...(keptAs ? { previous_binary: keptAs } : {}),
     });

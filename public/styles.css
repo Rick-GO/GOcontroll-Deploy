@@ -623,6 +623,15 @@ table.data a.cell-main:hover { color: var(--brand); text-decoration: underline; 
 .cell-btns { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 .cell-btns .btn.sm { margin: 0; }
 
+/* ── Which versions can be installed (folder.js, Releases card): Earlier versions, withdrawn releases ── */
+.policy { margin-bottom: 14px; }
+.policy-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 14px; }
+.policy-line .section-label { margin: 0; }
+.policy .hint { margin-top: 4px; max-width: 75ch; }
+table.releases td .cell-btns { margin-top: 6px; }
+table.data tr.withdrawn td { color: var(--muted); }
+table.data tr.withdrawn .cell-main { text-decoration: line-through; }
+
 /* ── The folder lists on Status: the same columns in every customer's table ── */
 table.folders td:first-child .cell-main { overflow-wrap: anywhere; }
 

@@ -15,6 +15,7 @@
 
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from './env';
+import { compareVersions } from './bucket';
 import { loadWindow } from './downloads';
 import { compareFirmwareVersions, firmwareOverview, type FirmwareModule, type FirmwareRelease } from './firmware';
 import { checkGitHub, githubToken } from './github';
@@ -55,7 +56,11 @@ const REPOS_CACHE_MS = 5 * 60 * 1000;
 /** How much of a module firmware changelog module_firmware_releases gives. */
 const CHANGELOG_CHARS = 300;
 /** What recent_publications shows unless it is asked for everything. */
-const PUBLISHING = new Set(['publish', 'publish-linux', 'publish-firmware', 'github-release', 'images-publish', 'images-withdraw', 'distribution', 'delete-folder']);
+const PUBLISHING = new Set([
+  'publish', 'publish-linux', 'publish-firmware', 'github-release', 'images-publish', 'images-withdraw', 'distribution', 'delete-folder',
+  // Which versions of an S1 application may be installed (cloud-r2-distribution.md §3): it changes what controllers install.
+  'min-version', 'withdraw', 'restore',
+]);
 
 const APP_ID_ARG = { type: 'string', maxLength: 200, description: 'App ID of the application (its folder), e.g. from `applications`.' };
 const RELATION_ARG = { type: 'integer', minimum: 1, description: 'relations.id of the customer.' };
@@ -206,6 +211,7 @@ function logItem(e: LogEntry, labels: Map<string, string>) {
     by: e.actor,
     ...(typeof e.signed === 'boolean' ? { signed: e.signed } : {}),
     ...(typeof e.replaced === 'boolean' ? { replaced: e.replaced } : {}),
+    ...(e.action === 'min-version' ? { min_version: typeof e.min_version === 'string' ? e.min_version : null } : {}),
     ...(typeof e.description === 'string' && e.description ? { description: e.description.slice(0, 300) } : {}),
   };
 }
@@ -251,6 +257,23 @@ async function attention(env: Env) {
       severity: 'high',
       title: `Controllers of ${f.appId} cannot update: ${f.manifestError}`,
       detail: `${plural(f.controllers.total, 'controller')} ${f.controllers.total === 1 ? 'reports' : 'report'} this App ID. Publish its latest release again, or put back previous_manifest of its last publish from the audit log.`,
+      url: appUrl(f.appId),
+      app_id: f.appId,
+    });
+  }
+  // A `latest` that is not the newest release that is not withdrawn: moved back by a writer of before
+  // cloud-r2-distribution.md §3's policy to undo a release, or left on a withdrawn one. Clients that follow §3
+  // install the newest release that is not withdrawn, older ones `latest`.
+  for (const f of folders.filter((x) => x.manifestLatest && x.latest)) {
+    const back = compareVersions(f.manifestLatest!, f.latest!) < 0;
+    items.push({
+      severity: 'medium',
+      title: back
+        ? `${f.appId}: manifest.json says latest ${f.manifestLatest}, but ${f.latest} is newer and not withdrawn`
+        : `${f.appId}: manifest.json says latest ${f.manifestLatest}, which is withdrawn or not a release; the newest that is not withdrawn is ${f.latest}`,
+      detail: back
+        ? `Apps, tools and cloud updates that follow the manifest's version policy install ${f.latest}. If it must not be installed, withdraw it on the application's page; else the next write by Deploy sets latest to ${f.latest}.`
+        : `Apps, tools and cloud updates that follow the manifest's version policy install ${f.latest}; older ones follow latest. The next write by Deploy sets latest to ${f.latest}.`,
       url: appUrl(f.appId),
       app_id: f.appId,
     });
@@ -323,6 +346,9 @@ const ACTIVITY_KINDS: Partial<Record<string, string>> = {
   'images-publish': 'image_published',
   'images-withdraw': 'image_withdrawn',
   distribution: 'host_changed',
+  'min-version': 'version_policy_changed',
+  withdraw: 's1_release_withdrawn',
+  restore: 's1_release_restored',
   'create-folder': 'application_created',
   settings: 'application_changed',
   package: 'package_changed',
@@ -369,6 +395,16 @@ function activityItem(e: LogEntry, imageLabels: Map<string, string>, moduleNames
       const to = text(e.to);
       const from = text(e.from);
       return item(`${app} moved to ${hostOf(to) ?? to}`, `From ${hostOf(from) ?? (from || 'no host')}; ${e.moved ? 'every URL of the manifest moved' : 'no release yet, only the host of its first'}. ${by}`, appUrl(app));
+    }
+    case 'min-version': {
+      const min = text(e.min_version);
+      return item(min ? `${app}: installable from ${min}` : `${app}: only the newest release installable`, `Latest ${text(e.latest) || 'unknown'}. ${by}`, appUrl(app));
+    }
+    case 'withdraw':
+    case 'restore': {
+      const latest = text(e.latest);
+      const moved = latest && latest !== text(e.previous_latest) ? `Latest is now ${latest}. ` : '';
+      return item(`${app} ${v} ${e.action === 'withdraw' ? 'withdrawn' : 'restored'}`, `${moved}${by}`, appUrl(app));
     }
     case 'create-folder':
       return item(`${app} created`, `${e.controller ? `Controller ${text(e.controller)}. ` : ''}${by}`, appUrl(app));
@@ -513,7 +549,7 @@ export const TOOLS: AdminTool<Env>[] = [
   {
     name: 'application',
     title: 'One application in detail',
-    description: 'One application: its releases with date, description, size and whether they are signed with its key, the controllers per version and per distribution host, its customer, and downloads of the last 30 days where counted. Use after `applications`.',
+    description: 'One application: its releases with date, description, size, whether they are signed with its key and whether a controller may install them (withdrawn, installable; min_version null = only the newest), the controllers per version and per distribution host, its customer, and downloads of the last 30 days where counted. Use after `applications`.',
     input: { type: 'object', properties: { app_id: APP_ID_ARG }, required: ['app_id'], additionalProperties: false },
     kind: 'read',
     run: (env, args) => expected(async () => {
@@ -525,6 +561,8 @@ export const TOOLS: AdminTool<Env>[] = [
         controller: d.controller,
         customer: d.customer ? { relation_id: d.customer.id, name: d.customer.name } : null,
         latest: d.latest,
+        ...(d.kind === 's1' ? { min_version: d.minVersion } : {}),
+        ...(d.manifestLatest ? { manifest_latest: d.manifestLatest } : {}),
         distribution_url: d.distributionUrl,
         public_key: d.key ? { source: d.key.source, created_at: d.key.createdAt, created_by: d.key.createdBy } : null,
         controllers: {
@@ -541,6 +579,8 @@ export const TOOLS: AdminTool<Env>[] = [
           size: r.size,
           signed: r.header?.signed ?? null,
           signed_with_this_key: r.keyMatches,
+          withdrawn: r.withdrawn,
+          installable: r.installable,
           downloads: r.downloads,
           ...(r.headerError ? { problem: r.headerError } : {}),
         })),
@@ -761,7 +801,7 @@ export const TOOLS: AdminTool<Env>[] = [
   {
     name: 'attention',
     title: 'What needs attention',
-    description: 'What needs action in Deploy now: an unfinished delete, an application whose manifest.json cannot be read (its controllers cannot update), firmware or image manifests that cannot be read or do not agree, unfinished uploads, old drafts, controllers behind the latest release, module repositories with commits after their last publish (from the last firmware_repos answer), and open setup such as missing tokens. Reads the buckets and databases only, never GitHub.',
+    description: 'What needs action in Deploy now: an unfinished delete, an application whose manifest.json cannot be read (its controllers cannot update), an S1 manifest whose latest is not its newest release that is not withdrawn, firmware or image manifests that cannot be read or do not agree, unfinished uploads, old drafts, controllers behind the latest release, module repositories with commits after their last publish (from the last firmware_repos answer), and open setup such as missing tokens. Reads the buckets and databases only, never GitHub.',
     kind: 'read',
     run: (env) => attention(env),
   },

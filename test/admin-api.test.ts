@@ -456,6 +456,74 @@ describe('the tools', () => {
   });
 });
 
+describe('which versions can be installed (cloud-r2-distribution.md §3)', () => {
+  const POLICY = 'ADMPOLCY';
+  /** A day of its own, outside the default periods and the other activity fixtures. */
+  const POLICY_DAY = iso(Date.now() - 61 * DAY).slice(0, 10);
+
+  test('application: min_version, and per release withdrawn and installable; latest is the newest that is not withdrawn', async () => {
+    await putManifest(POLICY, { application_id: POLICY, latest: '1.1.0', min_version: '1.0.0', binaries: {
+      '1.0.0': { url: `${TECH}/${POLICY}/${POLICY}-1.0.0.bin`, release_date: '2026-09-01', description: 'One' },
+      '1.1.0': { url: `${TECH}/${POLICY}/${POLICY}-1.1.0.bin`, release_date: '2026-09-02', description: 'Two' },
+      '1.2.0': { url: `${TECH}/${POLICY}/${POLICY}-1.2.0.bin`, release_date: '2026-09-03', description: 'Bad', withdrawn: true },
+      '0.9.0': { url: `${TECH}/${POLICY}/${POLICY}-0.9.0.bin`, release_date: '2026-08-01', description: 'Old' },
+    } });
+    const out = await call('application', { app_id: POLICY });
+    expect(out).toMatchObject({ latest: '1.1.0', min_version: '1.0.0' });
+    expect(out.manifest_latest).toBeUndefined();
+    expect(out.releases.map((r: any) => [r.version, r.withdrawn, r.installable])).toEqual([
+      ['1.2.0', true, false], ['1.1.0', false, true], ['1.0.0', false, true], ['0.9.0', false, false],
+    ]);
+    expect((await call('applications', { search: POLICY.toLowerCase() })).items[0].latest).toBe('1.1.0');
+    expect((await call('application', { app_id: LINUX })).min_version).toBeUndefined();
+    await env.DEPLOY_BUCKET.delete(`${POLICY}/manifest.json`);
+  });
+
+  test('attention: a latest left on an older release by a writer of before the policy', async () => {
+    await putManifest(POLICY, { application_id: POLICY, latest: '1.0.0', binaries: {
+      '1.0.0': { url: `${TECH}/${POLICY}/${POLICY}-1.0.0.bin`, release_date: '', description: 'One' },
+      '1.1.0': { url: `${TECH}/${POLICY}/${POLICY}-1.1.0.bin`, release_date: '', description: 'Two' },
+    } });
+    const { items } = await call('attention');
+    expect(items.find((i: any) => i.app_id === POLICY && i.severity === 'medium')).toEqual({
+      severity: 'medium', title: `${POLICY}: manifest.json says latest 1.0.0, but 1.1.0 is newer and not withdrawn`, app_id: POLICY,
+      detail: 'Apps, tools and cloud updates that follow the manifest\'s version policy install 1.1.0. If it must not be installed, withdraw it on the application\'s page; else the next write by Deploy sets latest to 1.1.0.',
+      url: `https://deploy.gocontroll.tools/#/applications/${POLICY}`,
+    });
+    expect((await call('application', { app_id: POLICY })).manifest_latest).toBe('1.0.0');
+    expect(items.some((i: any) => i.app_id === APP && /says latest/.test(i.title))).toBe(false);
+
+    // latest left on a release that is withdrawn since.
+    await putManifest(POLICY, { application_id: POLICY, latest: '1.1.0', binaries: {
+      '1.0.0': { url: `${TECH}/${POLICY}/${POLICY}-1.0.0.bin`, release_date: '', description: 'One' },
+      '1.1.0': { url: `${TECH}/${POLICY}/${POLICY}-1.1.0.bin`, release_date: '', description: 'Two', withdrawn: true },
+    } });
+    const again = (await call('attention')).items.find((i: any) => i.app_id === POLICY && i.severity === 'medium');
+    expect(again.title).toBe(`${POLICY}: manifest.json says latest 1.1.0, which is withdrawn or not a release; the newest that is not withdrawn is 1.0.0`);
+    await env.DEPLOY_BUCKET.delete(`${POLICY}/manifest.json`);
+  });
+
+  test('activity and recent_publications: Earlier versions, Withdraw and Restore', async () => {
+    const at = (minute: number) => `${POLICY_DAY}T09:${String(minute).padStart(2, '0')}:00.000Z`;
+    await putLog(at(0), POLICY, 'min-version', { action: 'min-version', version: undefined, min_version: '1.0.0', latest: '1.1.0', previous_manifest: { secret: SEALED } });
+    await putLog(at(5), POLICY, '1.1.0', { action: 'withdraw', latest: '1.0.0', previous_latest: '1.1.0', previous_manifest: { secret: SEALED } });
+    await putLog(at(10), POLICY, '1.1.0', { action: 'restore', latest: '1.1.0', previous_latest: '1.0.0' });
+    await putLog(at(15), POLICY, 'min-version', { action: 'min-version', version: undefined, min_version: null, latest: '1.1.0' });
+    const out = await call('activity', { from: POLICY_DAY, to: POLICY_DAY });
+    expect(out.items.map((i: any) => [i.kind, i.title, i.detail])).toEqual([
+      ['version_policy_changed', `${POLICY}: only the newest release installable`, 'Latest 1.1.0. By jane.doe@gocontroll.com.'],
+      ['s1_release_restored', `${POLICY} 1.1.0 restored`, 'Latest is now 1.1.0. By jane.doe@gocontroll.com.'],
+      ['s1_release_withdrawn', `${POLICY} 1.1.0 withdrawn`, 'Latest is now 1.0.0. By jane.doe@gocontroll.com.'],
+      ['version_policy_changed', `${POLICY}: installable from 1.0.0`, 'Latest 1.1.0. By jane.doe@gocontroll.com.'],
+    ]);
+    const published = await call('recent_publications', { from: POLICY_DAY, to: POLICY_DAY });
+    expect(published.items.map((i: any) => [i.action, i.version ?? i.min_version])).toEqual([
+      ['min-version', null], ['restore', '1.1.0'], ['withdraw', '1.1.0'], ['min-version', '1.0.0'],
+    ]);
+    expect(json(out) + json(published)).not.toContain(SEALED);
+  });
+});
+
 describe('the backup', () => {
   test('no databases: the state bucket, whole but for uploads under way, and every skipped store with its reason', async () => {
     const plan = await api().exportPlan('deploy', true);

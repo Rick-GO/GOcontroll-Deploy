@@ -3,8 +3,14 @@
 // cloud-r2-distribution.md §2 (layout), §2.1 (two hosts), §3 (manifest, `?v=` digest); the
 // steps of a publish follow GOcontroll-Deployment-Tool/tools/r2.py publish().
 //
-//   <APP_ID>/manifest.json            { application_id, latest, binaries: { <version>: { url, release_date, description } } }
+//   <APP_ID>/manifest.json            { application_id, latest, min_version?, binaries: { <version>: { url, release_date, description, withdrawn? } } }
 //   <APP_ID>/<APP_ID>-<version>.bin   the GOCO container
+//
+// Which versions may be installed is the manifest's (§3 "Which versions can be installed"):
+// `withdrawn: true` on a release = never offered or installed; `min_version` absent = only the
+// newest release that is not withdrawn, present = every release from it up that is not withdrawn.
+// `latest` is the newest release that is not withdrawn; every write here keeps it so (settleLatest)
+// and keeps `min_version` and the other entries' `withdrawn` as they are.
 //
 // A folder can hold a manifest for Linux controllers instead (go-deploy packages:
 // app_id / latest_version / versions[]); this file reads it, src/linux.ts publishes into it.
@@ -69,7 +75,7 @@ export function manifestKind(doc: Record<string, unknown> | null | undefined): F
   return 'unknown';
 }
 
-export interface S1Entry { version: string; url: string; releaseDate: string; description: string }
+export interface S1Entry { version: string; url: string; releaseDate: string; description: string; withdrawn: boolean }
 
 /** The S1 releases of a manifest, newest first. */
 export function s1Entries(doc: Record<string, unknown> | null | undefined): S1Entry[] {
@@ -77,8 +83,51 @@ export function s1Entries(doc: Record<string, unknown> | null | undefined): S1En
   if (!binaries || typeof binaries !== 'object' || Array.isArray(binaries)) return [];
   return Object.entries(binaries as Record<string, unknown>)
     .filter((e): e is [string, Record<string, unknown>] => Boolean(e[1]) && typeof e[1] === 'object' && !Array.isArray(e[1]))
-    .map(([version, e]) => ({ version, url: str(e.url), releaseDate: str(e.release_date), description: str(e.description) }))
+    .map(([version, e]) => ({
+      version, url: str(e.url), releaseDate: str(e.release_date), description: str(e.description), withdrawn: e.withdrawn === true,
+    }))
     .sort((a, b) => compareVersions(b.version, a.version));
+}
+
+// ── Which versions can be installed (§3) ─────────────────────────────────────
+
+/** The manifest's `min_version`, or null when it has none: then only the newest release is installable. */
+export function minVersionOf(doc: Record<string, unknown> | null | undefined): string | null {
+  const v = doc?.min_version;
+  return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+
+/** The newest S1 release that is not withdrawn, or null when there is none. */
+export function newestNotWithdrawn(doc: Record<string, unknown> | null | undefined): string | null {
+  return s1Entries(doc).find((e) => !e.withdrawn)?.version ?? null;
+}
+
+/**
+ * The installable releases, newest first: not withdrawn, and the newest such release or (with
+ * `min_version`) that version or higher. Versions compare as numbers per part (0.0.10 > 0.0.9).
+ */
+export function installableVersions(doc: Record<string, unknown> | null | undefined): string[] {
+  const min = minVersionOf(doc);
+  return s1Entries(doc)
+    .filter((e) => !e.withdrawn)
+    .filter((e, i) => i === 0 || (min !== null && compareVersions(e.version, min) >= 0))
+    .map((e) => e.version);
+}
+
+/**
+ * Set `latest` to the newest release that is not withdrawn (§3: writers keep it so) and return it.
+ * A manifest whose every release is withdrawn keeps the `latest` it has.
+ */
+export function settleLatest(doc: Record<string, unknown>): string | null {
+  const newest = newestNotWithdrawn(doc);
+  if (newest) doc.latest = newest;
+  return manifestLatestOf(doc);
+}
+
+/** The `latest` an S1 manifest itself says; a writer of before §3's policy may have left it on an older release. */
+export function manifestLatestOf(doc: Record<string, unknown> | null | undefined): string | null {
+  const v = doc?.latest;
+  return typeof v === 'string' && v ? v : null;
 }
 
 export interface LinuxVersion { version: string; released: string | null; description: string | null; sizeBytes: number | null; sha256: string | null; tarball: string | null; manifest: string | null }
@@ -101,9 +150,15 @@ export function linuxEntries(doc: Record<string, unknown> | null | undefined): L
     .sort((a, b) => compareSemver(b.version, a.version));
 }
 
+/**
+ * The latest release of a folder. S1: what a client installs when nobody picks a version, the
+ * newest installable release (§3) = the newest that is not withdrawn, whatever `latest` says
+ * (none when every release is withdrawn); `latest` itself only without releases. Linux: `latest_version`.
+ */
 export function latestOf(doc: Record<string, unknown> | null | undefined, kind: FolderKind): string | null {
   if (!doc) return null;
-  const v = kind === 'linux' ? doc.latest_version : kind === 's1' ? doc.latest : null;
+  if (kind === 's1') return s1Entries(doc).length ? newestNotWithdrawn(doc) : manifestLatestOf(doc);
+  const v = kind === 'linux' ? doc.latest_version : null;
   return typeof v === 'string' && v ? v : null;
 }
 

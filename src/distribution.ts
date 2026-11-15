@@ -1,11 +1,15 @@
 // Moving an S1 application to another distribution host (cloud-r2-distribution.md §2.1, step 2):
 // the host of every URL in its manifest, in one conditional write. Both hosts serve the same
-// bucket, so no binary moves; the path, `?v=`, the signatures and the hashes stay as they are.
+// bucket, so no binary moves; the path, `?v=`, the signatures and the hashes stay as they are, and
+// so do `min_version` and every `withdrawn` (§3); `latest` is the newest release that is not
+// withdrawn, as after every write of Deploy.
 // Step 1 (CONFIG 0x35 of its controllers) and step 3 (distribution_url in its .cred file) are the
 // Deployment Tool's. A folder without releases only gets the host its first release takes.
 
 import type { Env, User } from './env';
-import { distributionUrls, folderDistribution, latestOf, manifestKind, readManifest, s1Entries, urlBase, writeManifest } from './bucket';
+import {
+  distributionUrls, folderDistribution, latestOf, manifestKind, manifestLatestOf, readManifest, s1Entries, settleLatest, urlBase, writeManifest,
+} from './bucket';
 import { deleteUnderWay } from './delete';
 import { HttpError } from './lib/http';
 import { audit, loadFolderSettingsVersioned, saveFolderSettings } from './state';
@@ -57,7 +61,9 @@ export async function moveDistribution(env: Env, user: User, appId: string, targ
   const settingsMoves = Boolean(own) && own!.distribution_url !== to;
   if (!moved && !settingsMoves) throw new HttpError(422, `${appId} is on ${to} already.`, 'distributionUrl');
 
+  const previousLatest = manifestLatestOf(doc);
   if (moved) {
+    settleLatest(doc);
     if (!(await writeManifest(env.DEPLOY_BUCKET, appId, doc, manifest!.etag))) {
       throw new HttpError(409, `Someone else changed the manifest of ${appId} a moment ago. Reload the page and try again.`);
     }
@@ -71,6 +77,7 @@ export async function moveDistribution(env: Env, user: User, appId: string, targ
   }
   await audit(env, {
     action: 'distribution', app_id: appId, actor: user.email, from: previous, to, moved,
+    ...(moved && manifestLatestOf(doc) !== previousLatest ? { latest: manifestLatestOf(doc), previous_latest: previousLatest } : {}),
     // The way back: the manifest as it stood (or move it back the same way).
     previous_manifest: moved ? manifest!.doc : null,
   }).catch((err) => console.error('audit', err));
