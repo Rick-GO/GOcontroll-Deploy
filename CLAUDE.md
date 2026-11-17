@@ -95,9 +95,11 @@
   S1-kennisbank `cloud-r2-distribution.md` §3 v0.21.x): *Earlier versions* en *Withdraw / Restore* op de applicatiepagina;
   publiceren zet `latest` niet meer terug. Gedeployd met `npm run deploy` (typecheck en 357 + 70 tests groen); de
   controles uit de README (302 naar Access, 301 naar https, 200 met CSP/HSTS) geslaagd.
-- **0.15.0 (2026-11-17, nog niet gedeployd)**: installeerbaar = niet ingetrokken (`cloud-r2-distribution.md` §3 v0.22.0):
-  *Earlier versions* en `min_version` weg, `PUT …/min-version` = 410; elke manifest-schrijfactie laat `min_version` weg.
-  Terug naar 0.14.0: `npx wrangler rollback 29b78b37-5a88-464f-a45a-479eafdadc6d`.
+- **0.15.0 (2026-11-17, versie `2372efdb-4271-4772-8a32-c6f691823456`; vorige live versie `29b78b37`, 0.14.0)**:
+  installeerbaar = niet ingetrokken (`cloud-r2-distribution.md` §3 v0.22.0): *Earlier versions* en `min_version` weg,
+  `PUT …/min-version` = 410; elke manifest-schrijfactie laat `min_version` weg. Gedeployd met `npm run deploy`
+  (typecheck en 357 + 70 tests groen); de controles uit de README (302 naar Access, 301 naar https, 200 met CSP/HSTS)
+  geslaagd. Terug naar 0.14.0: `npx wrangler rollback 29b78b37-5a88-464f-a45a-479eafdadc6d`.
 ## Architectuur
 - **Worker met static assets** (geen Pages), zelfde opzet als GOcontroll-Logistic: `run_worker_first = true`,
   `workers_dev = false`, `preview_urls = false`, custom domain `deploy.gocontroll.tools`. Worker-naam

@@ -20,9 +20,10 @@ Images tab shows how often each release is downloaded. For the members of the En
 **`CF_Deploy`** only.
 
 > **Status: live on `deploy.gocontroll.tools` since 2026-10-21, for the members of `CF_Deploy`.**
-> The Worker, the API and the pages are deployed (0.14.0 on 2026-11-15, version `29b78b37`: the manifest of an S1
-> application decides which versions can be installed — *Earlier versions* and *Withdraw / Restore* on its page
-> ([Which versions can be installed](#which-versions-can-be-installed)); 0.11.0 on 2026-10-29, version `2c77e8e1`, `gocontroll-images` version `5dfee268`:
+> The Worker, the API and the pages are deployed (0.15.0 on 2026-11-17, version `2372efdb`: every release of an S1
+> application that is not withdrawn can be installed, *Earlier versions* and `min_version` are gone
+> ([Which versions can be installed](#which-versions-can-be-installed)); 0.14.0 on 2026-11-15, version `29b78b37`: the
+> manifest of an S1 application decides which versions can be installed, *Withdraw / Restore* on its page; 0.11.0 on 2026-10-29, version `2c77e8e1`, `gocontroll-images` version `5dfee268`:
 > every release has a folder of its own, fixed when it is made (`images/<product>/<id>`, its key); type and version are labels
 > that *Edit…* changes, of a published release too, without moving or uploading a file (`manifest.json` format 5,
 > [Images for customers](#images-for-customers-imagesgocontrolltech)); 0.10.0 on 2026-10-29, version `9bdee976`, `gocontroll-images` version `74d51437`:
