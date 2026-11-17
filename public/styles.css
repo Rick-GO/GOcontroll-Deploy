@@ -623,7 +623,7 @@ table.data a.cell-main:hover { color: var(--brand); text-decoration: underline; 
 .cell-btns { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 .cell-btns .btn.sm { margin: 0; }
 
-/* ── Which versions can be installed (folder.js, Releases card): Earlier versions, withdrawn releases ── */
+/* ── Which versions can be installed (folder.js, Releases card): installable and withdrawn releases ── */
 .policy { margin-bottom: 14px; }
 .policy-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 14px; }
 .policy-line .section-label { margin: 0; }

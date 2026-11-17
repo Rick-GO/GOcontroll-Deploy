@@ -549,7 +549,7 @@ export const TOOLS: AdminTool<Env>[] = [
   {
     name: 'application',
     title: 'One application in detail',
-    description: 'One application: its releases with date, description, size, whether they are signed with its key and whether a controller may install them (withdrawn, installable; min_version null = only the newest), the controllers per version and per distribution host, its customer, and downloads of the last 30 days where counted. Use after `applications`.',
+    description: 'One application: its releases with date, description, size, whether they are signed with its key and whether a controller may install them (withdrawn; installable = not withdrawn), the controllers per version and per distribution host, its customer, and downloads of the last 30 days where counted. Use after `applications`.',
     input: { type: 'object', properties: { app_id: APP_ID_ARG }, required: ['app_id'], additionalProperties: false },
     kind: 'read',
     run: (env, args) => expected(async () => {
@@ -561,7 +561,6 @@ export const TOOLS: AdminTool<Env>[] = [
         controller: d.controller,
         customer: d.customer ? { relation_id: d.customer.id, name: d.customer.name } : null,
         latest: d.latest,
-        ...(d.kind === 's1' ? { min_version: d.minVersion } : {}),
         ...(d.manifestLatest ? { manifest_latest: d.manifestLatest } : {}),
         distribution_url: d.distributionUrl,
         public_key: d.key ? { source: d.key.source, created_at: d.key.createdAt, created_by: d.key.createdBy } : null,

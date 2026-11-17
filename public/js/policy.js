@@ -1,11 +1,10 @@
 // @ts-check
-// Which versions of an S1 application may be installed (cloud-r2-distribution.md §3, "Which versions
-// can be installed"), worked out the way the Worker does it (src/bucket.ts compareVersions,
+// Which versions of an S1 application may be installed (cloud-r2-distribution.md §3 v0.22.0, "Which
+// versions can be installed"), worked out the way the Worker does it (src/bucket.ts compareVersions,
 // newestNotWithdrawn, installableVersions), so the page can say what a change does before it is
 // made. No imports and no DOM: test/pages.test.ts holds it against the Worker.
 //
-//   min_version absent    only the newest release that is not withdrawn is installable
-//   min_version present   every release from that version up that is not withdrawn
+//   installable           every release that is not withdrawn
 //   withdrawn             never offered and never installed
 
 /** @typedef {{ version: string, withdrawn?: boolean }} PolicyRelease */
@@ -37,17 +36,9 @@ export function newestNotWithdrawn(releases) {
   return newestFirst(releases).find((r) => !r.withdrawn)?.version ?? null;
 }
 
-/**
- * The installable versions, newest first: not withdrawn, and the newest such release or (with a
- * minimum) that version or higher.
- * @param {PolicyRelease[]} releases @param {string | null} minVersion  null: only the newest
- * @returns {string[]}
- */
-export function installableVersions(releases, minVersion) {
-  return newestFirst(releases)
-    .filter((r) => !r.withdrawn)
-    .filter((r, i) => i === 0 || (minVersion !== null && compareVersions(r.version, minVersion) >= 0))
-    .map((r) => r.version);
+/** The installable versions, newest first: every release that is not withdrawn. @param {PolicyRelease[]} releases @returns {string[]} */
+export function installableVersions(releases) {
+  return newestFirst(releases).filter((r) => !r.withdrawn).map((r) => r.version);
 }
 
 /**

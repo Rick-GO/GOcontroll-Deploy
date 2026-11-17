@@ -1,8 +1,8 @@
 // Moving an S1 application to another distribution host (cloud-r2-distribution.md §2.1, step 2):
 // the host of every URL in its manifest, in one conditional write. Both hosts serve the same
 // bucket, so no binary moves; the path, `?v=`, the signatures and the hashes stay as they are, and
-// so do `min_version` and every `withdrawn` (§3); `latest` is the newest release that is not
-// withdrawn, as after every write of Deploy.
+// so does every `withdrawn` (§3); `latest` is the newest release that is not withdrawn and
+// `min_version` is dropped, as after every write of Deploy.
 // Step 1 (CONFIG 0x35 of its controllers) and step 3 (distribution_url in its .cred file) are the
 // Deployment Tool's. A folder without releases only gets the host its first release takes.
 

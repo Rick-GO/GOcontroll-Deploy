@@ -25,7 +25,7 @@
 import type { Env } from './env';
 import {
   compareVersions, distributionUrls, folderDistribution, installableVersions, latestOf, linuxEntries, listBucket, listFolder, manifestKey,
-  manifestKind, manifestLatestOf, minVersionOf, objectKeyForUrl, readManifest, readStoredHeader, s1Entries, urlDigest, type FolderKind,
+  manifestKind, manifestLatestOf, objectKeyForUrl, readManifest, readStoredHeader, s1Entries, urlDigest, type FolderKind,
 } from './bucket';
 import { customerNames, projectCustomers } from './business';
 import { dayCounts, fileDownloads, lastDays, loadWindow, type DayCounts } from './downloads';
@@ -351,7 +351,7 @@ export async function folderDetail(env: Env, appId: string, days = 30) {
       url: e.url,
       releaseDate: e.releaseDate,
       description: e.description,
-      // §3: withdrawn = never offered or installed; installable = not withdrawn, and the newest or from min_version up.
+      // §3: withdrawn = never offered or installed; installable = not withdrawn.
       withdrawn: e.withdrawn,
       installable: installable.has(e.version),
       objectKey,
@@ -379,8 +379,6 @@ export async function folderDetail(env: Env, appId: string, days = 30) {
     ...resolveController(realKind, own?.controller, groups),
     latest,
     manifestLatest: otherLatest(manifest?.doc, realKind, latest),
-    // Which versions may be installed (§3): null = only the newest release that is not withdrawn.
-    minVersion: realKind === 's1' ? minVersionOf(manifest?.doc) : null,
     distributionUrl,
     mixedHosts: named.mixedHosts,
     // The bucket's distribution URLs (DISTRIBUTION_URLS): what an S1 folder can move to.

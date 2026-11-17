@@ -76,7 +76,7 @@ goes to Applications.
 | Page | What you do there |
 |---|---|
 | **Applications** (`#/applications`) | Totals, then every customer with its applications and the folders without a customer. Columns: App ID, Controller (S1, M1, L4, HMI1 or a derived type), latest, releases, public key ("Yes"; "No" for an S1 application without one, "n/a" for a Linux application without one; the key itself is on the application's page, to copy or download), last upload. Search and a filter (all / S1 / S1 without public key / M1 / L4 / HMI1 / controller unknown) stay in the address. At the bottom, **New application…**: controller S1, M1, L4 or HMI1, then the App ID (S1: up to 32 characters, no spaces or "/"; Linux: lower case `^[a-z0-9][a-z0-9._-]*$`, up to 64), customer, and for S1 the distribution host. Creating it opens its folder page. |
-| **Application, S1** (`#/applications/<APP_ID>`) | Customer and controller (**Change…** each), and the distribution host (**Change…**: [Moving to another distribution host](#moving-to-another-distribution-host)). **New release** in three steps: **1 File** (`.bin` / S-record / GOCO container, version from the filename) → **2 Sign** (the public key with Copy, and the **private key**: pasted, or from a file (`.pem`, the base64 value, a `.cred` file); checked in the browser against the public key, "belongs" or "does not belong", as soon as it is given; it stays in the browser. A container signed already needs none. Without a public key: *Generate key pair…* or *Attach a public key…* right there, or tick *publish unsigned*) → **3 Publish** (description, Replace… / below-latest confirmations: an older version leaves latest where it is, and the page says whether it can be installed at all; binary URL with Copy), or **Download signed file instead**. Then the **Releases**: **Earlier versions** (*Only the newest* or *From version …*, **Change…**) and *Installable now*, and per release the header checks, whether it is *Installable*, *Not offered* or *Withdrawn* (greyed, struck through), with **Withdraw…** / **Restore** ([Which versions can be installed](#which-versions-can-be-installed)); a warning when the manifest's own `latest` is not its newest release that is not withdrawn. Then the **Public key** card (Copy, *Download .pub*, where it came from, *Replace…*; a warning when the signed releases carry another key, with that key to attach), controllers per version, downloads per day, other files, and the **Danger zone**. |
+| **Application, S1** (`#/applications/<APP_ID>`) | Customer and controller (**Change…** each), and the distribution host (**Change…**: [Moving to another distribution host](#moving-to-another-distribution-host)). **New release** in three steps: **1 File** (`.bin` / S-record / GOCO container, version from the filename) → **2 Sign** (the public key with Copy, and the **private key**: pasted, or from a file (`.pem`, the base64 value, a `.cred` file); checked in the browser against the public key, "belongs" or "does not belong", as soon as it is given; it stays in the browser. A container signed already needs none. Without a public key: *Generate key pair…* or *Attach a public key…* right there, or tick *publish unsigned*) → **3 Publish** (description, Replace… / below-latest confirmations: an older version leaves latest where it is and can be picked; binary URL with Copy), or **Download signed file instead**. Then the **Releases**: *Installable* with the versions (every release that is not withdrawn), and per release the header checks, whether it is *Installable* or *Withdrawn* (greyed, struck through), with **Withdraw…** / **Restore** ([Which versions can be installed](#which-versions-can-be-installed)); a warning when the manifest's own `latest` is not its newest release that is not withdrawn. Then the **Public key** card (Copy, *Download .pub*, where it came from, *Replace…*; a warning when the signed releases carry another key, with that key to attach), controllers per version, downloads per day, other files, and the **Danger zone**. |
 | **Application, Linux (M1, L4, HMI1)** | Customer and controller. **Package** card: the files in `files/` (name, destination, mode, owner, group) with Add / Edit / Remove; default owner and group; after install: Nothing, *Restart services* (comma list, nodered and go-simulink suggested, preview of the rendered `post-install.sh.tmpl`) or *A script of its own*. **Save package**; **Import r2-deploy.config.json…** (paste or file); **From the latest release** (files from its version manifest, `files/post-install.sh` from its tarball). **New release** in three steps: **1 Files**: one file per package file (choose per row, or drop several, matched by name), or *Upload a built package* (`update.tar.gz` + `manifest.json` from a CI `dist/`, sent as they are after a SHA-256 check here), plus the version (next patch of latest) and what changed. **2 Review**: not signed, and why (go-deploy checks SHA-256 only); size and SHA-256 of the tarball; the version manifest's files with destination, mode, owner and short SHA-256; the post-install script; `manifest.json` as it will be written; what happens to `latest_version`. **3 Publish**: Publish / Replace…, progress, result (keys written, SHA-256 with Copy, size, `latest_version`). Then the Versions table (with a Tarball download per version), the **Public key** card (a public key can be kept for provisioning; Linux packages are not signed), controllers per version, downloads, other files, Danger zone. |
 | **Firmware** (`#/firmware`) | Module firmware on firmware.gocontroll.tech, the way the Moduline Module Firmware Deployer (agent 08) published it. **Publish firmware**: *Choose the source folder…* (the module's repository, e.g. `Module-Input`; `showDirectoryPicker`, or a folder field in browsers without it, or drop the folder) or *Choose .srec files…*. From a folder Deploy takes every `<…>-BOOT/<name>.srec`, as the CI did, and reads the repository's `.git` in the browser: the line above the files names the repository, branch, HEAD and the number of version tags; the next notice says whether HEAD is the newest commit of its branch, asked of GitHub every time a folder is chosen: green when it is, a warning when GitHub has newer commits (with how many and the newest; pull first and choose the folder again), when HEAD is not on GitHub yet (push first), when both moved on, or when the branch is not on GitHub; without GitHub (no token, a repository Deploy may not read) the same from `origin/<branch>` as of the last fetch, saying so. A notice after that says that the repository has no publish workflow of its own (the safety net, removed from every module repository on 2026-10-29), or, should one be back, what it would do differently. Per file: module (name, hardware ID, hardware version, from the file name), version, file date and status: **New**, **Published** (the same bytes), **Published, other bytes** (cannot be published: a correction gets a new version number) or why it **cannot be used** (not committed, differs from the commit, not an S-record). Per version: the **release date** (the tag's `RELEASE_DATE` when tag `v<version>` exists, else the file's date), the **changelog** (the tag's text, else typed: one line in English, with the commits since the previous version tag beside it), the name of a module that is new on firmware.gocontroll.tech, and for a published version *Publish again* (its manifest entry, same file). **Review N files…** sends each file as a dry run and shows what will be written (new file or identical, entry added or written again, `latest_firmware` before → after, the module manifest); **Publish** writes them, lowest version first. Per version the review has *Then set tag v<version> … and make the GitHub release*, ticked when Deploy can (token set, repository folder chosen, HEAD pushed, not an older version under a safety net; else the reason): after publishing Deploy sets the tag and makes the release with the `.srec` attached, and links both (a tag that says something else: *Replace v<version>…*). Without that, or when GitHub refuses: **Set tag v<version>** with the annotation (Copy, Download), the commands and the link to make the release by hand. Below: every module (name, hardware version and ID, latest, date, number of releases), unfolding into its releases: version (link to the file, *flashed* on the first), date, changelog, SHA-256 with Copy, and who published it from Deploy and from which repository and commit, or *CI of the module repository* (published before 2026-10-29). |
 | **Images** (`#/images`) | Linux images of the L4, M1 and HMI1 for customers on images.gocontroll.tech. **New release…**, in this order: the controller (L4, M1 or HMI1, one per release), the release date (today by default), the **type** (optional, e.g. `1.07 - AV123`: a variant that is a system of its own, with its own latest release; the types already used are suggested; empty: the controller is one system), the version (e.g. `6.12.87`) and notes; nothing else: the name customers see (*Moduline HMI1 · 1.07 - AV123*) follows from controller and type, and the release gets a folder of its own (`images/moduline-hmi1/<12 hex>/`) that never moves. A release is a **draft** until **Publish**; per draft *Add files…* (role guessed from the name: complete image (a `.zip`: everything UUU needs, the complete image and a script that installs only the kernel), root file system, kernel, bootloader, device tree, flash script, documentation, other; and the computer it runs on), upload with progress per file (32 MiB parts, three at a time, retried), the SHA-256 of each file as stored; *Remove* a file, *Edit…*, *Delete draft…*. *Edit…* changes the date, the notes, the **type** and the **version**, of a published release too (customers see the new labels at once; the folder, the files and their links stay; controller + type + version stays unique; the controller never changes); a published release can also be **Withdrawn** (back to a draft; the files stay). Unfinished uploads with *Abort*. Per file of a published release **Copy link**: the customer link `images.gocontroll.tech/download/<path>` (sign in, then that file starts). **Downloads**: per release in all, this month and last month, and per month the downloads, different addresses and countries; the release cards show their count. **Latest downloads**: who downloaded which file when, this month and last month, as images.gocontroll.tech logs it. |
@@ -202,7 +202,7 @@ signature is made in the browser ([Signing keys](#signing-keys)):
   `binaries[version] = { url: "<dist>/<key>?v=<first 16 hex of the payload SHA-256>",
   release_date, description }` (a new entry: a version that was withdrawn and is published again
   is not withdrawn any more), `latest` = the newest release that is not withdrawn (this version,
-  unless a newer one is there), `min_version` and the other entries' `withdrawn` as they are
+  unless a newer one is there), the other entries' `withdrawn` as they are, `min_version` left out
   ([Which versions can be installed](#which-versions-can-be-installed)), every other field kept,
   JSON with indent 2 and a newline,
   `application/json`, written only over the version that was read (R2 etag; `If-None-Match: *`
@@ -215,10 +215,10 @@ signature is made in the browser ([Signing keys](#signing-keys)):
 Publishing an older version than `latest` is allowed (a fix on an older line), but since 0.14.0 it
 **leaves `latest` on the newest release** (`cloud-r2-distribution.md` §3: writers keep `latest` the
 newest release that is not withdrawn; until 0.13.0 it moved `latest` back, to undo a bad release).
-The answer gives `latest`, whether the version can be installed at all (`installable`: without
-`min_version` only the newest can), `minVersion` and `withdrawnCleared`; `latestMovedBack` is only
-true when the manifest's `latest` named a withdrawn or a not-newest release before. A bad release is
-taken back by **withdrawing** it.
+The older version can be picked like every release that is not withdrawn. The answer gives
+`latest`, `installable` and `withdrawnCleared`; `latestMovedBack` is only true when the manifest's
+`latest` named a withdrawn or a not-newest release before. A bad release is taken back by
+**withdrawing** it.
 
 ### Moving to another distribution host
 
@@ -227,9 +227,9 @@ changing URLs, never by a redirect. **Change…** next to *Distribution host* on
 (`PUT /api/folders/:appId/distribution`, `src/distribution.ts`) does step 2 of §2.1:
 
 - every `url` in the manifest gets the new host, in one write over the version that was read
-  (R2 etag: a race is a 409); the path, `?v=`, the binaries, their signatures, `min_version`, every
-  `withdrawn` and every other field stay, and `latest` is the newest release that is not withdrawn
-  (as after every write of Deploy); a manifest that names two hosts ends up on one;
+  (R2 etag: a race is a 409); the path, `?v=`, the binaries, their signatures, every `withdrawn`
+  and every other field stay, `min_version` is left out and `latest` is the newest release that is
+  not withdrawn (as after every write of Deploy); a manifest that names two hosts ends up on one;
 - the new host is one of `DISTRIBUTION_URLS`; a URL outside the bucket's hosts, a manifest that
   cannot be read and a Linux folder are refused (422), and so is the host it is on already;
 - a folder without releases gets only the host its first release takes (its settings);
@@ -244,40 +244,38 @@ installs from Deploy's manifest that way; the dialog shows the hosts the control
 ### Which versions can be installed
 
 The manifest decides which versions of an S1 application may be installed
-(`cloud-r2-distribution.md` §3, "Which versions can be installed"): the publisher changes it here,
-for every controller of the App ID at once, without touching a controller. The app, the Service
-Tool, the Deployment Tool and the dispatch side (cloud updates) all follow it; the controller's own
-`latest_only` (`0x37`) is no longer used for it, and a `latest_only` key in a manifest is ignored
-(and kept).
+(`cloud-r2-distribution.md` §3 v0.22.0, "Which versions can be installed"): **every release that is
+not withdrawn**. The publisher withdraws or restores a release here, for every controller of the
+App ID at once, without touching a controller. The app, the Service Tool, the Deployment Tool and
+the dispatch side (cloud updates) all follow it: a version picker shows the installable releases,
+update-to-latest installs the newest. The controller's own `latest_only` (`0x37`) is no longer used
+for it; a `latest_only` key in a manifest is ignored (and kept).
 
-- **`min_version`** (top level): absent = only the newest release that is not withdrawn is
-  installable (no version picker); present = every release from that version up that is not
-  withdrawn (versions compare as numbers per part: `0.0.10` > `0.0.9`).
 - **`withdrawn: true`** (per release): never offered and never installed. The binary stays in the
   bucket for traceability; publishing that version again clears it.
 - **`latest`** is the newest release that is not withdrawn; every write of Deploy (publish, host
-  move, the changes below) keeps it so, and keeps `min_version` and every `withdrawn` it does not
-  change. Deploy shows as *Latest* the newest installable release, also where a manifest's own
-  `latest` says something else.
+  move, Withdraw / Restore) keeps it so, and keeps every `withdrawn` it does not change. Deploy
+  shows as *Latest* the newest installable release, also where a manifest's own `latest` says
+  something else.
+- **`min_version`** (0.14.x, §3 0.21.x: without it only the newest was installable) is gone. Deploy
+  ignores it when it reads a manifest and leaves it out when it writes one; `PUT …/min-version`
+  answers 410.
 
 On the application's page the **Releases** card has:
 
-- **Earlier versions**: *Only the newest* or *From version …* (one of the published versions), with
-  **Change…** (`PUT /api/folders/:appId/min-version`, `{ minVersion: "<version>" | null }`): the
-  dialog shows what is installable after the change. Then *Installable now* with the versions.
-- an **Install** column: *Installable*, *Not offered* (older than `min_version`, or not the newest
-  without one) or *Withdrawn* (the row greyed and struck through), and per release **Withdraw…**
-  (a confirmation that says what *Latest* and the installable releases become) or **Restore**
-  (asked first only when it makes the release latest again)
+- **Installable** with the versions: every release that is not withdrawn.
+- an **Install** column: *Installable* or *Withdrawn* (the row greyed and struck through), and per
+  release **Withdraw…** (a confirmation that says what *Latest* and the installable releases
+  become) or **Restore** (asked first only when it makes the release latest again)
   (`PUT /api/folders/:appId/releases/:version/withdrawn`, `{ withdrawn: true | false }`; restoring
   removes the flag). The only release that is not withdrawn cannot be withdrawn (422): there would
   be nothing left to install.
 
 Each change is **one write of the manifest** over the version that was read (R2 etag: a race is a
-409), everything else in it as it was; the log entry (`min-version`, `withdraw`, `restore`) keeps
-the manifest as it stood (`previous_manifest`), and doing the opposite on the page undoes it.
-Withdrawing never takes a controller back to a lower version: controllers that run a withdrawn
-release keep it until they install another one, and update-to-latest only installs a newer one.
+409), everything else in it as it was; the log entry (`withdraw`, `restore`) keeps the manifest as
+it stood (`previous_manifest`), and doing the opposite on the page undoes it. Withdrawing never
+takes a controller back to a lower version: controllers that run a withdrawn release keep it until
+they install another one, and update-to-latest only installs a newer one.
 
 A manifest written before this policy (by Deploy up to 0.13.0, the CI pipeline or the Deployment
 Tool) can have `latest` on an older release, moved back to undo a bad one. Clients that follow §3
@@ -630,7 +628,7 @@ enough for this data, so it stays there.
 | `keys/<APP_ID>.json` | The public key of an application: `app_id`, `public_key` (130 hex, upper case), `source`, `created_at`, `created_by`. Since 0.7.0 `source` is `attached` and there is nothing else. A key made in the Worker before 0.7.0 (`source` generated / imported) also holds `sealed_private_key` (`v1.<iv>.<ciphertext+tag>`), kept as it is and opened by nothing ([Signing keys](#signing-keys)). Kept when the folder is deleted. |
 | `keys-retired/<APP_ID>/<timestamp>.json` | A key that was replaced, with who replaced it when. Never deleted. |
 | `folders/<APP_ID>.json` | Folder settings: `customer_id` and `controller` set by hand, `distribution_url` (an S1 application made here, for its first release), `package` (a Linux application's package definition), `created_at` / `created_by`, `updated_at` / `updated_by`. Customer, controller and URL are also in the object's custom metadata (marked `index`), so the overview needs one listing. |
-| `log/<yyyy>/<mm>/<timestamp>-<APP_ID>-<version or action>.json` | One entry per publish, sign, key action (`key-attach`, `key-replace` with the previous public key; `key-generate` and `key-import` until 0.6.1), `publish-linux`, `create-folder`, `settings`, `package`, `distribution`, `min-version` and `withdraw` / `restore` (with `latest`, `previous_latest` and the manifest as it was: `previous_manifest`), `delete-folder`, `publish-firmware` (App ID `module-<hw_id>`: the file, date, changelog, source, and both manifests as they were before) and `images-*` (App ID `image-<product>`: create, update, upload, abort, remove-file, publish, withdraw, delete): action, App ID, version, actor, time, signed, replaced, payload SHA-256, size, description; a publish also its URL, the previous `latest`, the previous manifest and where a replaced binary went; a delete its reason, objects, bytes, controllers and archive. |
+| `log/<yyyy>/<mm>/<timestamp>-<APP_ID>-<version or action>.json` | One entry per publish, sign, key action (`key-attach`, `key-replace` with the previous public key; `key-generate` and `key-import` until 0.6.1), `publish-linux`, `create-folder`, `settings`, `package`, `distribution`, `min-version` (0.14.x only) and `withdraw` / `restore` (with `latest`, `previous_latest` and the manifest as it was: `previous_manifest`), `delete-folder`, `publish-firmware` (App ID `module-<hw_id>`: the file, date, changelog, source, and both manifests as they were before) and `images-*` (App ID `image-<product>`: create, update, upload, abort, remove-file, publish, withdraw, delete): action, App ID, version, actor, time, signed, replaced, payload SHA-256, size, description; a publish also its URL, the previous `latest`, the previous manifest and where a replaced binary went; a delete its reason, objects, bytes, controllers and archive. |
 | `replaced/<APP_ID>/<APP_ID>-<version>/<timestamp>.bin` | A binary a publish overwrote. |
 | `replaced/<APP_ID>/v<version>/<timestamp>/update.tar.gz`, `…/manifest.json` | A Linux release a publish replaced. |
 | `deleted/<APP_ID>/<timestamp>/<original key>` | Every object of a deleted folder, plus its `folder-settings.json` ([Deleting a folder](#deleting-a-folder)). |
@@ -763,7 +761,7 @@ copy of the canonical helper; a fix belongs there first.
 | Tool | Kind | What it returns |
 |---|---|---|
 | `applications` | read | every S1 and Linux application: customer, controller type, latest version, releases, last upload, controllers (total, online, up to date), `manifest_error` when `manifest.json` cannot be read; totals with `s1_without_key`; whether there is a public key, never the key (filter `has_public_key`) |
-| `application` | read | one application: releases with date, description, size, signature, `withdrawn` and `installable`; for S1 `min_version` (null: only the newest is installable) and `manifest_latest` when the manifest's own `latest` is another; controllers per version and host; downloads of the last 30 days where counted. `latest` (here and in `applications` and `rollout`) is the newest installable release |
+| `application` | read | one application: releases with date, description, size, signature, `withdrawn` and `installable` (not withdrawn); for S1 `manifest_latest` when the manifest's own `latest` is another; controllers per version and host; downloads of the last 30 days where counted. `latest` (here and in `applications` and `rollout`) is the newest installable release |
 | `rollout` | read | per application how many controllers are behind the latest release, on which versions, from which distribution hosts (`hosts: [{ url, count }]`, as `controllers.distribution_url` reports them) and its `customer { relation_id, name }`; totals per host (`controllers`, `behind`, `applications`) and `controllers_without_host`. `host` (a host name or URL) keeps only the controllers on that host; `all` adds the applications that are up to date. Up to date = exactly the latest release; Moduline's `updates_pending` counts a newer version as up to date, the description says so |
 | `module_firmware` | read | every module: hardware version, `latest_firmware`, newest release, who published it (an address, or `CI`) |
 | `module_firmware_releases` | read | the history of one module, newest version first: date, changelog cut to 300 characters, who, repository and commit; `limit` (default 50), `total`, `truncated` |
@@ -771,10 +769,10 @@ copy of the canonical helper; a fix belongs there first.
 | `images` | read | per controller or type the latest published image: date, files, size, complete image or not, downloads; drafts |
 | `image_downloads` | read | downloads per month, per country and per release, the number of different addresses; numbers only |
 | `application_downloads` | read | S1 downloads per application and file over at most 30 days, Cloudflare's estimate (`configured: false` without `DEPLOY_CF_API_TOKEN`) |
-| `recent_publications` | read | the audit log, newest first: what was published, moved, withdrawn or restored, which versions became installable (`min-version`, with `min_version`) or deleted, and by whom (`all`: every action); at most the newest 300 entries of a period are read |
+| `recent_publications` | read | the audit log, newest first: what was published, moved, withdrawn or restored (and, in the log of 0.14.x, Earlier versions changed: `min-version`, with `min_version`) or deleted, and by whom (`all`: every action); at most the newest 300 entries of a period are read |
 | `attention` | read | an unfinished delete; an application whose `manifest.json` cannot be read, so its controllers cannot update (`high`, with `app_id`; the sentence is `readManifest`'s, never text from the file); an S1 manifest whose `latest` is not its newest release that is not withdrawn (`medium`, with `app_id`: left by a writer of before the policy); firmware or image manifests that cannot be read or do not agree, a published image outside the catalogue, unfinished uploads, old drafts, controllers behind, module repositories with commits after their last publish (`low`, only from `cache/firmware-repos.json`, with when it was checked), sealed keys of before 0.7.0, missing tokens; no external call |
 | `customer` | read | the applications of a relation, or `{ none: true }` |
-| `activity` | read | what happened in a period (default today), newest first, from the audit log: S1 and Linux releases, S1 releases withdrawn or restored and Earlier versions changed (`s1_release_withdrawn`, `s1_release_restored`, `version_policy_changed`), module firmware and GitHub releases, signing, images published or withdrawn, host moves, applications created, changed (customer, controller, package, public key) or deleted, each with who; the same event twice in a row is one item with `count`. Image drafts and uploads are left out, and so are release descriptions and the reason of a delete. The connector does not show it as a tool of its own: only `hub_activity` asks for it |
+| `activity` | read | what happened in a period (default today), newest first, from the audit log: S1 and Linux releases, S1 releases withdrawn or restored (`s1_release_withdrawn`, `s1_release_restored`; `version_policy_changed` for Earlier versions in the log of 0.14.x), module firmware and GitHub releases, signing, images published or withdrawn, host moves, applications created, changed (customer, controller, package, public key) or deleted, each with who; the same event twice in a row is one item with `count`. Image drafts and uploads are left out, and so are release descriptions and the reason of a delete. The connector does not show it as a tool of its own: only `hub_activity` asks for it |
 
 - **No action**: publishing, signing and deleting stay with a colleague on the page.
 - **Never in a tool result**: a private key, a sealed key, a public key's hex, a token, a customer's e-mail address, the
@@ -838,8 +836,8 @@ All `/api/*` need the Access token and `DEPLOY_GROUPS`. Errors are `{ "error": "
 | GET | `/api/folders/:appId` | One folder: kind, controller, customer, `key` (as `GET …/key`); `latest` and `manifestLatest` as in the overview, `minVersion` (null: only the newest is installable); releases with `withdrawn` and `installable`, their stored header (range read), `keyMatches`, `digestMatches`, size, upload time and downloads; Linux versions; objects the manifest does not name; `objects: { count, bytes }`; `deleting` (an unfinished delete, or null); for a Linux application `package`, `packageSource`, and `latestVersionManifest` (the parsed version manifest of the latest release) or `latestVersionManifestError`; controllers per version and per distribution URL; `distributionUrls` (the bucket's hosts); downloads per day. 404 when nothing exists for it |
 | POST | `/api/folders` | `{ appId, customerId, controller: "S1" \| "M1" \| "L4" \| "HMI1", distributionUrl }` (no `distributionUrl` for Linux) → 201 `{ appId }`: a new application (settings only). 409 when it exists |
 | PUT | `/api/folders/:appId/distribution` | `{ distributionUrl }` (one of `DISTRIBUTION_URLS`) → `{ appId, distributionUrl, previous, moved }`: every URL of an S1 manifest on that host ([Moving to another distribution host](#moving-to-another-distribution-host)); a folder without releases: its settings. 422 for the host it is on, a host or URL outside the bucket's, a Linux folder; 409 when the manifest changed meanwhile |
-| PUT | `/api/folders/:appId/min-version` | `{ minVersion: "<version>" \| null }` → `{ appId, minVersion, latest, previousLatest, withdrawn, installable }` (newest first): *Earlier versions* of an S1 application, one write of its manifest ([Which versions can be installed](#which-versions-can-be-installed)); `null` removes `min_version` (only the newest). 422 for a version that is not one of its releases, the setting it has already, a Linux folder or a manifest that cannot be read; 404 without a manifest; 409 when the manifest changed meanwhile or the folder is being deleted |
-| PUT | `/api/folders/:appId/releases/:version/withdrawn` | `{ withdrawn: true \| false }` → as `min-version`: withdraw a release (never offered or installed) or restore it (the flag removed); `latest` follows. 422 for the only release that is not withdrawn, a release withdrawn already (or not withdrawn, to restore); 404 for a version that is not a release; 409 as above |
+| PUT | `/api/folders/:appId/min-version` | 410 since 0.15.0, the body unread and the manifest untouched: *Earlier versions* is gone ([Which versions can be installed](#which-versions-can-be-installed)) |
+| PUT | `/api/folders/:appId/releases/:version/withdrawn` | `{ withdrawn: true \| false }` → `{ appId, latest, previousLatest, withdrawn, installable }` (newest first): withdraw a release of an S1 application (never offered or installed) or restore it (the flag removed), one write of its manifest; `latest` follows. 422 for the only release that is not withdrawn, a release withdrawn already (or not withdrawn, to restore), a Linux folder or a manifest that cannot be read; 404 for a version that is not a release or without a manifest; 409 when the manifest changed meanwhile or the folder is being deleted |
 | PUT | `/api/folders/:appId/package` | A Linux application's package definition `{ owner?, group?, files: [ { name, destination, mode, owner?, group? } ], post_install?: { mode: "none" } \| { mode: "services", services } \| { mode: "script", script } }` → `{ package, packageSource: "manual" }` |
 | POST | `/api/linux-releases` | multipart `appId`, `version`, `description`, `replace`, `tarball` (gzip, ≤ 100 MB), `manifest` (the version manifest, text or file) → `{ tarballKey, manifestKey, rootManifestKey, version, released, sha256, sizeBytes, previousLatest, latestVersion, replaced }` |
 | GET | `/api/folders/:appId/versions/:version/tarball` | The stored package of a Linux release (`application/gzip`, `private, no-store`) |
@@ -930,6 +928,11 @@ curl -sI https://deploy.gocontroll.tools/pub/logo.svg  # 200 with content-securi
 
 ### Rolling back
 
+- 0.15.0 (no bindings; S1 manifests lose `min_version` at their next write by Deploy): every release that is not withdrawn
+  is installable (`cloud-r2-distribution.md` §3 v0.22.0), *Earlier versions* and `PUT …/min-version` are gone (410).
+  Back: `npx wrangler rollback 29b78b37-5a88-464f-a45a-479eafdadc6d` (0.14.0). 0.14.0 reads a manifest without
+  `min_version` as "only the newest installable" and shows it so, but changes nothing by itself; the clients that follow
+  §3 v0.22.0 ignore the key either way.
 - 0.14.0 (no bindings; S1 manifests can get `min_version` and `withdrawn`): which versions can be installed
   ([Which versions can be installed](#which-versions-can-be-installed)), and publishing an older version leaves `latest`
   on the newest. Back: `npx wrangler rollback ae7d5f85-b478-438e-b252-f5ed61e3ab8a` (the 0.13.0 version that was live before). 0.13.0
@@ -1080,7 +1083,7 @@ App ID, distribution URL and public key stays the Deployment Tool's job; moving 
 `deploy.gocontroll.com` to `deploy.gocontroll.tech` follows `cloud-r2-distribution.md` §2.1: the
 controllers' `0x35` and the `.cred` file with the Deployment Tool, the manifest with Change… on the
 application's page (Deploy shows `mixedHosts` and the controllers' distribution URLs per folder,
-and never mixes hosts when it writes). Which versions may be installed (`min_version`, `withdrawn`,
-§3) is a deliberate step of the publisher: in Deploy on the application's page, or (as §3 names it)
-with the Deployment Tool's `policy` command. Every writer keeps both fields when it publishes, and
-keeps `latest` on the newest release that is not withdrawn.
+and never mixes hosts when it writes). Which versions may be installed (`withdrawn`, §3) is a
+deliberate step of the publisher: in Deploy on the application's page, or (as §3 names it) with the
+Deployment Tool's `policy` command. Every writer keeps `withdrawn` when it publishes, keeps `latest`
+on the newest release that is not withdrawn, and drops `min_version` (gone since §3 v0.22.0).

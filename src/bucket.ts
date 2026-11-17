@@ -3,14 +3,13 @@
 // cloud-r2-distribution.md §2 (layout), §2.1 (two hosts), §3 (manifest, `?v=` digest); the
 // steps of a publish follow GOcontroll-Deployment-Tool/tools/r2.py publish().
 //
-//   <APP_ID>/manifest.json            { application_id, latest, min_version?, binaries: { <version>: { url, release_date, description, withdrawn? } } }
+//   <APP_ID>/manifest.json            { application_id, latest, binaries: { <version>: { url, release_date, description, withdrawn? } } }
 //   <APP_ID>/<APP_ID>-<version>.bin   the GOCO container
 //
-// Which versions may be installed is the manifest's (§3 "Which versions can be installed"):
-// `withdrawn: true` on a release = never offered or installed; `min_version` absent = only the
-// newest release that is not withdrawn, present = every release from it up that is not withdrawn.
-// `latest` is the newest release that is not withdrawn; every write here keeps it so (settleLatest)
-// and keeps `min_version` and the other entries' `withdrawn` as they are.
+// Which versions may be installed is the manifest's (§3 "Which versions can be installed", v0.22.0):
+// every release that is not withdrawn (`withdrawn: true` = never offered or installed). `latest`
+// is the newest release that is not withdrawn; every write here keeps it so (settleLatest), keeps
+// the other entries' `withdrawn` as they are, and drops `min_version` (0.21.x, gone since 0.22.0).
 //
 // A folder can hold a manifest for Linux controllers instead (go-deploy packages:
 // app_id / latest_version / versions[]); this file reads it, src/linux.ts publishes into it.
@@ -91,27 +90,25 @@ export function s1Entries(doc: Record<string, unknown> | null | undefined): S1En
 
 // ── Which versions can be installed (§3) ─────────────────────────────────────
 
-/** The manifest's `min_version`, or null when it has none: then only the newest release is installable. */
-export function minVersionOf(doc: Record<string, unknown> | null | undefined): string | null {
-  const v = doc?.min_version;
-  return typeof v === 'string' && v.trim() ? v.trim() : null;
-}
-
 /** The newest S1 release that is not withdrawn, or null when there is none. */
 export function newestNotWithdrawn(doc: Record<string, unknown> | null | undefined): string | null {
   return s1Entries(doc).find((e) => !e.withdrawn)?.version ?? null;
 }
 
 /**
- * The installable releases, newest first: not withdrawn, and the newest such release or (with
- * `min_version`) that version or higher. Versions compare as numbers per part (0.0.10 > 0.0.9).
+ * The installable releases, newest first: every release that is not withdrawn. Versions compare
+ * as numbers per part (0.0.10 > 0.0.9). A `min_version` in the manifest is ignored (§3 v0.22.0).
  */
 export function installableVersions(doc: Record<string, unknown> | null | undefined): string[] {
-  const min = minVersionOf(doc);
-  return s1Entries(doc)
-    .filter((e) => !e.withdrawn)
-    .filter((e, i) => i === 0 || (min !== null && compareVersions(e.version, min) >= 0))
-    .map((e) => e.version);
+  return s1Entries(doc).filter((e) => !e.withdrawn).map((e) => e.version);
+}
+
+/** Manifest keys that are gone (§3): readers ignore them, writers drop them at their next write. */
+export const RETIRED_MANIFEST_KEYS = ['min_version'] as const;
+
+/** `doc` without the keys that are gone; every other field stays, in its place. */
+export function withoutRetiredKeys(doc: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(doc).filter(([k]) => !(RETIRED_MANIFEST_KEYS as readonly string[]).includes(k)));
 }
 
 /**
@@ -256,10 +253,10 @@ export function manifestText(doc: Record<string, unknown>): string {
 
 /**
  * Write the manifest only over the version that was read (its etag), or only where none is
- * yet. False when someone else wrote it meanwhile.
+ * yet. False when someone else wrote it meanwhile. A key that is gone (`min_version`) is left out.
  */
 export async function writeManifest(bucket: R2Bucket, appId: string, doc: Record<string, unknown>, etag: string | null): Promise<boolean> {
-  const result = await bucket.put(manifestKey(appId), manifestText(doc), {
+  const result = await bucket.put(manifestKey(appId), manifestText(withoutRetiredKeys(doc)), {
     httpMetadata: { contentType: 'application/json' },
     onlyIf: etag ? { etagMatches: etag } : new Headers({ 'if-none-match': '*' }),
   });

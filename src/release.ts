@@ -20,7 +20,7 @@
 import type { Env, User } from './env';
 import {
   binaryKey, binaryUrl, compareVersions, distributionUrls, folderDistribution, installableVersions, latestOf, manifestKey, manifestKind,
-  manifestLatestOf, minVersionOf, newestNotWithdrawn, putBinary, readManifest, s1Entries, writeManifest,
+  manifestLatestOf, newestNotWithdrawn, putBinary, readManifest, s1Entries, writeManifest,
 } from './bucket';
 import { z } from 'zod';
 import {
@@ -269,9 +269,8 @@ export interface PublishResult {
   latestMovedBack: boolean;
   /** This version was withdrawn; publishing it again ended that (§3). */
   withdrawnCleared: boolean;
-  /** Whether a client may install this version now (§3): the newest, or from `min_version` up. */
+  /** Whether a client may install this version now (§3): it is not withdrawn. */
   installable: boolean;
-  minVersion: string | null;
   signed: boolean;
 }
 
@@ -354,9 +353,9 @@ export async function publish(env: Env, user: User, form: FormData): Promise<Pub
   const releaseDate = new Date().toISOString().slice(0, 10);
   const url = binaryUrl(distribution, appId, version, prepared.payloadSha256);
   const previousLatest = manifestLatestOf(doc);
-  // A new entry: a withdrawn version published again is no longer withdrawn (§3). `min_version`
-  // and the other entries (their `withdrawn` too) stay as they are; `latest` is the newest release
-  // that is not withdrawn, so publishing an older version leaves it where it is.
+  // A new entry: a withdrawn version published again is no longer withdrawn (§3). The other
+  // entries (their `withdrawn` too) stay as they are; `latest` is the newest release that is not
+  // withdrawn, so publishing an older version leaves it where it is. writeManifest drops `min_version`.
   binaries[version] = { url, release_date: releaseDate, description };
   doc.application_id = appId;
   doc.latest = newestNotWithdrawn({ binaries }) ?? version;
@@ -380,7 +379,6 @@ export async function publish(env: Env, user: User, form: FormData): Promise<Pub
     latestMovedBack: Boolean(previousLatest) && compareVersions(previousLatest!, latest) > 0,
     withdrawnCleared: wasWithdrawn,
     installable: installableVersions(doc).includes(version),
-    minVersion: minVersionOf(doc),
     signed: prepared.signed,
   };
   try {

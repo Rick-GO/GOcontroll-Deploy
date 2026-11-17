@@ -4,8 +4,8 @@
 // into it:
 //   S1             New release (release.js: signed GOCO binaries), the releases with what their
 //                  headers say, and which of them may be installed (cloud-r2-distribution.md §3):
-//                  "Earlier versions" (only the newest, or from a version up: min_version) and
-//                  Withdraw / Restore per release, each one write of the manifest;
+//                  every release that is not withdrawn; Withdraw / Restore per release, each one
+//                  write of the manifest;
 //   M1, L4, HMI1   the Package card (pkgcard.js), New release (linux-release.js: go-deploy
 //                  packages), the versions;
 // and for every application its public key (key.js: to copy or download for provisioning; for a
@@ -341,7 +341,7 @@ async function changeController(d, done) {
 
 /**
  * @param {FolderDetail} d @param {Release[]} releases  newest first
- * @param {boolean} policy  which versions may be installed can be changed here (Earlier versions, Withdraw / Restore)
+ * @param {boolean} policy  which versions may be installed can be changed here (Withdraw / Restore)
  */
 function releasesPanel(d, releases, policy) {
   return `<section class="panel" id="releases-panel">
@@ -370,23 +370,20 @@ function releasesPanel(d, releases, policy) {
 /** "0.0.5, 0.0.4", or "none". @param {string[]} versions */
 const versionList = (versions) => (versions.length ? versions.map((v) => `<span class="mono">${esc(v)}</span>`).join(', ') : 'none');
 
-/** Earlier versions (min_version) and what is installable now. @param {FolderDetail} d @param {Release[]} releases @param {boolean} policy */
+/** What is installable now: every release that is not withdrawn. @param {FolderDetail} d @param {Release[]} releases @param {boolean} policy */
 function policyHtml(d, releases, policy) {
   const now = releases.filter((r) => r.installable).map((r) => r.version);
   return `<div class="policy">
-      <div class="policy-line"><span class="section-label">Earlier versions</span>
-        <span>${d.minVersion ? `From version <strong class="mono">${esc(d.minVersion)}</strong>` : '<strong>Only the newest</strong>'}</span>
-        ${policy ? '<button type="button" class="link-btn" data-act="policy">Change…</button>' : ''}</div>
-      <p class="hint">Installable now: ${versionList(now)}. The app, the Service Tool, the Deployment Tool and cloud updates offer and install only
-        these, for every controller of this App ID; update-to-latest installs the newest. A withdrawn release is never offered or installed.</p>
+      <div class="policy-line"><span class="section-label">Installable</span><span>${versionList(now)}</span></div>
+      <p class="hint">Every release that is not withdrawn. The app, the Service Tool, the Deployment Tool and cloud updates offer only these, for
+        every controller of this App ID; update-to-latest installs the newest.${policy ? ' Withdraw a release so nobody can pick it; Restore offers it again.' : ''}</p>
     </div>`;
 }
 
 /** Whether a release may be installed, as a badge. @param {FolderDetail} d @param {Release} r */
 function installBadge(d, r) {
   if (r.withdrawn) return badge('Withdrawn', 'err', 'Never offered or installed: withdrawn in the manifest. The binary stays in the bucket.');
-  if (r.installable) return badge('Installable', 'ok', r.version === d.latest ? 'What update-to-latest installs' : 'Can be picked: from the earliest version up');
-  return badge('Not offered', 'muted', d.minVersion ? `Older than ${d.minVersion}, the earliest version that may be installed` : 'Only the newest release may be installed');
+  return badge('Installable', 'ok', r.version === d.latest ? 'What update-to-latest installs' : 'Can be picked in the app and the tools');
 }
 
 /** Withdraw… or Restore for one release. @param {Release[]} releases @param {Release} r */
@@ -400,12 +397,10 @@ function releaseAction(releases, r) {
 }
 
 /**
- * Earlier versions (Change…), Withdraw… and Restore on the Releases card: each one write of the
- * manifest, then the page again.
+ * Withdraw… and Restore on the Releases card: each one write of the manifest, then the page again.
  * @param {HTMLElement} el @param {FolderDetail} d @param {Release[]} releases  newest first @param {() => Promise<unknown>} done
  */
 function wirePolicy(el, d, releases, done) {
-  el.querySelector('[data-act="policy"]')?.addEventListener('click', () => changeMinVersion(d, releases, done));
   el.querySelectorAll('[data-withdraw]').forEach((b) => b.addEventListener('click', () => {
     const r = releases.find((x) => x.version === /** @type {HTMLElement} */ (b).dataset.withdraw);
     if (r) withdrawRelease(d, releases, r, done);
@@ -425,55 +420,7 @@ function outcome(d, after) {
   const moves = latest !== d.latest;
   return `${moves && latest ? `<p><strong>Latest</strong> becomes <span class="mono">${esc(latest)}</span>: controllers on update-to-latest that run an
       older version install that one. A controller is never taken back to a lower version by this.</p>` : ''}
-    <p class="hint">Installable then: ${versionList(installableVersions(after, d.minVersion ?? null))}.</p>`;
-}
-
-/** Earlier versions: only the newest (no min_version), or from a published version up. @param {FolderDetail} d @param {Release[]} releases @param {() => Promise<unknown>} done */
-async function changeMinVersion(d, releases, done) {
-  const current = d.minVersion ?? null;
-  const pick = current && releases.some((r) => r.version === current) ? current : (releases.find((r) => !r.withdrawn && r.version !== d.latest)?.version ?? releases[0].version);
-  /** @param {HTMLFormElement} form */
-  const chosen = (form) => {
-    const v = formValues(form);
-    return v.mode === 'from' ? String(v.minVersion ?? '') : null;
-  };
-  /** @type {PolicyResult | null} */
-  let res = null;
-  const ok = await formDialog({
-    title: `Earlier versions of ${d.appId}`,
-    submitLabel: 'Save',
-    narrow: true,
-    body: `<fieldset><legend class="sr-only">Which versions may be installed</legend><div class="choices">
-        <label class="check"><input type="radio" name="mode" value="newest"${current ? '' : ' checked'}>
-          <span><strong>Only the newest</strong>: every controller gets the newest release; nobody can pick another version.</span></label>
-        <label class="check"><input type="radio" name="mode" value="from"${current ? ' checked' : ''}>
-          <span><strong>From version</strong>: every release from this version up can be picked in the app and the tools; update-to-latest still installs the newest.</span></label>
-      </div></fieldset>
-      ${field('Earliest version that may be installed', (id) => `<select id="${id}" name="minVersion" class="mono">${releases.map((r) => `<option value="${esc(r.version)}"${r.version === pick ? ' selected' : ''}>${
-        esc(r.version)}${r.version === d.latest ? ' (latest)' : ''}${r.withdrawn ? ' (withdrawn)' : ''}</option>`).join('')}</select>`)}
-      <p class="hint" data-preview aria-live="polite"></p>
-      <p class="hint">One write of <span class="mono">min_version</span> in the manifest: it applies to every controller of this App ID at once. A withdrawn
-        release stays out either way.</p>`,
-    onOpen: (form) => {
-      const select = /** @type {HTMLSelectElement} */ (form.querySelector('select[name="minVersion"]'));
-      const preview = /** @type {HTMLElement} */ (form.querySelector('[data-preview]'));
-      const show = () => {
-        const next = chosen(form);
-        select.disabled = next === null;
-        preview.innerHTML = `Installable then: ${versionList(installableVersions(releases, next))}.`;
-      };
-      form.addEventListener('change', show);
-      show();
-    },
-    valid: (form) => chosen(form) !== current,
-    submit: async (form) => {
-      res = await api('PUT', `${folderPath(d.appId)}/min-version`, { minVersion: chosen(form) });
-    },
-  });
-  if (!ok || !res) return;
-  const r = /** @type {PolicyResult} */ (res);
-  toast(r.minVersion ? `${d.appId} is installable from ${r.minVersion}.` : `Only the newest release of ${d.appId} is installable.`);
-  await done();
+    <p class="hint">Installable then: ${versionList(installableVersions(after))}.</p>`;
 }
 
 /** Withdraw a release, after a confirmation. @param {FolderDetail} d @param {Release[]} releases @param {Release} r @param {() => Promise<unknown>} done */

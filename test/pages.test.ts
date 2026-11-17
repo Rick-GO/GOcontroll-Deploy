@@ -190,7 +190,7 @@ describe('images page', () => {
 });
 
 describe('which versions can be installed (public/js/policy.js, the Worker\'s src/bucket.ts)', () => {
-  /** A manifest with these releases (`!` = withdrawn) and min_version. */
+  /** A manifest with these releases (`!` = withdrawn) and a min_version, which both sides ignore (§3 v0.22.0). */
   const manifest = (spec: string[], min: string | null) => ({
     application_id: 'X', latest: '0.0.1', ...(min === null ? {} : { min_version: min }),
     binaries: Object.fromEntries(spec.map((s) => [s.replace('!', ''), { url: '', release_date: '', description: '', ...(s.endsWith('!') ? { withdrawn: true } : {}) }])),
@@ -210,11 +210,12 @@ describe('which versions can be installed (public/js/policy.js, the Worker\'s sr
   it('the page works out what the Worker does: latest and the installable releases, newest first', () => {
     for (const [spec, min] of cases) {
       const doc = manifest(spec, min);
-      expect(pageInstallable(releases(spec), min), JSON.stringify([spec, min])).toEqual(installableVersions(doc));
+      expect(pageInstallable(releases(spec)), JSON.stringify([spec, min])).toEqual(installableVersions(doc));
       expect(pageNewest(releases(spec)), JSON.stringify(spec)).toBe(newestNotWithdrawn(doc));
     }
-    expect(installableVersions(manifest(['0.0.9', '0.0.10', '0.0.8'], null))).toEqual(['0.0.10']);
-    expect(installableVersions(manifest(['0.0.9', '0.0.10!', '0.0.8'], '0.0.8'))).toEqual(['0.0.9', '0.0.8']);
+    expect(installableVersions(manifest(['0.0.9', '0.0.10', '0.0.8'], null))).toEqual(['0.0.10', '0.0.9', '0.0.8']);
+    expect(installableVersions(manifest(['0.0.9', '0.0.10!', '0.0.8'], '0.0.9'))).toEqual(['0.0.9', '0.0.8']);
+    expect(installableVersions(manifest(['2.0.0'], '9.9.9'))).toEqual(['2.0.0']);
     expect(installableVersions(manifest(['1.0.0!', '1.1.0!'], '1.0.0'))).toEqual([]);
     for (const [a, b] of [['0.0.10', '0.0.9'], ['1.0.0', '1.0'], ['1.2.3', '1.2.3'], ['x', '0.0.1']]) {
       expect(Math.sign(pageCompare(a, b)), `${a} ${b}`).toBe(Math.sign(workerCompare(a, b)));

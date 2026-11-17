@@ -10,8 +10,8 @@
 //   3 Publish  what changed (mandatory) next to what the manifest holds now; a version that is
 //              published already takes a deliberate yes (Replace…), one below latest is said out
 //              loud: latest stays the newest release that is not withdrawn (cloud-r2-distribution.md
-//              §3), so the page says whether the older one can be installed at all and that
-//              withdrawing is how a release is taken back. Progress, then the binary URL. Or "Download signed file instead"
+//              §3), the older one can be picked (every release that is not withdrawn is installable),
+//              and withdrawing is how a release is taken back. Progress, then the binary URL. Or "Download signed file instead"
 //              (POST /api/sign) for a local upload with the Deployment Tool: nothing published.
 // Signing: the Worker gives the bytes to sign (POST /api/sign/scope, the header scope of
 // src/goco.ts), this page signs them followed by the payload, and sends only the signature with
@@ -26,7 +26,6 @@ import { act, copyButton, esc, field, hydrateIcons, saveBlob, toast } from './li
 import { attachKey, checkIcon, fileSafe, generateFor } from './key.js';
 import { DEFAULT_DISTRIBUTION_URLS } from './newapp.js';
 import { appendFile, mountFilePicker, prefillVersion } from './picker.js';
-import { installableVersions } from './policy.js';
 import { KeyError, KeyMismatchError, fromBase64, sha256Hex, signScope, signerFor, toBase64 } from './signing.js';
 import { compareVersions, parseVersion } from './source.js';
 import { badge, confirmDialog, flagField, runSteps } from './ui.js';
@@ -144,17 +143,12 @@ export function mountRelease(el, opts) {
   const signDone = () => fileDone() && (key ? signedAlready() || Boolean(st.signer) : st.unsigned);
   /** The release standing at the version typed, if the manifest has it. */
   const standing = () => releases.find((r) => r.version === versionIn.value.trim()) ?? null;
-  /** Below latest: latest stays (§3), and whether the version can be installed depends on Earlier versions. @param {string} v */
+  /** Below latest: latest stays (§3); the version can be picked, as every release that is not withdrawn. @param {string} v */
   const belowLatest = (v) => Boolean(d.latest && compareVersions(v, d.latest) < 0);
   /** What publishing `v` below latest means, in a sentence (markup). @param {string} v */
-  const belowLatestText = (v) => {
-    const after = [...releases.filter((r) => r.version !== v), { version: v, withdrawn: false }];
-    const can = installableVersions(after, d.minVersion ?? null).includes(v);
-    return `<strong>Latest</strong> stays <span class="mono">${esc(d.latest)}</span>: a controller on update-to-latest is not taken back. ${can
-      ? `<span class="mono">${esc(v)}</span> can be picked in the app and the tools (Earlier versions: from ${esc(d.minVersion)}).`
-      : `Nobody is offered <span class="mono">${esc(v)}</span>: ${d.minVersion ? `it is older than ${esc(d.minVersion)}` : 'only the newest release is installable'} (Earlier versions, under Releases).`}
+  const belowLatestText = (v) => `<strong>Latest</strong> stays <span class="mono">${esc(d.latest)}</span>: a controller on update-to-latest is not
+      taken back. <span class="mono">${esc(v)}</span> can be picked in the app and the tools, as every release that is not withdrawn.
       To take <span class="mono">${esc(d.latest)}</span> back, withdraw it under Releases.`;
-  };
 
   /**
    * Step 2, drawn again when the key changes (not when the file does: a private key typed stays).
@@ -429,7 +423,5 @@ function publishedCard(r) {
       <div><dt>Binary</dt><dd class="mono">${esc(r.binaryKey)}</dd></div>
     </dl>
     ${r.withdrawnCleared ? `<p class="hint">It was withdrawn; published again, it is not any more.</p>` : ''}
-    ${r.installable === false ? `<div class="notice warn">Nobody is offered <span class="mono">${esc(r.version)}</span>: ${r.minVersion
-      ? `it is older than ${esc(r.minVersion)}` : 'only the newest release is installable'}. Change Earlier versions under Releases to let it be picked.</div>` : ''}
   </div>`;
 }

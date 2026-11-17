@@ -28,7 +28,7 @@ describe('a new folder', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body).toMatchObject({
       binaryKey: `${id}/${id}-1.0.0.bin`, manifestKey: `${id}/manifest.json`, version: '1.0.0', releaseDate: today(),
-      latest: '1.0.0', previousLatest: null, replaced: false, latestMovedBack: false, withdrawnCleared: false, installable: true, minVersion: null, signed: false,
+      latest: '1.0.0', previousLatest: null, replaced: false, latestMovedBack: false, withdrawnCleared: false, installable: true, signed: false,
     });
 
     const bin = await env.DEPLOY_BUCKET.get(`${id}/${id}-1.0.0.bin`);
@@ -103,21 +103,19 @@ describe('an existing folder', () => {
     expect(entry.previous_manifest.binaries['1.0.0'].description).toBe('Release 1.0.0');
   });
 
-  test('latest moves to a newer version; an older one leaves it on the newest (§3) and says whether it can be installed', async () => {
+  test('latest moves to a newer version; an older one leaves it on the newest (§3) and can be picked', async () => {
     const id = appId();
     await release(id, '1.0.0');
     const next = await release(id, '1.1.0');
     expect(next.body).toMatchObject({ latest: '1.1.0', previousLatest: '1.0.0', latestMovedBack: false, installable: true });
     const older = await release(id, '1.0.5');
-    expect(older.body).toMatchObject({ version: '1.0.5', latest: '1.1.0', previousLatest: '1.1.0', latestMovedBack: false, installable: false, minVersion: null });
+    expect(older.body).toMatchObject({ version: '1.0.5', latest: '1.1.0', previousLatest: '1.1.0', latestMovedBack: false, installable: true });
+    expect(older.body.minVersion).toBeUndefined();
     expect(JSON.parse((await manifest(id)).text).latest).toBe('1.1.0');
-    // With Earlier versions from 1.0.0 an older release can be picked.
-    expect((await ok('PUT', `/api/folders/${id}/min-version`, { minVersion: '1.0.0' })).installable).toEqual(['1.1.0', '1.0.5', '1.0.0']);
-    const hotfix = await release(id, '1.0.6');
-    expect(hotfix.body).toMatchObject({ latest: '1.1.0', installable: true, minVersion: '1.0.0' });
+    expect((await ok('GET', `/api/folders/${id}`)).releases.filter((r: any) => r.installable).map((r: any) => r.version)).toEqual(['1.1.0', '1.0.5', '1.0.0']);
   });
 
-  test('min_version and the other entries\' withdrawn stay; latest skips a withdrawn release; publishing a withdrawn version again clears it', async () => {
+  test('the other entries\' withdrawn stay and min_version goes; latest skips a withdrawn release; publishing a withdrawn version again clears it', async () => {
     const id = appId();
     const url = (v: string) => `https://deploy.gocontroll.tech/${id}/${id}-${v}.bin`;
     const old = {
@@ -134,14 +132,15 @@ describe('an existing folder', () => {
     // An older version: latest stays the newest that is not withdrawn (0.0.4, not the withdrawn 0.0.5).
     const res = await release(id, '0.0.1');
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body).toMatchObject({ latest: '0.0.4', previousLatest: '0.0.4', installable: false, minVersion: '0.0.2', withdrawnCleared: false });
+    expect(res.body).toMatchObject({ latest: '0.0.4', previousLatest: '0.0.4', installable: true, withdrawnCleared: false });
     let doc = JSON.parse((await manifest(id)).text);
-    expect(doc).toEqual({ ...old, binaries: { ...old.binaries, '0.0.1': { url: res.body.binaryUrl, release_date: today(), description: 'Release 0.0.1' } } });
+    const { min_version: _gone, ...kept } = old;
+    expect(doc).toEqual({ ...kept, binaries: { ...old.binaries, '0.0.1': { url: res.body.binaryUrl, release_date: today(), description: 'Release 0.0.1' } } });
 
     // A newer version becomes latest; the withdrawn ones stay withdrawn.
     expect((await release(id, '0.0.6')).body).toMatchObject({ latest: '0.0.6', previousLatest: '0.0.4' });
     doc = JSON.parse((await manifest(id)).text);
-    expect([doc.latest, doc.min_version, doc.binaries['0.0.5'].withdrawn, doc.binaries['0.0.2'].withdrawn]).toEqual(['0.0.6', '0.0.2', true, true]);
+    expect([doc.latest, doc.min_version, doc.binaries['0.0.5'].withdrawn, doc.binaries['0.0.2'].withdrawn]).toEqual(['0.0.6', undefined, true, true]);
 
     // Replacing the withdrawn 0.0.5 ends the withdrawal (a new entry); 0.0.6 stays latest.
     const again = await release(id, '0.0.5', { replace: '1', description: 'Five, fixed' });

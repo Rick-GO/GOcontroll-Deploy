@@ -461,7 +461,7 @@ describe('which versions can be installed (cloud-r2-distribution.md §3)', () =>
   /** A day of its own, outside the default periods and the other activity fixtures. */
   const POLICY_DAY = iso(Date.now() - 61 * DAY).slice(0, 10);
 
-  test('application: min_version, and per release withdrawn and installable; latest is the newest that is not withdrawn', async () => {
+  test('application: per release withdrawn and installable (not withdrawn; min_version ignored); latest is the newest that is not withdrawn', async () => {
     await putManifest(POLICY, { application_id: POLICY, latest: '1.1.0', min_version: '1.0.0', binaries: {
       '1.0.0': { url: `${TECH}/${POLICY}/${POLICY}-1.0.0.bin`, release_date: '2026-09-01', description: 'One' },
       '1.1.0': { url: `${TECH}/${POLICY}/${POLICY}-1.1.0.bin`, release_date: '2026-09-02', description: 'Two' },
@@ -469,10 +469,11 @@ describe('which versions can be installed (cloud-r2-distribution.md §3)', () =>
       '0.9.0': { url: `${TECH}/${POLICY}/${POLICY}-0.9.0.bin`, release_date: '2026-08-01', description: 'Old' },
     } });
     const out = await call('application', { app_id: POLICY });
-    expect(out).toMatchObject({ latest: '1.1.0', min_version: '1.0.0' });
+    expect(out).toMatchObject({ latest: '1.1.0' });
+    expect(out.min_version).toBeUndefined();
     expect(out.manifest_latest).toBeUndefined();
     expect(out.releases.map((r: any) => [r.version, r.withdrawn, r.installable])).toEqual([
-      ['1.2.0', true, false], ['1.1.0', false, true], ['1.0.0', false, true], ['0.9.0', false, false],
+      ['1.2.0', true, false], ['1.1.0', false, true], ['1.0.0', false, true], ['0.9.0', false, true],
     ]);
     expect((await call('applications', { search: POLICY.toLowerCase() })).items[0].latest).toBe('1.1.0');
     expect((await call('application', { app_id: LINUX })).min_version).toBeUndefined();
@@ -503,7 +504,7 @@ describe('which versions can be installed (cloud-r2-distribution.md §3)', () =>
     await env.DEPLOY_BUCKET.delete(`${POLICY}/manifest.json`);
   });
 
-  test('activity and recent_publications: Earlier versions, Withdraw and Restore', async () => {
+  test('activity and recent_publications: Earlier versions (log of 0.14.x), Withdraw and Restore', async () => {
     const at = (minute: number) => `${POLICY_DAY}T09:${String(minute).padStart(2, '0')}:00.000Z`;
     await putLog(at(0), POLICY, 'min-version', { action: 'min-version', version: undefined, min_version: '1.0.0', latest: '1.1.0', previous_manifest: { secret: SEALED } });
     await putLog(at(5), POLICY, '1.1.0', { action: 'withdraw', latest: '1.0.0', previous_latest: '1.1.0', previous_manifest: { secret: SEALED } });

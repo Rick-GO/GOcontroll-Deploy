@@ -95,6 +95,9 @@
   S1-kennisbank `cloud-r2-distribution.md` §3 v0.21.x): *Earlier versions* en *Withdraw / Restore* op de applicatiepagina;
   publiceren zet `latest` niet meer terug. Gedeployd met `npm run deploy` (typecheck en 357 + 70 tests groen); de
   controles uit de README (302 naar Access, 301 naar https, 200 met CSP/HSTS) geslaagd.
+- **0.15.0 (2026-11-17, nog niet gedeployd)**: installeerbaar = niet ingetrokken (`cloud-r2-distribution.md` §3 v0.22.0):
+  *Earlier versions* en `min_version` weg, `PUT …/min-version` = 410; elke manifest-schrijfactie laat `min_version` weg.
+  Terug naar 0.14.0: `npx wrangler rollback 29b78b37-5a88-464f-a45a-479eafdadc6d`.
 ## Architectuur
 - **Worker met static assets** (geen Pages), zelfde opzet als GOcontroll-Logistic: `run_worker_first = true`,
   `workers_dev = false`, `preview_urls = false`, custom domain `deploy.gocontroll.tools`. Worker-naam
@@ -130,15 +133,15 @@
 - `src/goco.ts` en `src/keys.ts` hebben **geen imports** en alleen erasable TypeScript, `public/js/signing.js` geen imports en
   geen DOM: het fixture-script draait ze onder Node (de kruiscontrole signt zoals de browser: scope uit `goco.ts`, handtekening uit
   `signing.js`).
-- **Welke versies installeerbaar zijn** (sinds 0.14.0, `cloud-r2-distribution.md` §3 v0.21.0): `min_version` (afwezig = alleen
-  de nieuwste niet-ingetrokken release; aanwezig = elke niet-ingetrokken release vanaf die versie, numeriek per deel) en
-  `withdrawn: true` per release (nooit aangeboden of geïnstalleerd). **Elke schrijfactie van Deploy** (publiceren,
-  host wisselen, de policy-acties) laat `min_version` en de `withdrawn` van andere entries staan en zet `latest` op de
-  nieuwste niet-ingetrokken release (`settleLatest`/`newestNotWithdrawn` in `src/bucket.ts`); een oudere versie
+- **Welke versies installeerbaar zijn** (sinds 0.15.0, `cloud-r2-distribution.md` §3 v0.22.0): **elke release die niet
+  ingetrokken is** (`withdrawn: true` per release = nooit aangeboden of geïnstalleerd). `min_version` (0.14.x, §3 0.21.x)
+  is weg: lezen negeert hem, `writeManifest` laat hem weg (`RETIRED_MANIFEST_KEYS`), `PUT …/min-version` = 410.
+  **Elke schrijfactie van Deploy** (publiceren, host wisselen, Withdraw / Restore) laat de `withdrawn` van andere entries
+  staan en zet `latest` op de nieuwste niet-ingetrokken release (`settleLatest`/`newestNotWithdrawn` in `src/bucket.ts`); een oudere versie
   publiceren verplaatst `latest` dus **niet** meer terug (tot 0.13.0 wel); een versie opnieuw publiceren = nieuwe entry
   = `withdrawn` weg. *Latest* overal in Deploy (pagina's, `/api/overview`, admin-tools) = `latestOf`: de nieuwste
   niet-ingetrokken release, ook als het manifest zelf iets anders zegt (`manifestLatest`, waarschuwing + `attention`).
-  Policy zetten alleen op de applicatiepagina (`src/policy.ts`: `PUT …/min-version`, `PUT …/releases/:version/withdrawn`),
+  Intrekken/herstellen alleen op de applicatiepagina (`src/policy.ts`: `PUT …/releases/:version/withdrawn`),
   één etag-conditionele schrijfactie per actie, `previous_manifest` in de logregel; de enige niet-ingetrokken release
   intrekken = 422. `public/js/policy.js` rekent hetzelfde als `src/bucket.ts` (`test/pages.test.ts` houdt ze gelijk).
 - S1 publiceren: binary eerst, dan manifest (etag-conditioneel, 409 bij race); onbekende manifestvelden blijven;
@@ -275,9 +278,9 @@
   applicaties zonder key.
 - Distributiehost (S1): *Change…* op de applicatiepagina zet elke URL van het manifest op een andere host uit
   `DISTRIBUTION_URLS` (beide hosts = dezelfde bucket); een map zonder releases krijgt alleen de host in zijn settings.
-- Installeerbare versies (S1, kaart Releases): *Earlier versions* (*Only the newest* / *From version …*, Change…), kolom
-  *Install* (Installable / Not offered / Withdrawn, ingetrokken rij grijs en doorgestreept), per release *Withdraw…*
-  (altijd bevestigen) of *Restore* (alleen bevestigen als hij weer latest wordt). Zie *Formaten*.
+- Installeerbare versies (S1, kaart Releases): regel *Installable* met de versies, kolom *Install* (Installable /
+  Withdrawn, ingetrokken rij grijs en doorgestreept), per release *Withdraw…* (altijd bevestigen) of *Restore* (alleen
+  bevestigen als hij weer latest wordt). Zie *Formaten*.
 
 ## Linux-applicaties (M1, L4, HMI1)
 - Contract: `GOcontroll-Architecture/cloudflare/linux-application/spec.md`. Deploy is een **tweede producent** naast de

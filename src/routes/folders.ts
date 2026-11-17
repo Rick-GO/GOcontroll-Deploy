@@ -1,6 +1,6 @@
 // The status of the bucket (overview, one folder, downloads) and what is set per folder
 // (application): a new folder, its settings (customer, controller), its distribution host, which of
-// its versions may be installed (min_version, withdrawn), its public key, and the protected delete.
+// its versions may be installed (withdrawn), its public key, and the protected delete.
 
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -14,7 +14,7 @@ import { KeyFormatError, checkedPublicKey } from '../keys';
 import { HttpError, parse } from '../lib/http';
 import { LINUX_APP_ID, LINUX_APP_ID_MAX, LINUX_VERSION, PackageSchema, folderKey, isLinuxController, normalisePackage, rootEntry } from '../linux';
 import { folderParam, s1AppId } from '../lib/validate';
-import { setMinVersion, setWithdrawn } from '../policy';
+import { setWithdrawn } from '../policy';
 import { downloadDays, folderDetail, folderIdentity, overview } from '../status';
 import {
   CONTROLLER_TYPES, audit, keyInfo, loadFolderSettingsVersioned, loadKey, saveFolderSettings, saveKey,
@@ -155,13 +155,10 @@ folders.put('/folders/:appId/distribution', async (c) => {
 });
 
 // Which versions of an S1 application may be installed (src/policy.ts, cloud-r2-distribution.md §3):
-// "Earlier versions" (min_version: null = only the newest), and withdrawing or restoring one release.
-folders.put('/folders/:appId/min-version', async (c) => {
-  const appId = folderParam(c.req.param('appId'));
-  const { minVersion } = parse(z.object({
-    minVersion: z.union([z.string(), z.null()], { message: 'Choose the oldest version that may be installed, or null for only the newest.' }),
-  }), await c.req.json().catch(() => null));
-  return c.json(await setMinVersion(c.env, c.get('user'), appId, minVersion));
+// every release that is not withdrawn; withdrawing or restoring one release. "Earlier versions"
+// (min_version, 0.14.x) is gone: 410, body unread, the manifest untouched.
+folders.put('/folders/:appId/min-version', () => {
+  throw new HttpError(410, 'Earlier versions is gone: every release that is not withdrawn can be installed. Withdraw a release to stop it being offered. Reload the page.');
 });
 
 folders.put('/folders/:appId/releases/:version/withdrawn', async (c) => {
